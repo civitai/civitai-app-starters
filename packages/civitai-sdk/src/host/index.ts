@@ -1,0 +1,593 @@
+import { BridgeError } from '../core/errors.js';
+import { createCaller, createListener, createNotifier } from '../core/messaging.js';
+import { tokenFromWrapped, type BlockTransport } from '../core/transport.js';
+import { LOCAL_PREVIEW_STORAGE_SCOPES } from '../doc-store/local-preview.js';
+import type { GrantOptions, Scope, Session, TokenOptions } from '../session/index.js';
+
+import type {
+  DownloadRequest,
+  HostNotifications,
+  HostPushes,
+  HostRequests,
+  ImageScanResult,
+  NavigateScope,
+  PickedResource,
+  ResourcePickerType,
+  SourceImage,
+  UploadedImage,
+} from './protocol.js';
+
+export type {
+  ConsentRefusal,
+  DownloadRequest,
+  ImageScanResult,
+  NavigateScope,
+  PickedResource,
+  ResourcePickerType,
+  SourceImage,
+  UploadedImage,
+} from './protocol.js';
+
+const call = createCaller<HostRequests>();
+const notify = createNotifier<HostNotifications>();
+const on = createListener<HostPushes>();
+
+export interface HostCallOptions {
+  signal?: AbortSignal;
+}
+
+/**
+ * An upload the host has stored but not yet finished moderating. The image
+ * exists and its author can see it; nobody else may until `scan()` answers.
+ */
+export interface PendingImage {
+  imageId: number;
+  /** The author's own preview. Not for any other viewer until `scan()` says `scanned`. */
+  url: string;
+  /**
+   * The host's verdict on this upload. Resolves once the host reaches one and
+   * returns the same answer to every later call, so it is safe to re-read.
+   *
+   * 🔴 It waits as long as the host takes — the host is what bounds the scan,
+   * and this package sets no deadline of its own. Pass a `signal` if your app
+   * needs one; aborting gives up on the verdict, it does not decide it.
+   */
+  scan(opts?: HostCallOptions): Promise<ImageScanResult>;
+}
+
+/** Asking the host page to show its own UI. Data goes over the API, not here. */
+export interface Host {
+  /** Resizes the frame, clamped to the manifest's bounds. */
+  resize(height: number): void;
+  /** Keeps the frame as tall as `element` (the body by default). Returns a stop function. */
+  autoResize(element?: Element): () => void;
+  /** `fatal` swaps the block for the host's fallback, for a block that cannot continue. */
+  reportError(message: string, args?: { fatal?: boolean }): void;
+  /**
+   * Asks the host to navigate. `scope` picks the space `path` is resolved in and
+   * DEFAULTS to `'app'` — this app's own sub-paths, which is all this method
+   * could reach before the field existed. Pass `scope: 'site'` to leave the app
+   * for a civitai.com page; the host grants that per-surface and refuses it
+   * elsewhere. Fire-and-forget either way: a refusal is silent.
+   */
+  navigate(path: string, args?: { scope?: NavigateScope; target?: 'current' | 'new_tab' }): void;
+  /** Fires `false` when the page hides and `true` when it returns. */
+  onVisibilityChange(handler: (visible: boolean) => void): () => void;
+  /** Starts sign-in; the block re-initialises as a signed-in viewer. */
+  requestSignIn(args?: { returnUrl?: string }): void;
+  /**
+   * Sends one custom event to the app's analytics. Fire-and-forget: no reply
+   * and no acknowledgement. The wire is `useBlockAnalytics().track`'s.
+   *
+   * 🔴 Only what the manifest DECLARES under `analytics.events` is recorded,
+   * against the approved manifest. An undeclared event is counted as dropped and
+   * its name is not stored. A declared event keeps only its declared
+   * properties, each only when the value has the declared type — `enum` (one of
+   * the declared strings), `number` or `boolean`; there is no free-text string.
+   * Each mount may send 10 events a second and 500 in all; an event over a
+   * limit is dropped in the browser and counted nowhere. Owners see aggregates
+   * in the app's analytics panel, never individual events.
+   */
+  track(eventName: string, properties?: Record<string, unknown>): void;
+  /**
+   * Saves to the viewer's device through the host, because a sandboxed frame
+   * cannot. The host fetches only from origins it allowlists.
+   */
+  download(request: DownloadRequest, opts?: HostCallOptions): Promise<void>;
+  /** civitai's own picker. Resolves the one resource chosen, or `null` if dismissed. */
+  openResourcePicker(
+    args: { resourceType: ResourcePickerType; baseModelGroup?: string },
+    opts?: HostCallOptions,
+  ): Promise<PickedResource | null>;
+  /** `suggestedAmount` is a starting point the viewer can change. */
+  openBuzzPurchase(
+    args?: { suggestedAmount?: number },
+    opts?: HostCallOptions,
+  ): Promise<{ purchased: boolean }>;
+  /**
+   * civitai's own upload modal. The bytes go through the host's session, never
+   * through the frame, and `null` means the viewer closed it without uploading.
+   *
+   * `purpose: 'generationSource'` uploads a PRIVATE img2img source; see
+   * {@link SourceImage} for its `imageId` and `ready`.
+   */
+  openImageUpload(
+    args: { purpose: 'generationSource' },
+    opts?: HostCallOptions,
+  ): Promise<SourceImage | null>;
+  /**
+   * A PUBLIC image. The host stores it and moderates it afterwards, so this
+   * resolves with a {@link PendingImage} — the image, plus the `scan()` that
+   * answers whether anyone but its author may see it.
+   */
+  openImageUpload(
+    args?: { purpose?: 'display' },
+    opts?: HostCallOptions,
+  ): Promise<PendingImage | null>;
+  /**
+   * Publishes outputs of ONE of this app's own workflows as public images, and
+   * resolves with the ids of the rows the host created. Needs
+   * `ai:write:budgeted`: an app trusted to spend the viewer's Buzz on a
+   * generation is trusted to publish what that generation produced.
+   *
+   * 🔴 Outputs are named by INDEX into the workflow, never by url. The host
+   * re-derives that this viewer and this app own `workflowId`, then resolves
+   * the urls itself — which is the whole guarantee, because a frame at an
+   * opaque origin naming its own blob to publish would be a different feature.
+   *
+   * The host shows the viewer a confirmation first and answers only when they
+   * act, so this waits on a person. Nothing here bounds that wait; pass a
+   * `signal` for the bound your app wants.
+   *
+   * ⚠ Publishing is best-effort per image. An output that fails to publish is
+   * skipped rather than failing the call, so `imageIds` can be SHORTER than
+   * the selection and nothing says which index dropped. Compare lengths rather
+   * than pairing ids to indexes.
+   */
+  publishGenerationOutputs(
+    args: { workflowId: string; imageIndexes?: number[] },
+    opts?: HostCallOptions,
+  ): Promise<number[]>;
+}
+
+export function createHost(transport: BlockTransport): Host {
+  return {
+    resize: (height) => notify('RESIZE_IFRAME', { height }, { transport }),
+    autoResize(element) {
+      const target = element ?? globalThis.document?.body;
+      if (!target || typeof ResizeObserver === 'undefined') return () => {};
+      let sent = -1;
+      const report = () => {
+        const height = Math.ceil(target.getBoundingClientRect().height);
+        if (height === sent) return;
+        sent = height;
+        notify('RESIZE_IFRAME', { height }, { transport });
+      };
+      const observer = new ResizeObserver(report);
+      observer.observe(target);
+      report();
+      return () => observer.disconnect();
+    },
+    reportError: (message, args = {}) =>
+      notify('BLOCK_ERROR', { message, fatal: args.fatal ?? false }, { transport }),
+    // `scope` is OMITTED rather than sent as `undefined` when the caller did not
+    // choose one. Absent and `'app'` mean the same thing to the host, so this is
+    // not a behaviour difference — it keeps the wire payload byte-identical to
+    // what every pre-`scope` build sends, which is the property the back-compat
+    // claim rests on and the one a host-side diff can actually check.
+    navigate: (path, args = {}) =>
+      notify(
+        'NAVIGATE',
+        { path, ...(args.scope ? { scope: args.scope } : {}), target: args.target ?? 'current' },
+        { transport },
+      ),
+    onVisibilityChange(handler) {
+      const offSuspend = on(transport, 'SUSPEND', () => handler(false));
+      const offResume = on(transport, 'RESUME', () => handler(true));
+      return () => {
+        offSuspend();
+        offResume();
+      };
+    },
+    requestSignIn: (args = {}) => notify('REQUEST_SIGN_IN', args, { transport }),
+    // `properties` is OMITTED when not given, so the payload is byte-identical
+    // to what `useBlockAnalytics().track(name)` sends after JSON drops the
+    // `undefined`.
+    track: (eventName, properties) =>
+      notify(
+        'TRACK_EVENT',
+        { eventName, ...(properties !== undefined ? { properties } : {}) },
+        { transport },
+      ),
+    async download(request, opts = {}) {
+      await call('SAVE_IMAGE', request, { ...opts, transport });
+    },
+    async openResourcePicker(args, opts = {}) {
+      return (await call('OPEN_RESOURCE_PICKER', args, { ...opts, transport })).selected ?? null;
+    },
+    async openBuzzPurchase(args = {}, opts = {}) {
+      const { purchased } = await call('OPEN_BUZZ_PURCHASE', args, { ...opts, transport });
+      return { purchased };
+    },
+    async publishGenerationOutputs(args, opts = {}) {
+      const { imageIds } = await call('PUBLISH_GENERATION_OUTPUTS', publishParams(args), {
+        ...opts,
+        transport,
+      });
+      // The host spells "no failure" as `error: ''`, which the transport reads
+      // as a success. A reply with no `result` at all is refused by the
+      // transport (the ledger says this reply nests under `result`), but one
+      // whose `result` lacks the ids gets this far, and returning it would
+      // resolve `undefined` from a promise that says `number[]`. A caller
+      // reading that as "nothing published" would be guessing: images may well
+      // have been.
+      if (!Array.isArray(imageIds) || !imageIds.every((id) => typeof id === 'number')) {
+        throw new BridgeError(
+          'malformed',
+          'PUBLISH_GENERATION_OUTPUTS',
+          'PUBLISH_GENERATION_OUTPUTS reply carried no image ids. Whether anything ' +
+            'was published is unknown; read the workflow back rather than assuming.',
+        );
+      }
+      return imageIds;
+    },
+    // Cast scoped to this one member: the interface overloads it so each
+    // `purpose` names its own return, which one implementation signature cannot
+    // express. Every other member here is still checked against `Host`.
+    openImageUpload: ((
+      args: { purpose?: 'display' | 'generationSource' } = {},
+      opts: HostCallOptions = {},
+    ) =>
+      args.purpose === 'generationSource'
+        ? openSourceUpload(transport, opts)
+        : openDisplayUpload(transport, opts)) as Host['openImageUpload'],
+  };
+}
+
+/**
+ * Everything that goes on the `PUBLISH_GENERATION_OUTPUTS` wire, built field by
+ * field.
+ *
+ * 🔴 NAMED FIELDS, NEVER A SPREAD. The message's guarantee is that a block
+ * cannot say WHICH bytes to publish — it names a workflow it owns and indexes
+ * into it, and the host resolves the urls. Spreading the caller's object here
+ * would put whatever else it carries on the wire, so the one line that makes
+ * `url` unreachable is the two assignments below being the only ones.
+ *
+ * The two refusals are hangs and escalations the host cannot save us from:
+ *
+ * - A missing `workflowId` is DROPPED by the host with no reply at all, and
+ *   nothing in this package bounds a request, so the call would simply never
+ *   settle.
+ * - An `imageIndexes` the host cannot read — empty, or holding anything that is
+ *   not a whole index — is stripped, and a stripped `imageIndexes` means
+ *   PUBLISH EVERY OUTPUT. "Publish these two" quietly becoming "publish all
+ *   twenty" is not a failure a viewer can take back.
+ */
+function publishParams(args: { workflowId: string; imageIndexes?: number[] }): {
+  workflowId: string;
+  imageIndexes?: number[];
+} {
+  const { workflowId, imageIndexes } = args;
+  if (typeof workflowId !== 'string' || workflowId === '') {
+    throw new BridgeError(
+      'invalid',
+      'PUBLISH_GENERATION_OUTPUTS',
+      'publishGenerationOutputs needs the workflowId of a workflow this app ran.',
+    );
+  }
+  if (imageIndexes === undefined) return { workflowId };
+  if (
+    !Array.isArray(imageIndexes) ||
+    imageIndexes.length === 0 ||
+    !imageIndexes.every((index) => Number.isInteger(index) && index >= 0)
+  ) {
+    throw new BridgeError(
+      'invalid',
+      'PUBLISH_GENERATION_OUTPUTS',
+      'imageIndexes must be a non-empty list of output indexes. The host reads an ' +
+        'unusable list as "publish every output", so this refuses rather than publish ' +
+        'more than you asked for.',
+    );
+  }
+  return { workflowId, imageIndexes: [...imageIndexes] };
+}
+
+async function openSourceUpload(
+  transport: BlockTransport,
+  opts: HostCallOptions,
+): Promise<SourceImage | null> {
+  const { selected } = await call(
+    'OPEN_IMAGE_UPLOAD',
+    { purpose: 'generationSource' },
+    { ...opts, transport },
+  );
+  return asSourceImage(selected);
+}
+
+/**
+ * The public-image upload. Two things make it more than one `call`:
+ *
+ * The verdict is a PUSH the host sends on its own schedule, so the listener has
+ * to be attached BEFORE the request goes out — a scan that finishes quickly can
+ * land before the reply is read, and a verdict nobody heard is a verdict lost.
+ *
+ * And a host that does not know `asyncScan` answers the OLD way: it blocks its
+ * modal on the scan and replies with a moderated image. That reply is a verdict
+ * already reached, so it is stored as one; a caller written against `scan()`
+ * gets its answer rather than waiting on a push no such host will ever send.
+ */
+function openDisplayUpload(
+  transport: BlockTransport,
+  opts: HostCallOptions,
+): Promise<PendingImage | null> {
+  let verdict: ImageScanResult | undefined;
+  let imageId: number | undefined;
+  /** Verdicts that arrived before the reply named our `imageId`, keyed by theirs. */
+  const early = new Map<number, ImageScanResult>();
+  const waiters = new Set<(result: ImageScanResult) => void>();
+
+  const settle = (result: ImageScanResult) => {
+    verdict = result;
+    off();
+    for (const waiter of [...waiters]) waiter(result);
+    waiters.clear();
+  };
+
+  const off = on(transport, 'IMAGE_SCAN_RESOLVED', (push) => {
+    if (verdict !== undefined) return; // the host emits once; honour the first
+    if (typeof push?.imageId !== 'number') return;
+    if (imageId === undefined) early.set(push.imageId, asScanResult(push.result));
+    else if (push.imageId === imageId) settle(asScanResult(push.result));
+  });
+
+  const handle = (id: number, url: string): PendingImage => {
+    imageId = id;
+    const buffered = early.get(id);
+    if (buffered !== undefined && verdict === undefined) settle(buffered);
+    return {
+      imageId: id,
+      url,
+      scan: ({ signal } = {}) =>
+        new Promise<ImageScanResult>((resolve, reject) => {
+          if (verdict !== undefined) return resolve(verdict);
+          if (signal?.aborted) return reject(signal.reason);
+          const deliver = (result: ImageScanResult) => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve(result);
+          };
+          const onAbort = () => {
+            waiters.delete(deliver);
+            reject(signal!.reason);
+          };
+          waiters.add(deliver);
+          signal?.addEventListener('abort', onAbort, { once: true });
+        }),
+    };
+  };
+
+  return (async () => {
+    let selected;
+    try {
+      ({ selected } = await call('OPEN_IMAGE_UPLOAD', { asyncScan: true }, { ...opts, transport }));
+    } catch (error) {
+      off();
+      throw error;
+    }
+
+    const pending = asPendingUpload(selected);
+    if (pending) return handle(pending.imageId, pending.url);
+
+    // A host that ignored `asyncScan` and scanned before replying.
+    const moderated = asUploadedImage(selected);
+    if (moderated) {
+      const image = handle(moderated.imageId, moderated.url);
+      if (verdict === undefined) settle({ status: 'scanned', image: moderated });
+      return image;
+    }
+
+    // Dismissed, or a reply this flow cannot read as an image. Never invent a
+    // handle: its `scan()` would have nothing to answer with.
+    off();
+    return null;
+  })();
+}
+
+function asSourceImage(value: unknown): SourceImage | null {
+  const v = value as Partial<SourceImage> | undefined;
+  if (typeof v?.url !== 'string' || typeof v.width !== 'number' || typeof v.height !== 'number') {
+    return null;
+  }
+  return {
+    url: v.url,
+    width: v.width,
+    height: v.height,
+    ...(typeof v.imageId === 'number' ? { imageId: v.imageId } : {}),
+    ...(typeof v.ready === 'boolean' ? { ready: v.ready } : {}),
+  };
+}
+
+function asPendingUpload(value: unknown): { imageId: number; url: string } | null {
+  const v = value as { status?: unknown; imageId?: unknown; url?: unknown } | undefined;
+  return v?.status === 'pending' && typeof v.imageId === 'number' && typeof v.url === 'string'
+    ? { imageId: v.imageId, url: v.url }
+    : null;
+}
+
+function asUploadedImage(value: unknown): UploadedImage | null {
+  const v = value as Partial<UploadedImage> | undefined;
+  return typeof v?.imageId === 'number' &&
+    typeof v.url === 'string' &&
+    typeof v.nsfwLevel === 'number' &&
+    typeof v.contentRating === 'string'
+    ? {
+        imageId: v.imageId,
+        url: v.url,
+        nsfwLevel: v.nsfwLevel,
+        contentRating: v.contentRating,
+      }
+    : null;
+}
+
+/**
+ * 🔴 The only way into {@link ImageScanResult}, and it fails CLOSED in both
+ * directions: `blocked` is kept exactly as the host sent it, and nothing
+ * becomes `scanned` without a readable image to back the claim. A verdict this
+ * cannot read is an `error` — which is not a pass — rather than dropped, since
+ * a dropped verdict leaves `scan()` waiting on a push the host has already sent.
+ */
+function asScanResult(value: unknown): ImageScanResult {
+  const v = value as { status?: unknown; image?: unknown; reason?: unknown; message?: unknown };
+  if (v?.status === 'blocked') {
+    return { status: 'blocked', ...(typeof v.reason === 'string' ? { reason: v.reason } : {}) };
+  }
+  if (v?.status === 'scanned') {
+    const image = asUploadedImage(v.image);
+    return image
+      ? { status: 'scanned', image }
+      : { status: 'error', message: 'the host reported a scan with no image' };
+  }
+  return { status: 'error', ...(typeof v?.message === 'string' ? { message: v.message } : {}) };
+}
+
+export interface HostSessionOptions {
+  /**
+   * The document store is served by the in-tab local store (a dev-tunnel
+   * preview): the value `initialize()` latched from `isLocalPreviewStorage`.
+   * `requestGrants` then treats `LOCAL_PREVIEW_STORAGE_SCOPES` as held.
+   */
+  localPreviewStorage?: boolean;
+}
+
+/** The token the host minted for this block, kept current as the host rotates it. */
+export function createHostSession(
+  transport: BlockTransport,
+  { localPreviewStorage = false }: HostSessionOptions = {},
+): Session {
+  return {
+    async getToken({ fresh, signal }: TokenOptions = {}) {
+      if (!fresh) return transport.snapshot.get().token.raw;
+      const { blockInstanceId } = transport.snapshot.get();
+      const { token } = await call('REQUEST_TOKEN', { blockInstanceId }, { transport, signal });
+      return tokenFromWrapped(token).raw;
+    },
+    requestGrants: (scopes, opts = {}) => {
+      if (opts.from !== undefined) {
+        // A preview has no other app to hold the grant (its store refuses every
+        // import), so there is nothing to ask for.
+        return localPreviewStorage ? Promise.resolve(false) : requestGrantInSource(transport, scopes, opts.from, opts);
+      }
+      return requestGrants(
+        transport,
+        // A preview token never carries a document-store scope and no grant can
+        // add one, so asking the host for it could only be refused — and the
+        // refusal would take the rest of the request down with it. The local
+        // store serves them; ask only for the rest. Nothing on the token changes.
+        localPreviewStorage
+          ? scopes.filter((scope) => !LOCAL_PREVIEW_STORAGE_SCOPES.has(scope))
+          : scopes,
+        opts,
+      );
+    },
+  };
+}
+
+/**
+ * The host re-mints the token once the viewer consents, so a grant arrives as
+ * a token carrying the scopes. A viewer who closes the dialog sends nothing,
+ * so pass a `signal` to bound the wait.
+ */
+function requestGrants(
+  transport: BlockTransport,
+  scopes: readonly Scope[],
+  { signal }: GrantOptions,
+): Promise<boolean> {
+  const granted = () => {
+    const held = new Set(transport.snapshot.get().token.scopes);
+    return scopes.every((scope) => held.has(scope));
+  };
+  if (granted()) return Promise.resolve(true);
+  if (signal?.aborted) return Promise.reject(signal.reason);
+
+  return new Promise<boolean>((resolve, reject) => {
+    const release: (() => void)[] = [];
+    const settle = (finish: () => void) => {
+      for (const off of release) off();
+      finish();
+    };
+
+    release.push(transport.snapshot.subscribe(() => granted() && settle(() => resolve(true))));
+    release.push(on(transport, 'CONSENT_UNAVAILABLE', () => settle(() => resolve(false))));
+    if (signal) {
+      const onAbort = () => settle(() => reject(signal.reason));
+      signal.addEventListener('abort', onAbort, { once: true });
+      release.push(() => signal.removeEventListener('abort', onAbort));
+    }
+
+    notify('REQUEST_CONSENT', { scopes: [...scopes] }, { transport });
+  });
+}
+
+/** A source app's blockId, as the host checks `from` (civitai/civitai#7586). */
+const SOURCE_BLOCK_ID = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
+const SOURCE_PUBLISH_SCOPE = 'apps:storage:publish';
+
+/**
+ * How long {@link requestGrantInSource} waits for an answer by itself: "Not now" sends
+ * nothing. The same bound as the document store's wait for this prompt.
+ */
+const SOURCE_GRANT_WAIT_MS = 60_000;
+
+/**
+ * The viewer's `apps:storage:publish` grant IN THE SOURCE APP `from` (civitai/civitai#7586).
+ *
+ * The host records it for the source, so this app's token scopes do NOT change — the
+ * consumer's own `apps:storage:publish` is not it, and no scope check can see it. After
+ * Allow the host re-mints this app's token and pushes `TOKEN_REFRESH` anyway, so the first
+ * host-PUSHED `TOKEN_REFRESH` after the prompt was posted resolves `true`. Only a push
+ * counts: a `TOKEN_REFRESH_RESPONSE` answers this app's own (or a concurrent)
+ * `getToken({ fresh: true })`, and a theme or route push carries no token.
+ *
+ * 🔴 `true` is "the host pushed a token refresh after the prompt", NOT "the viewer allowed":
+ * the host also pushes its scheduled re-mint, and "Not now" sends nothing, so a routine
+ * re-mint while the prompt is open reads the same as an Allow. That is the host protocol's
+ * limit (the app's own consent prompt has it too); the caller's next write is the authority.
+ *
+ * `CONSENT_UNAVAILABLE` resolves `false`, and so does the wait running out
+ * ({@link SOURCE_GRANT_WAIT_MS}); a caller `signal` can end it sooner (rejecting with its
+ * reason). The host refuses any other payload carrying `from` and opens nothing, so one is
+ * never sent.
+ */
+function requestGrantInSource(
+  transport: BlockTransport,
+  scopes: readonly Scope[],
+  from: string,
+  { signal }: GrantOptions,
+): Promise<boolean> {
+  if (scopes.length !== 1 || scopes[0] !== SOURCE_PUBLISH_SCOPE || typeof from !== 'string' || !SOURCE_BLOCK_ID.test(from)) {
+    return Promise.resolve(false);
+  }
+  if (signal?.aborted) return Promise.reject(signal.reason);
+
+  return new Promise<boolean>((resolve, reject) => {
+    const release: (() => void)[] = [];
+    const settle = (finish: () => void) => {
+      for (const off of release) off();
+      finish();
+    };
+
+    // Subscribed before the prompt is posted, and pushes arrive as later events, so only a
+    // refresh after the prompt can count.
+    release.push(on(transport, 'TOKEN_REFRESH', () => settle(() => resolve(true))));
+    release.push(on(transport, 'CONSENT_UNAVAILABLE', () => settle(() => resolve(false))));
+    const timer = setTimeout(() => settle(() => resolve(false)), SOURCE_GRANT_WAIT_MS);
+    release.push(() => clearTimeout(timer));
+    if (signal) {
+      const onAbort = () => settle(() => reject(signal.reason));
+      signal.addEventListener('abort', onAbort, { once: true });
+      release.push(() => signal.removeEventListener('abort', onAbort));
+    }
+
+    notify('REQUEST_CONSENT', { scopes: [SOURCE_PUBLISH_SCOPE], from }, { transport });
+  });
+}

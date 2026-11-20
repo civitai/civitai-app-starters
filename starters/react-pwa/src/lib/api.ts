@@ -1,9 +1,18 @@
 import type { GenerateInput, WorkflowSnapshot } from '@civitai/app-sdk/orchestrator';
 
+/**
+ * What `GET /api/me` hands the SPA.
+ *
+ * `balance` is `null` when the BFF could not read it — `BuzzRead` is optional
+ * at OAuth consent and `buzz.getUserAccount` answers 403 without it. It does
+ * NOT come from `/api/v1/me`, which returns no balance at all; the BFF reads
+ * it separately via `getBuzzBalance()`. Render nothing when it is nullish —
+ * a dash is what the pre-fix bug looked like.
+ */
 export interface Me {
   authenticated: boolean;
   username?: string;
-  balance?: number;
+  balance?: number | null;
   grantedScopes?: string[];
   error?: string;
 }

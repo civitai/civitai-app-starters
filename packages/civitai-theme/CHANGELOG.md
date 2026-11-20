@@ -1,0 +1,500 @@
+# @civitai/theme
+
+## 0.5.2
+
+### Patch Changes
+
+- a5e84b7: docs: three README claims the shipped tokens had already falsified
+
+  **`@civitai/blocks-react` — default theme.** The auto-theming bullet told authors
+  that with no `data-theme` attribute the components render **light**, "matching
+  the starter palette". `@civitai/theme@0.5.0` flipped the base to **dark** and
+  removed the OS-preference override, so both halves have been false since that
+  release. Corrected by reusing the wording the canonical contract already carries
+  (`@civitai/components`' `MARKUP.md`): default (no attribute) is the dark palette,
+  and nothing consults the OS preference.
+
+  **`@civitai/blocks-react` — component-pack description.** The W6 section
+  advertised "8px radius, the blue primary, the dark/light surfaces". The shipped
+  token is `--civitai-radius: 0.25rem` — **4px** — and has been since `0.35.0`; the
+  package's own `src/ui/styles.ts` already records the `8px→4px` break. The
+  parenthetical is cut rather than re-specified, so it cannot go stale against
+  another package's tokens a third time.
+
+  **`@civitai/theme` — the opening description.** The first bullet described
+  `dist/tokens.css` as "a `:root` + `[data-theme='light'|'dark']` + **OS-preference**
+  stylesheet". The same file already says the opposite twice — _"Dark is the base,
+  and nothing here consults the OS"_, and _"There is deliberately no
+  `@media (prefers-color-scheme: …)` block, in either direction"_ — and the shipped
+  `dist/tokens.css` contains zero such at-rules. The two words are cut; the
+  accurate explanation below them is left to stand.
+
+  Prose only — no behaviour change in either package. Patch releases are needed
+  because the published artifacts _are_ these documents: all three claims are live
+  in the published READMEs that ship inside the `0.63.1` and `0.5.1` tarballs.
+
+## 0.5.1
+
+### Patch Changes
+
+- 42e6e11: docs: a `:root` token override loses silently, and all three packages told authors otherwise
+
+  `@civitai/components`' cascade promise — "every rule lives in
+  `@layer civitai.components`, so your own unlayered CSS always wins with no
+  `!important`" — is true of **this package's rules** and false of the **tokens**.
+  `@civitai/theme`'s sheet carries no cascade layer and declares its tokens at
+  `:root` / `[data-theme='…']`, specificity `0-1-0`. So an app's own
+  `:root { --civitai-color-primary: … }` does not outrank them, it **ties**, and
+  stylesheet order decides.
+
+  🔴 **The order that loses is the one the framework itself produces.**
+  `useBlocksStyles()` injects from a `useEffect`, so the token sheet lands _after_
+  a bundler-injected app stylesheet. Measured in Chromium: in that order a `:root`
+  brand override resolves to civitai's own `#1971C2` with no error and no warning
+  — and it does so with or without `data-theme` present, so the host theme stamp
+  is not the cause. An author branding a block the obvious way gets civitai blue
+  and nothing to debug.
+
+  Nothing in the three packages said so. The one piece of correct advice that did
+  exist — `MARKUP.md`'s inline-`style` example — happens to be order-immune, but
+  read as one option among equals rather than as the route that works.
+
+  - `@civitai/components` `src/components.css`: 🔴 **the sheet's own header
+    carried the unqualified promise this release retracts** — _"ALL rules live in
+    `@layer civitai.components` so a consumer's own unlayered CSS always wins the
+    cascade WITHOUT specificity fights"_ — and it is single-sourced into **16** generated
+    artifacts under `src/` by `pnpm --filter @civitai/components generate` (which
+    also rewrites `dist/components.css` and the root `styles.css`, carrying the
+    same header) — so it was the most-published copy of the wrong claim and the
+    last one anyone would look at. Now scoped to _this sheet_ with the token
+    exception stated: one edit, every artifact.
+  - `@civitai/components` `MARKUP.md`: _Cascade / overriding_ now separates the
+    layered rules from the unlayered tokens, says **scope a token override, never
+    declare one at `:root`**, and gives the routes measured to win in either order
+    (inline `style`, or a class on the block root). It also records that a scoped
+    value crosses into component shadow roots. This is the CANONICAL copy; the
+    others below point at it rather than restating it.
+  - `@civitai/components` `README.md`: the correction on the npm page, where the
+    unqualified "your own unlayered CSS always wins" sentence lived — cut to the
+    one-clause rule plus the `MARKUP.md` link it already carried. The utilities
+    section's "override the custom properties to retune every utility at once" now
+    says _on a scope, not `:root`_. ⚠️ With a caveat that matters: those tokens
+    live in `utilities.css`, a **different** unlayered sheet, and nothing injects
+    it for you — a consumer links it themselves, so there the stylesheet order is
+    _theirs_ to control and a `:root` override can be made to work. Scoping is
+    still the advice because it needs no ordering discipline at all. Measured for
+    the token sheet; that sheet is the same shape by construction, not separately
+    measured.
+  - `@civitai/theme` `README.md`: a _Recolouring a token (brand overrides)_
+    section, because this is the sheet with no layer and its own page never
+    mentioned the interaction. It also states plainly what is **not** supported:
+    the package exports token values and `injectTokens(doc?)`, the generator is
+    internal, and only the literal strings `light`/`dark` select a token block, so
+    `data-theme="mybrand"` selects none and inherits dark. You recolour the token
+    set; there is no named-theme API.
+  - `@civitai/blocks-react` `src/ui/styles.ts`: this is the function whose
+    effect-time injection creates the losing order, so the warning belongs on it.
+    🔴 **It is on `useBlocksStyles()`' own JSDoc, not the file-level comment** —
+    measured, the file-level block reaches the published `.d.ts` **not at all**:
+    it floats above a non-exported const that `tsc` elides, so it attaches to no
+    emitted declaration, and `files` ships no `src`. A block author hovering the
+    hook is the named audience and the file comment never reached them. Kept to a
+    pointer rather than a paraphrase of the matrix: a JSDoc copy of another
+    package's README, on another release cadence, is a desync nothing in CI can
+    see, and this repo has already measured that exact failure once.
+  - `@civitai/theme` `test/generation-parity.test.ts`: two node-tier assertions —
+    that the emitted sheet contains no `@layer`, and that its base block declares
+    the tokens ON the root element at full specificity — `:root` is required, so
+    `:root` and `:root, :host` pass while `:host` alone, `:where(:root)`,
+    `:root > *` and `:root body` all fail. That is the **defining**
+    property consumers depend on, and until now it was asserted nowhere — the
+    parity test stays green if you layer, because both sides of the comparison
+    move together.
+
+  Prose and JSDoc only — no behaviour change in any of the three. A patch release
+  is needed because the published artifacts _are_ these documents.
+
+  Backed by tests rather than by reasoning, at two levels:
+  `@civitai/components`' `test/token-override-order.browser.test.ts` asserts every
+  documented route in **both** stylesheet orders, with fixture controls naming the
+  real civitai value the trap resolves to; and the theme-package assertions above
+  pin the property those cases are a consequence of. The browser cases record the
+  trap as well as the happy paths, but as EVIDENCE rather than as the tripwire —
+  and measured, they are a PARTIAL detector: a `@layer` wrap reddens both
+  order-dependent cases, while a zero-specificity base (`:where(:root)`) reddens
+  exactly **one**, because `[data-theme='dark']` keeps its `0-1-0` specificity and
+  still wins on order. That is why the property is pinned at source in the theme
+  package, in **two** assertions rather than one: a substring check for `@layer`
+  cannot see `:where(`, so the selector shape is asserted alongside it.
+
+  Not documented, deliberately: `:root:root`. The specificity notch does beat the
+  theme's blocks in both orders, but nobody asked for it, it has no named
+  consumer, it teaches a specificity hack, and it buys nothing a scoped override
+  does not already buy unconditionally.
+
+## 0.5.0
+
+### Minor Changes
+
+- 04c7425: feat(theme)!: dark is the base, and the stylesheet no longer consults the OS
+
+  **BREAKING for CSS consumers that relied on the old default.** `:root` now
+  carries the **dark** palette and `color-scheme: dark`, and the
+  `@media (prefers-color-scheme: dark) { :root:not([data-theme]) { … } }` block is
+  **gone** — with no OS-light block replacing it. An element with no `data-theme`
+  above it is now dark on every machine, where before it followed the viewer's OS
+  preference.
+
+  **Why.** The old shape put the design system and the surfaces built on it in
+  direct disagreement: `@civitai/theme` was light-base-plus-OS-dark, while
+  civitai.com is dark and an App Block boots dark and takes light only from its
+  host (`@civitai/blocks-react` 0.62.1). The consequence was not theoretical — it
+  is why every surface spanning the two had to set `data-theme` **explicitly** just
+  to stop the browser deciding, and why a component that merely _inherited_ the
+  default silently handed itself back to the OS. That workaround is what this
+  removes: dark-by-default is now a property of the stylesheet rather than
+  something each consumer re-asserts.
+
+  **What did not change.** `[data-theme='light']` is still a full mirror of the
+  light palette and still the way to get light; `[data-theme='dark']` still
+  restores dark inside a light subtree; the attribute still wins wherever it sits.
+  The JS exports are untouched — `tokens` remains the LIGHT map and `darkTokens`
+  the dark one, so `tokens` no longer describes `:root`. That naming is kept
+  deliberately: this release breaks the CSS default and nothing else, which keeps
+  it reviewable and revertable in one piece. The `@property` initial-values do move
+  to dark, for consistency with `:root` — not as an independently observable
+  behaviour; see the note at the emission site.
+
+  **If you need the old behaviour**, set `data-theme` from your own
+  `matchMedia('(prefers-color-scheme: dark)')` listener. Nothing in the stylesheet
+  will do it for you, and that is the point.
+
+  **Upgrading.** Most consumers need no change: anything already setting
+  `data-theme` is unaffected, which includes every `@civitai/components` element
+  mounted under an explicit theme. What moves is the **unthemed** case. If you
+  relied on it being light, add `data-theme="light"` where you render.
+
+  Verified rather than asserted — the discriminating fixture is a **light** OS,
+  because a dark-OS context answers "dark" under both the old and new designs and
+  proves nothing:
+
+  - `@civitai/components` `test/color-scheme.dark-base.browser.test.ts` (new): real
+    Chromium reporting `prefers-color-scheme: light`, with that report asserted
+    first as the fixture's own control. 6 cases; **3 are red against the previous
+    release** (dark-by-default, the light palette not applying, and a shadow-root
+    hairline that was 1px before).
+  - `@civitai/theme` `test/generation-parity.test.ts` (extended): the sheet
+    declares no `prefers-color-scheme` in either direction, `:root` carries the
+    dark value for every token that has one, and the light block is a full mirror.
+    **Red against the previous generator**, except the mirror assertion, which is
+    labelled in-file as an invariant guard rather than counted as regression
+    coverage.
+  - `test/color-scheme.prefers-dark.test.ts` keeps passing and its docstring now
+    says why that is **not** evidence for this change.
+
+## 0.4.0
+
+### Minor Changes
+
+- 266a021: `--civitai-color-surface` is a raised surface in dark mode: `#25262B`, measured
+  against civitai.com. It derived from `--mantine-color-body` in both schemes, so
+  in dark it was the page colour itself — every card, menu, modal, toast and input
+  was invisible against the page except for its border. Light mode is unchanged,
+  since `surface` and `surface-2` are the same `#fefefe` there.
+- 266a021: Follow `prefers-color-scheme` when no `data-theme` is set. The dark token values
+  are now also emitted under `@media (prefers-color-scheme: dark)`, scoped to
+  `:root:not([data-theme])`, so a page that never picks a theme starts in the one
+  the OS asks for. An app that sets the attribute — including a block acting on the
+  host's `THEME_CHANGE` — never matches the new block and is unaffected; every
+  pre-existing byte of the stylesheet is unchanged.
+- 266a021: Express "gray in light, surface in dark" as tokens instead of descendant selectors.
+
+  Four rules in `components.css` were written as `[data-theme='dark'] <descendant>`.
+  An ancestor selector cannot cross a shadow boundary and `:host-context()` has
+  never shipped in Firefox, so those four decisions were unreachable from a custom
+  element. They are now `--civitai-card-border-width`, `--civitai-color-track`,
+  `--civitai-color-segmented-bg` and `--civitai-color-media-placeholder`, which
+  inherit into a shadow root like any custom property.
+
+  Mantine has no variable carrying either side of these pairs, so `TokenSpec.source`
+  and `.literal` now each accept a `{ light, dark }` pair resolved against its own
+  scheme's variable map. `--civitai-card-border-width` is a width rather than a
+  colour: dark removes the default hairline's box, and a transparent colour would
+  leave 1px of it on every card.
+
+  No visual change — computed styles are unchanged in both themes. Existing tokens
+  and artifact bytes are untouched; the new tokens are appended.
+
+### Patch Changes
+
+- 266a021: Declare `color-scheme` alongside the tokens.
+
+  A dark surface with no `color-scheme` leaves the browser painting every NATIVE
+  control in light mode: a number input's spinner, a `<select>`'s disclosure
+  caret, checkbox and radio defaults, scrollbars and the text caret all render
+  pale against a dark background. It is not a token — it is the instruction that
+  makes the UA's own widgets match the surface they sit on.
+
+  Emitted in `:root` and `[data-theme='light']` as `light`, in
+  `[data-theme='dark']` as `dark`. It inherits, so it also reaches native
+  controls inside a shadow root, which is where the custom elements put theirs.
+
+  Nothing consumers wrote changes; existing attribute markup gets the same fix.
+
+## 0.3.2
+
+### Patch Changes
+
+- bcc24bf: Publish first-party deps as caret ranges instead of exact pins, and stop shipping sourcemaps that cannot resolve their sources (#374, #376).
+
+  **#374 — exact inter-package pins duplicated `@civitai/theme` and `@civitai/components`.**
+  `@civitai/components`, `@civitai/components-react` and `@civitai/blocks-react` declared
+  their first-party deps as `workspace:*`. pnpm rewrites the workspace protocol at pack
+  time, and `*` publishes an **exact** pin — measured off the real tarballs:
+  `@civitai/components@0.4.2` shipped `"@civitai/theme": "0.3.1"`, not `"^0.3.1"`.
+
+  Two exact pins from two different releases can never intersect, so co-installing
+  adjacent releases produced duplicate physical copies. Measured outside this workspace
+  with a real `npm install --package-lock-only` over a closed registry built from the
+  actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
+  `@civitai/blocks-react@0.56.1`:
+
+              before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                       @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+              after    @civitai/theme       0.3.1                   — 1 copy
+                       @civitai/components  0.4.2                   — 1 copy
+
+  That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
+  wins**, so the first token bump that changes a _value_ would have shipped stale tokens
+  underneath new component CSS — silently, and only in the duplicated install.
+
+  The three manifests now use `workspace:^`, which publishes `^<version>`.
+
+  **Scope of the fix, stated rather than implied.** `^` on a `0.x` version locks the
+  minor, so this removes duplication across patch-adjacent releases only. Measured at
+  the second point too: an app on `@civitai/components-react@0.3.1` (theme `0.2.1`)
+  alongside `@civitai/blocks-react@0.56.1` (theme `0.3.1`) still resolves 2 copies,
+  before and after. That is correct and deliberate — a `0.x` minor is a breaking change
+  under this repo's own convention, so those two releases genuinely disagree about which
+  theme they need, and widening the range to `>=x.y.z <1.0.0` would trade a duplicate
+  copy for an incompatible pairing of component CSS with theme tokens.
+
+  One consequence worth knowing at release time: because `^0.3.1` already admits
+  `0.3.2`, `changeset version` no longer cascades a re-release of every dependent on a
+  theme patch bump (verified against both manifest shapes — with `workspace:*` a theme
+  `0.3.1 → 0.3.2` bump dragged `@civitai/components` and `@civitai/components-react` to
+  `0.4.3`; with `workspace:^` it leaves them at `0.4.2`).
+
+  **#376 — every shipped sourcemap dangled.**
+  All five packages build with `sourceMap` + `declarationMap`, so `dist/` fills with
+  `*.js.map` and `*.d.ts.map` whose `sources` point at `../src/*.ts`. No package lists
+  `src` in `files`. Measured off the real packed file lists at the previous state: **270
+  shipped maps, 270 dangling source references, zero resolvable** — `@civitai/blocks-react`
+  160, `@civitai/app-sdk` 46, `@civitai/components-react` 48, `@civitai/theme` 12,
+  `@civitai/components` 4. A consumer's devtools loaded each map and then had nothing to
+  show.
+
+  The maps are now excluded from the tarballs (`"!dist/**/*.map"`) and still emitted into
+  `dist/`, where they are _not_ dangling — inside this repo `src` sits right beside them,
+  so go-to-definition from a starter still lands in the real `.ts`. **No consumer
+  debuggability is lost, because there was none.** Shipping `src` instead was measured
+  and rejected: `packages/civitai-blocks-react/src` alone is 879,895 B, in a package
+  whose design constraint is that every app inherits its install graph.
+
+  Tarball delta across the five packages: **−114,574 B gzipped, −580,786 B unpacked**
+  (`@civitai/blocks-react` alone: −77,441 B gzipped, −413,492 B unpacked).
+
+  Enforced going forward by `scripts/check-shipped-sourcemaps.mjs` (`pnpm
+check:shipped-sourcemaps`), which reads the real packed file list and every real map's
+  `sources` rather than grepping for the `files` entry — so shipping `src` or inlining
+  `sourcesContent` satisfies it equally.
+
+## 0.3.1
+
+### Patch Changes
+
+- ee25ac9: Docs: drop the version from the copy-paste CDN `<link>` URLs, so the stylesheet
+  a reader loads can never fall behind the contract the same file documents.
+
+  `MARKUP.md`, both `README.md`s and `demo/index.html` pinned
+  `@civitai/theme@0.2.0` and `@civitai/components@0.3.0`. Both still return **HTTP
+  200** — jsDelivr serves every published version forever — so this never surfaced
+  as a broken link. It served an old stylesheet, and each file had reached the
+  point of contradicting itself. Measured on the CDN, with `@0.9.9` on both
+  packages as the negative control (404, 50-byte body):
+
+  - `theme@0.2.0/styles.css` — 200, 5,560 B, **zero** `--civitai-bp-*` tokens.
+    `packages/civitai-theme/README.md` documents `var(--civitai-bp-md)` eleven
+    lines above the link that pinned it, and the developer-docs responsive guide
+    is written entirely against those tokens. `theme@0.3.0` ships all five
+    (`xs`/`sm`/`md`/`lg`/`xl`), 5,826 B.
+  - `components@0.3.0/styles.css` — 200, 28,042 B, **zero** `data-nowrap` rules,
+    and `[data-civitai-ui='group']` with no `flex-wrap`. `MARKUP.md` documents
+    `data-nowrap="true"` as the opt-out for the wrapping `group` that shipped in
+    `components@0.4.0` (31,970 B, 2 `data-nowrap` rules). So a reader following
+    the current markup contract got the pre-`0.4.0` overflow behaviour and an
+    attribute with nothing behind it — no console error, no failed request.
+
+  **Why unversioned rather than a bump to `@0.4.0`/`@0.3.0`.** A bump is the same
+  defect rescheduled — `0.3.1` (77ce989) already did exactly that, and these four
+  files were stale again one minor later. Nothing can catch it in-band: the two
+  packages version **independently** and publish on separate changesets, and
+  `MARKUP.md` is static prose shipped verbatim in `files` (npm → mirrored into
+  developer.civitai.com), so no build step is in a position to rewrite the pin.
+  Removing the version makes the rot structurally impossible instead of merely
+  deferred: `cdn.jsdelivr.net/npm/@civitai/<pkg>/styles.css` tracks the `latest`
+  dist-tag and resolves 200 on every CDN, because both packages already ship a
+  real root `styles.css` for exactly this reason (jsDelivr ignores package.json
+  `exports` — see the header comment on each build script).
+
+  The trade-off is stated where it belongs and taken deliberately: unversioned
+  means a future publish reaches a copy-pasted page unannounced. Pinned means the
+  page silently renders documented markup unstyled, which is the failure that has
+  actually happened, twice, and it fails in the direction that looks like the docs
+  being wrong. Unversioned can only be _ahead_ of the docs — additive, so
+  undocumented rules exist but nothing documented goes missing. Each file now says
+  so at the point of copy-paste, and tells a reader who does want a reproducible
+  build to take each version from that package's own npm page — never one version
+  across both links, since a version a package never published is a hard 404 and
+  a 404'd stylesheet also renders unstyled with no error.
+
+  Gated by `tests/guards/doc-cdn-urls.test.mjs` (offline; runs under
+  `pnpm test:guards` in the required `Starter` job), which fails on any versioned
+  `@civitai/*` jsDelivr URL in those four shipped docs. Verified as a regression
+  test rather than an invariant guard: **red at `72d555a` naming all 7 literals,
+  green at HEAD.** `CHANGELOG.md`s are deliberately out of scope — they quote
+  pinned URLs as history, and nobody copy-pastes from a changelog.
+
+  Docs-only, but it needs a release: all four files are in their package's `files`
+  array, so the corrected copy only reaches npm — and the docs generated from it —
+  on a publish.
+
+## 0.3.0
+
+### Minor Changes
+
+- 73412e3: Ship civitai's responsive breakpoint scale as tokens, and the "am I narrow?" question as a hook.
+
+  Until now a block author had no branch point at all: the pervasive inline-style idiom in blocks has no way to ask about its own width without hand-rolling a `ResizeObserver` and hard-coding numbers. Both halves of that are now provided.
+
+  **`@civitai/theme` — the scale as tokens.**
+
+  - New `--civitai-bp-xs` … `--civitai-bp-xl` CSS custom properties, plus `bpXs`…`bpXl` in the generated `tokens` / `tokenVars` maps and a `bp` group in the DTCG export.
+  - New exports `breakpoints` (numbers — the form a JS width comparison actually needs, since a custom property cannot appear in a `@media`/`@container` condition), `BREAKPOINT_KEYS`, `civitaiBreakpointsSource` and the `BreakpointKey` type.
+
+  🔴 **The values are civitai's PX scale, not Mantine's em scale, and the two agree on exactly one key.** `src/utils/breakpoints.json` (mirrored by civitai's Tailwind config and `mantineContainerSizes`) is `xs 480 · sm 768 · md 1024 · lg 1184 · xl 1440`; Mantine's stock em scale — which civitai never overrides and which every Mantine responsive prop uses — is `576 · 768 · 992 · 1200 · 1408`. Only `sm` matches, so a wrong implementation looks right at a glance and a test that pins `sm` alone passes against the wrong scale.
+
+  Because of that, the scale is vendored in its own module (`src/breakpoints.source.ts`) with its own drift guard against `breakpoints.json`, and is emitted through the generator as a **literal** token spec that never touches the Mantine theme pipeline — routing it through `mergeMantineTheme` is precisely how an un-overridden key would silently resolve to the em value. `theme.source.ts` was not the right home: it is a byte-faithful copy of civitai's `createTheme({...})` override, and that override defines no `breakpoints` key at all.
+
+  **`@civitai/blocks-react` — the question as a hook.**
+
+  New `useBlockBreakpoint(ref?)`, plus the pure `resolveBlockTier(width)` and the `BlockBreakpoint` / `BlockSizeTier` types.
+
+  ```tsx
+  const bp = useBlockBreakpoint();
+  <div
+    style={{
+      display: "flex",
+      flexDirection: bp.below("sm") ? "column" : "row",
+    }}
+  >
+    {bp.atLeast("md") && <aside>…</aside>}
+  </div>;
+  ```
+
+  - **A container query, not a viewport media query.** It observes an element — by default `document.documentElement`, which inside the block's sandbox iframe _is_ the slot the host handed us. Slot width is not monotonic in viewport width (the `model.sidebar_top` slot is ~360px at a 360px viewport and only ~430px at a 1440px one), so `matchMedia` inside the frame answers a question nobody asked. Same reasoning as the host-side `chromeGeometry.ts`.
+  - **Returns a tier, not a width.** `tier` is `'base' | 'xs' | … | 'xl'` with Tailwind semantics (a tier applies at its breakpoint and above); `atLeast(key)` / `below(key)` are the call-site-shaped comparators. A `ResizeObserver` fires on every pixel, so the hook stores the resolved _tier_ and returns a referentially stable object while the tier is unchanged — dragging 200px inside one tier re-renders the block zero times. Exposing the raw width would either force a render per pixel or be a lie, so it is deliberately not returned.
+  - `measured` distinguishes "not measured yet" from a genuinely narrow block, since an unmeasured width resolves to `'base'`. SSR-safe: with no `ResizeObserver` the hook never touches the DOM.
+
+## 0.2.1
+
+### Patch Changes
+
+- 77ce989: Refresh the stale CDN version pins in the shipped docs (`MARKUP.md`, both
+  `README.md`s, `demo/index.html`) to the currently-published versions —
+  `@civitai/theme@0.2.0` and `@civitai/components@0.3.0`.
+
+  Both links were still pinned at `@0.1.1` (published 2026-07-22), two minors
+  behind `components@0.3.0` (2026-07-29) and one behind `theme@0.2.0`
+  (2026-07-23). That URL still resolves — jsDelivr serves every published version
+  forever — so this never surfaced as a broken link. It silently served an old
+  stylesheet: `components@0.1.1/styles.css` is 8,713 B and carries rules for **10**
+  distinct `data-civitai-ui` values; `@0.3.0` is 28,042 B and carries **20**.
+
+  `MARKUP.md` documents 19 component sections. So an external HTML author
+  following the markup contract verbatim wrote correct, contract-shaped markup for
+  `checkbox`, `image`, `radio`, `radio-group`, `segmented-control`, `select`,
+  `slider`, `toast`, `toast-region` and `tooltip` against CSS that has no rules for
+  any of them — they render as unstyled bare elements, with no console error and no
+  failed request to notice. The theme pin was stale the same way: 17 `--civitai-*`
+  tokens at `0.1.1` vs 27 at `0.2.0`, so every token added since resolved to
+  nothing.
+
+  **These packages version INDEPENDENTLY — there is no shared version number.**
+  `@civitai/theme` has never published a `0.3.0`. Applying one version across both
+  links (the obvious-looking "bump them all to 0.3.0" fix) produces
+  `…/@civitai/theme@0.3.0/styles.css`, which is a hard 404 — and a stylesheet that
+  404s renders an unstyled page with no error either, so the wrong fix fails the
+  same silent way as the stale pin it replaces. `demo/index.html`'s comment now
+  says so at the point of copy-paste.
+
+  Every URL written here was verified to return 200 before commit, with the check
+  first validated against known-bad inputs (`theme@0.3.0` and `components@0.9.9`
+  both correctly reported 404).
+
+  Docs-only, but it needs a release: `MARKUP.md`, `README.md` and `demo/` are all
+  in `@civitai/components`'s `files`, and `README.md` is in `@civitai/theme`'s, so
+  the corrected copy only reaches npm — and the docs generated from it — on a
+  publish.
+
+## 0.2.0
+
+### Minor Changes
+
+- b896dd9: Design-system minor release (0.2.0, lockstep) — resolves the three deferred DX items from #181.
+
+  **F5 — default light-mode Card hairline (VISIBLE CHANGE).** In light mode `--civitai-color-surface` equals `--civitai-color-body`, so a borderless `Card` was invisible against the page. Cards now render a subtle default hairline (a low-alpha mix of the border token) so a Card _without_ `data-with-border` is still visible. `data-with-border="true"` remains the stronger, fully-opaque explicit border. Dark mode already differentiates surface from body and is visually unchanged. **Consumer impact:** any previously-borderless light-mode Card now shows a faint edge — intended, but review if you relied on an edgeless card.
+
+  **F6 — new `checkbox` / `radio` / `select` components (new permanent public API).** `@civitai/components` gains `data-civitai-ui="select"` (native `<select>` on the shared `-control` field chrome), `data-civitai-ui="checkbox"` / `"radio"` (themed native inputs — `accent-color` tint + custom sizing/focus-ring/disabled, box+label in a `-choice` row), and `data-civitai-ui="radio-group"` (`role=radiogroup` layout). `@civitai/components-react` adds the matching `Select` / `Checkbox` / `Radio` / `RadioGroup` `forwardRef` bindings. See `MARKUP.md` for the full markup + ARIA contract.
+
+  **F7 — richer neutral token ramp.** `@civitai/theme` now exposes the full 10-step Mantine gray ramp as `--civitai-color-gray-0` … `--civitai-color-gray-9` (`colorGray0`…`colorGray9` in the typed export), generated through the token pipeline from the drift-guarded `gray` tuple. Additive — the existing semantic neutrals are unchanged.
+
+## 0.1.2
+
+### Patch Changes
+
+- 5a210cb: Design-system 0.1.2 — two retrofit-dogfood fixes (civitai/civitai-app-starters#181).
+
+  - **Badge `data-color` (F2):** Badge now accepts an intent color mirroring
+    Alert's `data-color` contract (`info` / `success` / `warning` / `error`),
+    recoloring the `filled` / `light` / `outline` variants via the same
+    `color-mix()` token approach. `@civitai/components-react` `<Badge>` gains a
+    `color` prop mapped to `data-color`. Omitting it keeps the current primary
+    accent, so the change is non-breaking.
+  - **Dark `--civitai-color-primary-fg` (F8):** the generated
+    `[data-theme='dark']` token block now emits `--civitai-color-primary-fg`
+    (white) for symmetry with light. It is produced by the `@civitai/theme` token
+    pipeline (not hand-authored), so generation-parity holds; light is unchanged.
+
+## 0.1.1
+
+### Patch Changes
+
+- b61eb57: Fix design-system onboarding papercuts found by a blind dogfood (lockstep 0.1.1).
+
+  - **CDN styles.css now resolves on any CDN.** `@civitai/theme` and
+    `@civitai/components` ship a real package-root `styles.css` file (built from
+    `dist/`), so a literal path like
+    `cdn.jsdelivr.net/npm/@civitai/theme@0.1.1/styles.css` resolves — jsDelivr
+    ignores package.json `exports`, so the `./styles.css` export alias alone 404'd
+    there. The `exports` alias still works for bundler imports.
+  - **Docs CDN URLs fixed** — every README + `MARKUP.md` now uses pinned,
+    resolvable jsDelivr URLs.
+  - **Markup contract inlined** into the `@civitai/components` README (the
+    relative `MARKUP.md` link 404'd on npmjs.com); `MARKUP.md` stays canonical.
+  - **Servable `demo/index.html`** now ships in the `@civitai/components` tarball —
+    a complete copy-paste plain-HTML page (CDN links, one of every component, a
+    light/dark `data-theme` toggle, page theming via `--civitai-color-body`).
+  - **New `--civitai-color-body` token** in `@civitai/theme` (derived from
+    Mantine's `--mantine-color-body`: `#fefefe` light / `#1A1B1E` dark) — a
+    page-background token for plain-HTML apps.

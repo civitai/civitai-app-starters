@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import DesignSystemDemo from './components/DesignSystemDemo.svelte';
   import GenerateForm from './components/GenerateForm.svelte';
   import LoginButton from './components/LoginButton.svelte';
   import LogoutControls from './components/LogoutControls.svelte';
@@ -61,6 +62,8 @@
     {/if}
   </header>
 
+  <DesignSystemDemo />
+
   {#if flash.error}
     <div
       class="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
@@ -99,9 +102,13 @@
         <p class="text-sm">
           Signed in as <strong>{me.username ?? 'unknown'}</strong>
         </p>
-        <p class="mt-1 text-sm">
-          Buzz balance: <strong>{me.balance ?? '—'}</strong>
-        </p>
+        <!-- Hidden entirely when the balance is unknown (no `BuzzRead` -> 403
+             from the BFF's buzz read). A dash is what the pre-fix bug looked like. -->
+        {#if me.balance != null}
+          <p class="mt-1 text-sm">
+            Buzz balance: <strong>{me.balance}</strong>
+          </p>
+        {/if}
         <p class="mt-2 text-xs text-zinc-500">
           Granted scopes: <code class="font-mono">{me.grantedScopes?.join(', ')}</code>
         </p>

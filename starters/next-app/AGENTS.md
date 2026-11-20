@@ -37,22 +37,27 @@ src/
 │       │   └── route.ts                  # POST → submit
 │       └── workflow/[id]/route.ts        # GET  → snapshot
 ├── components/             # client components (login button, prompt form, etc.)
+├── proxy.ts                # THE ONLY PLACE THE SESSION IS REFRESHED. Next 16's
+│                           #   rename of middleware.ts; always nodejs runtime
 └── lib/
     ├── env.ts              # validated env access
-    ├── session.ts          # read/write the sealed session cookie
-    └── civitai.ts          # @civitai/app-sdk wiring (createAppClient, fetchMe, etc.)
+    ├── session-cookie.ts   # cookie names + pure parse/expiry helpers (no next/headers)
+    ├── session.ts          # read the sealed session cookie; write it from routes only
+    └── civitai.ts          # @civitai/app-sdk wiring (createOrchestratorClient, fetchMe, etc.)
 ```
 
 ## Patterns to keep
 
 - **OAuth + tokens stay server-side.** Never expose `access_token`, `refresh_token`, or `CIVITAI_CLIENT_SECRET` to the browser. The client only ever sees an opaque `httpOnly` `civ_session` cookie.
 - **Session = sealed cookie.** Read via `getSession()` in `src/lib/session.ts`. If `null`, the user is logged out. Don't reach into the cookie store directly elsewhere.
+- 🔴 **`getSession()` is READ-ONLY, and must stay that way.** Next.js allows cookie writes in Route Handlers, Server Actions and `proxy.ts` — **not** in a Server Component, which is `getSession()`'s primary caller. It used to refresh in place; both arms (`setSession` on success, `clearSession` on failure) called `cookies().set()`, so an expired session threw `Cookies can only be modified in a Server Action or Route Handler` and took the whole page render down. Refresh lives in `src/proxy.ts` now. If you add a write to `getSession()`, `pnpm probe:expired-session` will catch it.
 - **All Civitai API calls happen in route handlers**, not React server components. RSCs can trigger route handlers via `fetch('/api/…')` or read session via `getSession()` and call helpers in `lib/civitai.ts` directly.
 - **Buzz cost preview before submission.** Always call `/api/generate/estimate` and show the cost before submitting. Users blame the app, not Civitai, when they're surprised by Buzz spend.
 
 ## Patterns to avoid
 
 - ❌ Storing tokens in `localStorage`, cookies-without-httpOnly, or in rendered HTML.
+- ❌ Writing a cookie from a Server Component — including indirectly, via a helper that looks like a read. That is the exact shape of the bug `src/proxy.ts` exists to fix.
 - ❌ Using the `next-auth` / `@auth/core` patterns from older Next.js tutorials — this starter intentionally does not use those.
 - ❌ Hard-coding orchestrator base URLs — use the SDK defaults or env override.
 - ❌ Adding new env vars without putting them in `.env.example` and validating them in `src/lib/env.ts`.
@@ -62,7 +67,7 @@ src/
 
 | Task | How |
 |---|---|
-| Add a new Civitai API call | Add a function to `src/lib/civitai.ts` taking the session, returning typed result. Use the SDK's `createAppClient`. |
+| Add a new Civitai API call | Add a function to `src/lib/civitai.ts` taking the session, returning typed result. Use `createOrchestratorClient` from `@civitai/app-sdk/orchestrator`. |
 | Request more OAuth scopes | Edit `src/lib/scopes.ts` (`REQUESTED_SCOPES`). User will need to re-consent on next login. |
 | Add a generation engine option | Edit the workflow body builder. Don't ship 30 engine configs — pick one or two that exemplify the pattern. |
 | Persist generation history | This is **net-new infra** — flag it. Recommend Vercel KV for simple list/get, Postgres for richer queries. Don't silently add Prisma. |
@@ -71,7 +76,7 @@ src/
 ## Demo flow (read this before changing the home page)
 
 1. Logged out → `<LoginButton>` → `POST /api/auth/login` → 302 to Civitai → user consents → `GET /api/auth/callback/civitai` → session sealed → 302 to `/`.
-2. Logged in → `getSession()` on server → `fetchMe()` → render balance, scope summary, prompt form.
+2. Logged in → `getSession()` on server → `getMe()` (username) **and** `getBuzzBalance()` (balance — a separate endpoint, `null` without `BuzzRead`) → render the profile card, scope summary, prompt form.
 3. Submit prompt → client `POST /api/generate/estimate` → display Buzz cost → user confirms.
 4. Client `POST /api/generate` → returns workflow ID → client polls `GET /api/workflow/[id]` every 2s.
 5. On terminal status → display image(s) or error.
@@ -84,6 +89,7 @@ After any meaningful change, run the matching check before declaring done:
 |---|---|
 | Anything in `src/` | `pnpm typecheck` |
 | `next.config.mjs`, env wiring, security headers | `pnpm build` |
+| `src/lib/session.ts`, `src/proxy.ts`, anything touching the session cookie | `pnpm probe:expired-session` |
 | Auth flow (`src/app/api/auth/**`), session helpers | `pnpm test:e2e -- auth-flow` |
 | Generation flow (`src/app/api/generate/**`, workflow polling) | `pnpm test:e2e -- generation` |
 

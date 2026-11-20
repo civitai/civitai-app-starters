@@ -10,7 +10,7 @@
 [![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/fork/github/civitai/civitai-app-starters/tree/main/starters/svelte-pwa)
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https%3A%2F%2Fgithub.com%2Fcivitai%2Fcivitai-app-starters)
 
-Minimal Vite + bare Svelte 5 (no Kit) PWA for Civitai apps. OAuth login via a tiny [Hono](https://hono.dev) BFF, encrypted-cookie sessions, Buzz balance, cost preview, and a single image generation flow.
+Minimal Vite + bare Svelte 5 (no Kit) PWA for Civitai apps. OAuth login via a tiny [Hono](https://hono.dev) BFF, encrypted-cookie sessions, Buzz balance (read via `fetchBuzzAccount()` — **not** from `/api/v1/me`, which returns none — and hidden entirely when `BuzzRead` was not granted), cost preview, and a single image generation flow.
 
 Pick this if you want Svelte runes without SvelteKit's conventions (load functions, `+page.svelte` routes, adapters). For SSR + Kit's routing, use [`sveltekit-app`](https://github.com/civitai/civitai-app-starters/tree/main/starters/sveltekit-app) instead.
 
@@ -40,6 +40,12 @@ Generate `SESSION_SECRET`:
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
+
+`CIVITAI_AUTH_URL` (optional, default `https://auth.civitai.com`) is the auth hub
+the OAuth endpoints (authorize, token, revoke) are called on. It is separate from
+`CIVITAI_BASE_URL`, the main site, which the OAuth calls never use. Leave it
+unset in production; set both when you develop against a local Civitai and its
+auth hub (`.env.example` has the details).
 
 ## File layout
 

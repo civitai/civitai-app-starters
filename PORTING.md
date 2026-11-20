@@ -71,10 +71,19 @@ CIVITAI_CLIENT_SECRET=...
 SESSION_SECRET=...
 # Your app's public URL. Used to build the redirect_uri.
 APP_URL=http://localhost:3000
-# Override only for self-hosted Civitai instances.
+# Auth hub — OAuth endpoints (authorize / token / revoke) live here.
+CIVITAI_AUTH_URL=https://auth.civitai.com
+# Main app — ONLY /api/v1/me and tRPC/buzz calls (NOT oauth). Override only for
+# self-hosted Civitai instances.
 CIVITAI_BASE_URL=https://civitai.com
 ORCHESTRATOR_URL=https://orchestration.civitai.com
 ```
+
+Civitai's auth server was broken out into a standalone hub, so the base URL is
+split in two: OAuth endpoints target `CIVITAI_AUTH_URL` (default
+`https://auth.civitai.com`), while `/api/v1/me` and any tRPC/buzz calls stay on
+`CIVITAI_BASE_URL` (default `https://civitai.com`). The orchestrator has always
+been separate (`ORCHESTRATOR_URL`).
 
 **Never** put `CIVITAI_CLIENT_SECRET` in client-side bundles, `next.config.js`'s `env` block, Vite's `import.meta.env`, or anywhere shipped to the browser. The token exchange runs server-side only.
 
@@ -89,7 +98,7 @@ import { bitmaskFromScopes } from '@civitai/app-sdk/scopes';
 
 export const REQUESTED_SCOPES = bitmaskFromScopes([
   'UserRead',         // /api/v1/me + /userinfo — username, id, email, profile photo (always granted)
-  'BuzzRead',         // user's Buzz balance
+  'BuzzRead',         // buzz.getUserAccount — the user's Buzz balance (NOT on /api/v1/me)
   'AIServicesRead',   // history of past generations
   'AIServicesWrite',  // submit generations / spend Buzz on orchestrator
 ]);
@@ -129,7 +138,7 @@ const stateCookie = sealCookie(
 setResponseCookie('civ_oauth_state', stateCookie, { httpOnly: true, maxAge: 600, secure: true, sameSite: 'lax' });
 
 const authorizeUrl = buildAuthorizeUrl({
-  baseUrl: process.env.CIVITAI_BASE_URL ?? 'https://civitai.com',
+  baseUrl: process.env.CIVITAI_AUTH_URL ?? 'https://auth.civitai.com',
   clientId: process.env.CIVITAI_CLIENT_ID!,
   redirectUri: `${process.env.APP_URL}/api/auth/callback/civitai`,
   scope: REQUESTED_SCOPES,
@@ -157,7 +166,7 @@ if (expected.state !== state) return redirect('/?error=state_mismatch');
 
 try {
   const tokens = await exchangeCode({
-    baseUrl: process.env.CIVITAI_BASE_URL,
+    baseUrl: process.env.CIVITAI_AUTH_URL,
     clientId: process.env.CIVITAI_CLIENT_ID!,
     clientSecret: process.env.CIVITAI_CLIENT_SECRET, // omit for public clients
     redirectUri: `${process.env.APP_URL}/api/auth/callback/civitai`,
@@ -241,7 +250,7 @@ export async function readSession(): Promise<Session | null> {
   if (!session.tokens.refresh_token) return null;
   try {
     const fresh = await oauthRefresh({
-      baseUrl: process.env.CIVITAI_BASE_URL,
+      baseUrl: process.env.CIVITAI_AUTH_URL,
       clientId: process.env.CIVITAI_CLIENT_ID!,
       clientSecret: process.env.CIVITAI_CLIENT_SECRET,
       refreshToken: session.tokens.refresh_token,
@@ -363,7 +372,7 @@ const body = buildWorkflowBody({
 }, { tags: ['my-app'] });
 ```
 
-`WORKFLOW_STEP_TYPES` is the in-code catalog of every step type with one-line descriptions — start there to find the right step before reaching for the OpenAPI spec at <https://orchestration.civitai.com/openapi/v2-consumers.json>.
+`WORKFLOW_STEP_TYPES` is the in-code catalog of every step type with one-line descriptions — start there to find the right step before reaching for the OpenAPI spec at <https://orchestration.civitai.com/openapi/v2-consumers.json>. It is machine-checked against that spec (`pnpm check:catalogs` in CI plus an offline unit test), so a `$type` it lists is one the orchestrator accepts.
 
 ### Buzz mechanics (always read this)
 
@@ -371,7 +380,7 @@ When your app submits an orchestrator workflow with a user's OAuth access token,
 
 1. **Request `AIServicesWrite` scope at consent time.** Without it the user can't grant their Buzz for generation.
 2. **Show cost before spending.** Always call `estimateWorkflow` first.
-3. **Show the running balance.** With `BuzzRead`, hit `${CIVITAI_BASE_URL}/api/v1/me` (or the dedicated buzz endpoint). Don't surprise users.
+3. **Show the running balance — from the BUZZ endpoint, not `/api/v1/me`.** 🔴 `/api/v1/me` does **not** return a balance and never has; reading `balance` off it yields `undefined`, which is exactly how all four starters shipped a permanent `Buzz balance: —`. Use the SDK's `fetchBuzzAccount()` (`buzz.getUserAccount`, needs `BuzzRead`) **server-side** — that tRPC route sets no CORS headers, so a browser fetch cannot reach it. And note the decoy: `/api/v1/me` *does* return `buzzLimit`, but that is the per-token **spend cap** chosen at consent, **not** a balance. 🔴 `BuzzRead` is not guaranteed to a third-party client: treat a **403 as an ordinary outcome** and hide the balance row entirely — never a dash, never an error banner. Don't surprise users.
 4. **Handle the cap-denial case.** Per-app spending caps (set by the user at consent and again at Account → Connected Apps) can cause a successful `whatif` to be rejected at real submit time with a generic `BAD_REQUEST`. Treat that as "insufficient or denied" in your UI — surface clearly, link the user to their connected-apps page.
 5. **Don't hoard tokens.** Refresh-on-read (Step 4) keeps the user's session warm without you treating their access_token like a resource to optimize. Revoke on disconnect.
 
@@ -393,7 +402,7 @@ If you're swapping from a non-Civitai provider (Gemini, OpenAI Images, Replicate
 The two big shape differences:
 
 - **Async, not sync.** Civitai's orchestrator returns a workflow id immediately and you poll. Either block your handler (`pollWorkflow` with a timeout) or return the workflowId to the client and let it poll a `GET /api/workflow/[id]` endpoint. The starters do the latter.
-- **Per-user Buzz.** Plan the UX. If your previous provider was free-to-the-user (you ate the cost), you now need a balance display, cost preview, and graceful insufficient-Buzz handling. If your previous provider already had user-visible cost (credits / tokens), the lift is smaller.
+- **Per-user Buzz.** Plan the UX. If your previous provider was free-to-the-user (you ate the cost), you now need a balance display (via `fetchBuzzAccount()`, and degrading to no display when `BuzzRead` is absent), cost preview, and graceful insufficient-Buzz handling. If your previous provider already had user-visible cost (credits / tokens), the lift is smaller.
 
 ---
 
@@ -402,7 +411,7 @@ The two big shape differences:
 There's no single "is it ported correctly" check, but the smoke test that every starter passes end-to-end is:
 
 1. Click "Sign in with Civitai" → consent screen → redirected back logged in.
-2. `/api/v1/me` returns your username and balance.
+2. `/api/v1/me` returns your username. (🔴 It returns **no balance** — the balance comes from `fetchBuzzAccount()` / `buzz.getUserAccount`, and is absent by design if `BuzzRead` was not granted.)
 3. Submit a prompt → estimate shows non-zero Buzz cost.
 4. Confirm submit → workflow returns id → polling reaches `succeeded` → image renders.
 5. Sign out → session cookie cleared.
@@ -429,7 +438,7 @@ Replicating this flow against your dev OAuth app and a live `https://orchestrati
 - [`README.md`](./README.md) — repo overview, pick a starter for fresh apps.
 - [`AGENTS.md`](./AGENTS.md) — patterns to keep / avoid (also useful for humans).
 - [`packages/civitai-app-sdk/README.md`](./packages/civitai-app-sdk/README.md) — full SDK reference.
-- [Civitai OAuth docs](https://developer.civitai.com/docs/oauth) — official upstream documentation.
+- [Civitai OAuth docs](https://developer.civitai.com/site/oauth/quickstart) — official upstream documentation.
 - [`starters/sveltekit-app`](./starters/sveltekit-app) — closest reference if your existing app is SvelteKit or any SSR framework.
 - [`starters/next-app`](./starters/next-app) — closest reference for Next.js / React Server Components.
 - [`starters/react-pwa`](./starters/react-pwa) / [`starters/svelte-pwa`](./starters/svelte-pwa) — closest reference if your app is a Vite SPA / PWA with a small BFF.

@@ -13,7 +13,29 @@
     "typecheck": "pnpm -r --filter \"./packages/*\" typecheck",
     "lint": "pnpm -r --filter \"./packages/*\" lint",
     "e2e:all": "node scripts/run-all-e2e.mjs",
+    "measure:css-split": "node scripts/measure-css-split.mjs",
+    "typecheck:readme": "node scripts/typecheck-readme-snippets.mjs",
+    "typecheck:readme:selftest": "node scripts/test-readme-snippet-gate.mjs",
+    "check:schema": "bash scripts/check-canonical-schema.sh",
+    "check:starter-pins": "node scripts/check-starter-pins.mjs",
+    "check:starter-overrides": "node scripts/check-starter-workspace-overrides.mjs",
+    "check:examples-validate": "node scripts/check-examples-validate.mjs",
+    "check:examples-validate:selftest": "node scripts/check-examples-validate.mjs --self-test",
+    "check:examples-render": "node scripts/check-examples-render.mjs",
+    "check:catalogs": "node scripts/check-orchestrator-catalogs.mjs",
+    "check:shipped-sourcemaps": "node scripts/check-shipped-sourcemaps.mjs",
+    "check:shipped-sourcemaps:selftest": "node scripts/check-shipped-sourcemaps.mjs --self-test",
+    "check:public-types": "node scripts/check-public-type-closure.mjs",
+    "check:public-types:selftest": "node scripts/check-public-type-closure.mjs --self-test",
+    "check:generated-version": "node scripts/check-generated-version.mjs",
+    "check:generated-version:selftest": "node scripts/check-generated-version.mjs --self-test",
+    "sync:catalogs": "node scripts/sync-orchestrator-catalogs.mjs",
+    "assert:published": "node scripts/assert-published-versions.mjs",
+    "smoke:published-starters": "node scripts/smoke-published-starters.mjs",
+    "test:guards": "node --test --test-timeout=60000 \"tests/guards/*.test.mjs\"",
+    "test:guards:public-types": "node --test --test-timeout=60000 \"tests/guards/check-public-type-closure-patterns.test.mjs\"",
     "changeset": "changeset",
+    "release:version": "changeset version && pnpm --filter @civitai/components generate && pnpm --filter @civitai/blocks-react generate && pnpm --filter @civitai/sdk generate",
     "release": "pnpm -r --filter \"./packages/*\" build && changeset publish",
     "release:check": "changeset status --verbose"
   },
@@ -35,11 +57,37 @@
     "url": "git+https://github.com/civitai/civitai-app-starters.git"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.27.10"
+    "@changesets/cli": "^2.27.10",
+    "esbuild": "0.28.1"
   },
   "pnpm": {
+    "comment-overrides": [
+      "Every @civitai/* package that LIVES IN THIS WORKSPACE must be listed",
+      "here as workspace:*. Scope note: @civitai/client is first-party but is",
+      "NOT a workspace package -- it is published from civitai-client-javascript",
+      "and consumed by @civitai/app-sdk as an OPTIONAL PEER (types only). Do NOT",
+      "add it here: workspace:* would point at a package that does not exist in",
+      "this repo and break every install.",
+      "This is what makes a release possible at all. The starters pin published",
+      "caret ranges (^0.32.0) on purpose so a `tiged`'d copy installs from npm",
+      "for external devs -- but inside this workspace those ranges must never",
+      "reach the registry, because `changeset version` rewrites them to versions",
+      "that are not published YET. An override rewrites the specifier BEFORE it",
+      "is recorded in pnpm-lock.yaml, so the lockfile importer entry reads",
+      "`specifier: workspace:*` and does NOT churn when changesets bumps the",
+      "caret -- which is the only reason `pnpm install --frozen-lockfile` can",
+      "pass on the Version Packages PR. Omit a package here and the release",
+      "deadlocks: the lockfile can only be regenerated after publish, publish",
+      "needs the merge, the merge needs a green frozen-lockfile install.",
+      "Enforced by scripts/check-starter-workspace-overrides.mjs (CI: Starter)."
+    ],
     "overrides": {
       "@civitai/app-sdk": "workspace:*",
+      "@civitai/blocks-react": "workspace:*",
+      "@civitai/sdk": "workspace:*",
+      "@civitai/components": "workspace:*",
+      "@civitai/components-react": "workspace:*",
+      "@civitai/theme": "workspace:*",
       "cookie@<0.7.0": "^0.7.0",
       "postcss@<8.5.10": ">=8.5.10"
     }

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { BlockTransportDetector } from '../src/internal/detector.js';
-import { IframeTransport } from '../src/internal/iframeTransport.js';
-import { InlineTransport } from '../src/internal/inlineTransport.js';
+import { BlockTransportDetector } from '../src/transport/detector.js';
+import { IframeTransport } from '../src/transport/iframeTransport.js';
+import { InlineTransport } from '../src/transport/inlineTransport.js';
 
 describe('BlockTransportDetector.detect', () => {
   afterEach(() => {

@@ -1,0 +1,1030 @@
+/*
+ * @civitai/components — attribute-driven, framework-agnostic component CSS.
+ *
+ * Contract: style is selected by `data-civitai-ui="<name>"` + `data-variant` +
+ * `data-size` (+ a few component-specific `data-*`). Theme via an ancestor
+ * `[data-theme='light'|'dark']`. Tokens come from @civitai/theme's `--civitai-*`
+ * custom properties (link `@civitai/theme/styles.css` alongside this file, or
+ * call `injectStyles()` which injects both).
+ *
+ * ALL rules HERE live in `@layer civitai.components`, so a consumer's own
+ * unlayered CSS always wins over THIS SHEET without specificity fights.
+ * 🔴 That does NOT extend to the TOKENS. @civitai/theme's sheet carries no
+ * layer and declares them at `:root`/`[data-theme='…']` (0-1-0), so a
+ * consumer's `:root { --civitai-…: }` only TIES with it and stylesheet order
+ * decides — silently, in the order `useBlocksStyles()` produces. Scope a token
+ * override (a class on your root, or an inline style); never `:root`. Measured
+ * matrix: MARKUP.md, "Cascade / overriding".
+ * State colors are derived with `color-mix()` from base tokens (no shade
+ * enumeration), and structure uses native CSS nesting (no preprocessor).
+ *
+ * See MARKUP.md for the full per-component markup + ARIA contract.
+ */
+@layer civitai.components {
+  [data-civitai-ui] {
+    box-sizing: border-box;
+    font-family: var(--civitai-font);
+
+    & *,
+    & *::before,
+    & *::after {
+      box-sizing: border-box;
+    }
+  }
+
+  /* ----- Button ----- */
+  [data-civitai-ui='button'] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 1px solid transparent;
+    border-radius: var(--civitai-radius);
+    font-family: var(--civitai-font);
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+    text-decoration: none;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+
+    /*
+     * Documented DEFAULTS (MARKUP.md): variant=filled, size=md. Applied on the
+     * BASE rule (unconditionally) so BARE markup — a `<button data-civitai-ui=
+     * "button">` with no `data-variant`/`data-size` — renders the documented
+     * default (filled + md), not an unstyled/zero-size button. The explicit
+     * `[data-variant]` / `[data-size]` rules below OVERRIDE (all four variants
+     * set their own bg/border/hover, so the base filled default only ever wins
+     * for a bare button). Every non-filled variant also sets its own
+     * `border-color`, so the base primary border never leaks to them.
+     */
+    background: var(--civitai-color-primary);
+    color: var(--civitai-color-primary-fg);
+    border-color: var(--civitai-color-primary);
+    height: 36px;
+    padding: 0 18px;
+    font-size: 14px;
+
+    &:hover:not(:disabled) {
+      background: var(--civitai-color-primary-hover);
+      border-color: var(--civitai-color-primary-hover);
+    }
+
+    &[data-size='sm'] { height: 30px; padding: 0 14px; font-size: 13px; }
+    &[data-size='md'] { height: 36px; padding: 0 18px; font-size: 14px; }
+    &[data-size='lg'] { height: 44px; padding: 0 22px; font-size: 16px; }
+    &[data-full-width='true'] { width: 100%; }
+
+    &[data-variant='filled'] {
+      background: var(--civitai-color-primary);
+      color: var(--civitai-color-primary-fg);
+      border-color: var(--civitai-color-primary);
+
+      &:hover:not(:disabled) {
+        background: var(--civitai-color-primary-hover);
+        border-color: var(--civitai-color-primary-hover);
+      }
+    }
+    &[data-variant='light'] {
+      background: color-mix(in srgb, var(--civitai-color-primary) 12%, transparent);
+      color: var(--civitai-color-primary);
+      border-color: transparent;
+
+      &:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--civitai-color-primary) 22%, transparent);
+      }
+    }
+    &[data-variant='outline'] {
+      background: transparent;
+      color: var(--civitai-color-primary);
+      border-color: var(--civitai-color-primary);
+
+      &:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--civitai-color-primary) 10%, transparent);
+      }
+    }
+    &[data-variant='subtle'] {
+      background: transparent;
+      color: var(--civitai-color-primary);
+      border-color: transparent;
+
+      &:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--civitai-color-primary) 10%, transparent);
+      }
+    }
+    &:disabled,
+    &[aria-busy='true'] {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    & [data-civitai-ui-section] {
+      display: inline-flex;
+      align-items: center;
+    }
+  }
+
+  /* ----- TextInput / Textarea / NumberInput / Select ----- */
+  [data-civitai-ui='text-input'],
+  [data-civitai-ui='textarea'],
+  [data-civitai-ui='number-input'],
+  [data-civitai-ui='select'] {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  [data-civitai-ui-label] {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--civitai-color-text);
+  }
+  [data-civitai-ui-required] {
+    color: var(--civitai-color-error);
+    margin-left: 2px;
+  }
+  [data-civitai-ui-description] {
+    font-size: 12px;
+    color: var(--civitai-color-text-dimmed);
+  }
+  [data-civitai-ui-error] {
+    font-size: 12px;
+    color: var(--civitai-color-error);
+  }
+  [data-civitai-ui-control] {
+    width: 100%;
+    font-family: var(--civitai-font);
+    font-size: 14px;
+    color: var(--civitai-color-text);
+    background: var(--civitai-color-surface);
+    border: 1px solid var(--civitai-color-border);
+    border-radius: var(--civitai-radius);
+    padding: 8px 12px;
+    transition: border-color 120ms ease;
+
+    &:focus {
+      outline: none;
+      border-color: var(--civitai-color-primary);
+    }
+    &[aria-invalid='true'] {
+      border-color: var(--civitai-color-error);
+    }
+    &:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  }
+  textarea[data-civitai-ui-control] {
+    resize: vertical;
+    line-height: 1.5;
+  }
+  /*
+   * Select (issue #181 F6): a native <select> reusing the shared
+   * `-control` field chrome (border/background/radius/focus/invalid, above).
+   * Keep the native disclosure caret (most robust + accessible); just make the
+   * control feel interactive and reserve room on the right so the caret never
+   * overlaps a long option label.
+   */
+  select[data-civitai-ui-control] {
+    cursor: pointer;
+    padding-right: 28px;
+    line-height: 1.4;
+  }
+  select[data-civitai-ui-control]:disabled {
+    cursor: not-allowed;
+  }
+
+  /* ----- Checkbox / Radio (issue #181 F6) ----- */
+  /*
+   * Themed native <input type="checkbox">/<input type="radio">: `accent-color`
+   * carries the primary tint (native control, so keyboard/indeterminate/tab all
+   * work for free), plus custom sizing, a token focus ring, and disabled state.
+   * The box + its inline label sit in a `-choice` row; description + error live
+   * below, reusing the shared field markers. The inputs deliberately do NOT
+   * carry `data-civitai-ui-control` (that is the full-width field-input chrome).
+   */
+  [data-civitai-ui='checkbox'],
+  [data-civitai-ui='radio'] {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  [data-civitai-ui-choice] {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  [data-civitai-ui='checkbox'] [data-civitai-ui-label],
+  [data-civitai-ui='radio'] [data-civitai-ui-label] {
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+  }
+  [data-civitai-ui='checkbox'] input[type='checkbox'],
+  [data-civitai-ui='radio'] input[type='radio'] {
+    accent-color: var(--civitai-color-primary);
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    flex: none;
+    cursor: pointer;
+  }
+  [data-civitai-ui='checkbox'] input[type='checkbox']:focus-visible,
+  [data-civitai-ui='radio'] input[type='radio']:focus-visible {
+    outline: 2px solid var(--civitai-color-primary);
+    outline-offset: 2px;
+  }
+  [data-civitai-ui='checkbox'] input[type='checkbox']:disabled,
+  [data-civitai-ui='radio'] input[type='radio']:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+  [data-civitai-ui='checkbox'] input[type='checkbox']:disabled ~ [data-civitai-ui-label],
+  [data-civitai-ui='radio'] input[type='radio']:disabled ~ [data-civitai-ui-label] {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* ----- RadioGroup (issue #181 F6) — role=radiogroup layout ----- */
+  [data-civitai-ui='radio-group'] {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  [data-civitai-ui-radio-options] {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    &[data-orientation='horizontal'] {
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+  }
+  /*
+   * RadioGroup group-level error (0.2.0): mirrors the field `-error` treatment.
+   * The message reuses the shared `[data-civitai-ui-error]` styling (12px, error
+   * token); the invalid state (`data-invalid` on the group, set alongside
+   * `aria-invalid`) tints the child radios' `accent-color` to the error token so
+   * the invalid cue reads on the group, not just the message text — the group
+   * analogue of a field control's error-colored border.
+   */
+  [data-civitai-ui='radio-group'] [data-civitai-ui-error] {
+    font-size: 12px;
+    color: var(--civitai-color-error);
+  }
+  [data-civitai-ui='radio-group'][data-invalid] input[type='radio'] {
+    accent-color: var(--civitai-color-error);
+  }
+
+  /* ----- Card ----- */
+  /*
+   * F5 (issue #181): light resolves surface and body to the same #fefefe, so a
+   * borderless card needs a default hairline to be visible at all; dark already
+   * separates them and zeroes the width. `data-with-border` is the stronger,
+   * explicit, opaque border and is unconditional.
+   */
+  [data-civitai-ui='card'] {
+    background: var(--civitai-color-surface);
+    border-radius: var(--civitai-radius);
+    color: var(--civitai-color-text);
+    border: var(--civitai-card-border-width, 1px) solid
+      color-mix(in srgb, var(--civitai-color-border) 55%, transparent);
+
+    &[data-with-border='true'] {
+      border: 1px solid var(--civitai-color-border);
+    }
+    &[data-padding='sm'] { padding: 10px; }
+    &[data-padding='md'] { padding: 16px; }
+    &[data-padding='lg'] { padding: 24px; }
+  }
+
+  /* ----- Stack / Group ----- */
+  [data-civitai-ui='stack'] {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+
+    &[data-gap='sm'] { gap: 8px; }
+    &[data-gap='md'] { gap: 16px; }
+    &[data-gap='lg'] { gap: 24px; }
+  }
+  [data-civitai-ui='group'] {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+
+    /*
+     * RESPONSIVE BASE. A group is a ROW, and a row of three or more controls
+     * has no escape at phone widths — a block's slot is ~360px there, so the
+     * row simply ran off the edge.
+     *
+     * 🔴 There are THREE `group` surfaces, and for TWO of them this is a NEW
+     * DEFAULT — do not read it as the CSS merely catching up:
+     *   - `@civitai/blocks-react`'s `<Group>` defaults `wrap = true` and writes
+     *     `flex-wrap` as an INLINE style, so its consumers already wrapped.
+     *     For that one, and only that one, this is the CSS agreeing with a
+     *     default that was already shipping.
+     *   - `@civitai/components-react`'s `<Group>` writes NO inline style and has
+     *     NO `wrap` prop, so it resolves against this rule — a React consumer
+     *     that did NOT wrap before. 🔴 THIS SURFACE NO LONGER EXISTS: see below.
+     *   - bare `data-civitai-ui="group"` markup, the framework-agnostic contract
+     *     this package exists to serve — likewise.
+     * Nothing could see the disagreement, because each surface was only ever
+     * tested against itself. TWO tests now pin it — there is no single "the
+     * parity test":
+     *   - `civitai-blocks-react/test/Group.test.tsx` reads the wrap default off
+     *     ITS `<Group>` and compares it to this rule, so flipping either alone
+     *     fails;
+     *   - `civitai-components/test/presentational-parity.browser.test.ts`,
+     *     case **`group`** — compares `<civitai-group>` against the bare
+     *     `data-civitai-ui="group"` markup with `flexWrap` among the properties
+     *     it reads. 🔴 It is `group`, NOT `group/nowrap`: that case sets
+     *     `nowrap` on BOTH arms, so both resolve to `flex-wrap: nowrap` and it
+     *     stays green through a deletion of the rule below. Mutate the rule and
+     *     check the wrong case and you will conclude it is unguarded.
+     *
+     * 🔴 THE MIDDLE SURFACE IS GONE, and so is the test that used to pin it.
+     * `@civitai/components-react@0.9.0` deleted its hand-written `<Group>` when
+     * the custom elements superseded the React layer, taking
+     * `html-vs-react-parity.browser.test.tsx` ("styling anchors — Group") with
+     * it. TWO surfaces now resolve against this rule, not three: bare markup,
+     * and blocks-react's `<Group>`. `<civitai-group>` is a third surface that
+     * does NOT read this sheet at all — shadow DOM, carrying its own
+     * `flex-wrap` at `src/elements/civitai-group.ts:20`.
+     *
+     * That independence is why the replacement is not the weak kind of parity
+     * check this comment used to warn about. The warning was right about the
+     * OLD test: both its arms consumed THIS sheet, so deleting the rule moved
+     * them identically and only an absolute anchor could see it.
+     * `presentational-parity`'s arms are independent IMPLEMENTATIONS, so
+     * deleting `flex-wrap` here moves the legacy arm alone and the comparison
+     * fails. WATCHED, not inferred: deleting `flex-wrap: wrap` from this block
+     * in `styles.generated.ts` (the string the browser test injects) fails
+     * `light / group` and `dark / group` with
+     * `flexWrap: expected 'wrap' to be 'nowrap'` — 2 failed / 108 passed;
+     * restoring it returns 110/110. (Re-measured after #477 added 21 Text
+     * parity cases; the kill is what matters, the totals move with the file.)
+     *
+     * 🔴 The three-surface distinction is load-bearing for the RELEASE, not just
+     * the prose: "existing callers notice" is what `RELEASING.md` reserves
+     * `major` for, and it is true for two of the three surfaces. Shipped as a
+     * MINOR by maintainer decision — see the changeset for the reasoning and for
+     * the upgrade note that decision makes load-bearing.
+     *
+     * Opt out with `data-nowrap="true"`. An inline `flex-wrap` also still
+     * outranks this layer, so existing markup that already sets it is untouched.
+     */
+    flex-wrap: wrap;
+
+    /*
+     * A flex item defaults to `min-width: auto`, which refuses to shrink below
+     * its CONTENT width — so one long label (a model name, a prompt) pushes the
+     * row past the slot even WITH wrap. `min-width: 0` lets it shrink.
+     *
+     * 🔴 SCOPE, measured: this only matters for a child whose computed
+     * `overflow` is `visible`. Per CSS Flexbox §4.5 an item with any other
+     * `overflow` ALREADY has an automatic minimum size of 0 — so a child that
+     * sets `overflow: hidden`, as any `text-overflow: ellipsis` child must, is
+     * unaffected by this line. An earlier version of this comment claimed
+     * ellipsis "can never engage" without it, which was exactly backwards; the
+     * browser guard built on that belief used an ellipsis fixture and therefore
+     * passed with this rule DELETED. Both are fixed — see
+     * `civitai-blocks-react/test/responsive-group.browser.test.tsx`.
+     *
+     * Specificity is (0,1,0), not zero: `&` carries the parent selector's, and
+     * `:where(*)` is specificity-identical to `*`, so that wrapper bought
+     * nothing and has been dropped. What actually lets a CONSUMER's own rule
+     * win is `@layer civitai.components`, which every rule in this file sits
+     * inside — unlayered author CSS beats it regardless of specificity. Note
+     * the limit: another rule INSIDE this layer does not get that protection,
+     * so a future non-zero `min-width` on a nested component here must be more
+     * specific or come later.
+     */
+    & > * { min-width: 0; }
+
+    &[data-nowrap='true'] { flex-wrap: nowrap; }
+
+    &[data-gap='sm'] { gap: 6px; }
+    &[data-gap='md'] { gap: 16px; }
+    &[data-gap='lg'] { gap: 24px; }
+  }
+
+  /* ----- Alert ----- */
+  [data-civitai-ui='alert'] {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 12px 14px;
+    border-radius: var(--civitai-radius);
+    border: 1px solid transparent;
+    font-size: 14px;
+    color: var(--civitai-color-text);
+
+    /*
+     * Documented DEFAULT (MARKUP.md): color=info (default intent). Applied on
+     * the base rule so a BARE alert — `<div data-civitai-ui="alert">` with no
+     * `data-color` — renders the info intent (tinted bg + border), not just the
+     * neutral chrome. The explicit `[data-color]` rules below OVERRIDE (success
+     * / warning / error each set both bg + border-color), so the info default
+     * only ever wins when `data-color` is omitted.
+     */
+    background: color-mix(in srgb, var(--civitai-color-info) 12%, transparent);
+    border-color: color-mix(in srgb, var(--civitai-color-info) 35%, transparent);
+
+    &[data-color='info'] {
+      background: color-mix(in srgb, var(--civitai-color-info) 12%, transparent);
+      border-color: color-mix(in srgb, var(--civitai-color-info) 35%, transparent);
+    }
+    &[data-color='success'] {
+      background: color-mix(in srgb, var(--civitai-color-success) 12%, transparent);
+      border-color: color-mix(in srgb, var(--civitai-color-success) 35%, transparent);
+    }
+    &[data-color='warning'] {
+      background: color-mix(in srgb, var(--civitai-color-warning) 14%, transparent);
+      border-color: color-mix(in srgb, var(--civitai-color-warning) 35%, transparent);
+    }
+    &[data-color='error'] {
+      background: color-mix(in srgb, var(--civitai-color-error) 12%, transparent);
+      border-color: color-mix(in srgb, var(--civitai-color-error) 35%, transparent);
+    }
+    & [data-civitai-ui-alert-body] {
+      flex: 1;
+      min-width: 0;
+    }
+    & [data-civitai-ui-alert-title] {
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+    & [data-civitai-ui-alert-close] {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: inherit;
+      font-size: 16px;
+      line-height: 1;
+      padding: 0;
+      opacity: 0.7;
+
+      &:hover { opacity: 1; }
+    }
+  }
+
+  /* ----- Loader ----- */
+  [data-civitai-ui='loader'] {
+    display: inline-block;
+    border-radius: 50%;
+    border-style: solid;
+    border-color: color-mix(in srgb, currentColor 25%, transparent);
+    border-top-color: currentColor;
+    color: var(--civitai-color-primary);
+    animation: civitai-ui-spin 0.7s linear infinite;
+
+    /*
+     * Documented DEFAULT (MARKUP.md): size=md. Applied on the base rule so a
+     * BARE loader — `<span data-civitai-ui="loader">` with no `data-size` — has
+     * real dimensions (otherwise 0×0 and invisible). sm/lg OVERRIDE below.
+     */
+    width: 22px;
+    height: 22px;
+    border-width: 3px;
+
+    &[data-size='sm'] { width: 16px; height: 16px; border-width: 2px; }
+    &[data-size='md'] { width: 22px; height: 22px; border-width: 3px; }
+    &[data-size='lg'] { width: 32px; height: 32px; border-width: 4px; }
+  }
+  [data-civitai-ui='button'] [data-civitai-ui='loader'] {
+    color: currentColor;
+  }
+  @keyframes civitai-ui-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* ----- Badge ----- */
+  [data-civitai-ui='badge'] {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+
+    /*
+     * Documented DEFAULTS (MARKUP.md): variant=filled, size=md. Applied on the
+     * base rule so a BARE badge — `<span data-civitai-ui="badge">` with no
+     * `data-variant`/`data-size` (MARKUP's own minimal example) — renders
+     * filled + md (padding + primary fill), not an unstyled, zero-padding pill.
+     * The explicit `[data-variant]`/`[data-size]` rules below OVERRIDE. Because
+     * the base now carries a primary `border-color`, the `light` variant (which
+     * previously relied on the base transparent border) explicitly resets it to
+     * transparent so light badges are visually unchanged.
+     */
+    height: 22px;
+    padding: 0 10px;
+    font-size: 11px;
+    background: var(--civitai-color-primary);
+    color: var(--civitai-color-primary-fg);
+    border-color: var(--civitai-color-primary);
+
+    &[data-size='sm'] { height: 18px; padding: 0 8px; font-size: 10px; }
+    &[data-size='md'] { height: 22px; padding: 0 10px; font-size: 11px; }
+    &[data-size='lg'] { height: 26px; padding: 0 12px; font-size: 13px; }
+    &[data-variant='filled'] {
+      background: var(--civitai-color-primary);
+      color: var(--civitai-color-primary-fg);
+      border-color: var(--civitai-color-primary);
+    }
+    &[data-variant='light'] {
+      background: color-mix(in srgb, var(--civitai-color-primary) 14%, transparent);
+      color: var(--civitai-color-primary);
+      border-color: transparent;
+    }
+    &[data-variant='outline'] {
+      background: transparent;
+      color: var(--civitai-color-primary);
+      border-color: var(--civitai-color-primary);
+    }
+
+    /*
+     * Intent color via `data-color`, mirroring Alert's `data-color` contract
+     * (info / success / warning / error). Absent `data-color` => the default
+     * primary above (non-breaking). Each intent recolors the `filled`, `light`
+     * and `outline` variants with the same `color-mix()` token approach Alert
+     * uses; `filled` keeps the white `--civitai-color-primary-fg` text. These
+     * `[data-color][data-variant]` rules out-specify the plain-variant rules
+     * above, so order-independence holds.
+     */
+    &[data-color='info'] {
+      &[data-variant='filled'] {
+        background: var(--civitai-color-info);
+        border-color: var(--civitai-color-info);
+      }
+      &[data-variant='light'] {
+        background: color-mix(in srgb, var(--civitai-color-info) 14%, transparent);
+        color: var(--civitai-color-info);
+      }
+      &[data-variant='outline'] {
+        color: var(--civitai-color-info);
+        border-color: var(--civitai-color-info);
+      }
+    }
+    &[data-color='success'] {
+      &[data-variant='filled'] {
+        background: var(--civitai-color-success);
+        border-color: var(--civitai-color-success);
+      }
+      &[data-variant='light'] {
+        background: color-mix(in srgb, var(--civitai-color-success) 14%, transparent);
+        color: var(--civitai-color-success);
+      }
+      &[data-variant='outline'] {
+        color: var(--civitai-color-success);
+        border-color: var(--civitai-color-success);
+      }
+    }
+    &[data-color='warning'] {
+      &[data-variant='filled'] {
+        background: var(--civitai-color-warning);
+        border-color: var(--civitai-color-warning);
+      }
+      &[data-variant='light'] {
+        background: color-mix(in srgb, var(--civitai-color-warning) 14%, transparent);
+        color: var(--civitai-color-warning);
+      }
+      &[data-variant='outline'] {
+        color: var(--civitai-color-warning);
+        border-color: var(--civitai-color-warning);
+      }
+    }
+    &[data-color='error'] {
+      &[data-variant='filled'] {
+        background: var(--civitai-color-error);
+        border-color: var(--civitai-color-error);
+      }
+      &[data-variant='light'] {
+        background: color-mix(in srgb, var(--civitai-color-error) 14%, transparent);
+        color: var(--civitai-color-error);
+      }
+      &[data-variant='outline'] {
+        color: var(--civitai-color-error);
+        border-color: var(--civitai-color-error);
+      }
+    }
+  }
+
+  /* ----- Slider ----- */
+  /*
+   * A themed native <input type="range">: `accent-color` carries the primary
+   * tint (native control, so keyboard arrow-key nav + ARIA come for free), plus
+   * a full-width track, a token focus ring, and disabled/invalid states. Like
+   * checkbox/radio, the range input deliberately does NOT carry
+   * `data-civitai-ui-control` (that is the bordered field-input chrome). The
+   * label/description/error reuse the shared field markers, laid out in a
+   * column; an optional value read-out sits inline with the label in a header.
+   */
+  [data-civitai-ui='slider'] {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  [data-civitai-ui-slider-header] {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  [data-civitai-ui-slider-value] {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--civitai-color-text-dimmed);
+    font-variant-numeric: tabular-nums;
+  }
+  [data-civitai-ui='slider'] input[type='range'] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    margin: 6px 0;
+    padding: 0;
+    border-radius: 999px;
+    accent-color: var(--civitai-color-primary);
+    background: var(--civitai-color-track, var(--civitai-color-gray-2));
+    cursor: pointer;
+  }
+  [data-civitai-ui='slider'] input[type='range']:focus-visible {
+    outline: 2px solid var(--civitai-color-primary);
+    outline-offset: 4px;
+  }
+  [data-civitai-ui='slider'] input[type='range']:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    accent-color: var(--civitai-color-gray-5);
+  }
+  [data-civitai-ui='slider'][data-invalid] input[type='range'] {
+    accent-color: var(--civitai-color-error);
+  }
+
+  /* ----- SegmentedControl / Tabs ----- */
+  /*
+   * A `role=tablist` of segment buttons (`role=tab`). Presentational chrome
+   * only — the roving-tabindex + arrow-key nav + selection follow-focus live in
+   * the React binding (or must be author-provided for hand HTML). The selected
+   * segment (`aria-selected='true'`) lifts to the surface color with a soft
+   * shadow; unselected segments read dimmed. Paired tab panels use
+   * `data-civitai-ui-tabpanel` (role=tabpanel).
+   */
+  [data-civitai-ui='segmented-control'] {
+    display: inline-flex;
+    gap: 2px;
+    padding: 4px;
+    background: var(--civitai-color-segmented-bg, var(--civitai-color-gray-1));
+    border-radius: var(--civitai-radius);
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  [data-civitai-ui-segment] {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    background: transparent;
+    color: var(--civitai-color-text-dimmed);
+    font-family: var(--civitai-font);
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    border-radius: calc(var(--civitai-radius) - 1px);
+    transition: background-color 120ms ease, color 120ms ease;
+
+    /* Documented DEFAULT (MARKUP.md): size=md. On the base rule so a bare
+       segment renders at md height, not zero-height. sm/lg override below. */
+    height: 30px;
+    padding: 0 14px;
+    font-size: 13px;
+
+    &[data-size='sm'] { height: 26px; padding: 0 10px; font-size: 12px; }
+    &[data-size='md'] { height: 30px; padding: 0 14px; font-size: 13px; }
+    &[data-size='lg'] { height: 38px; padding: 0 18px; font-size: 15px; }
+
+    &:hover:not(:disabled):not([aria-selected='true']):not([aria-checked='true']) {
+      color: var(--civitai-color-text);
+    }
+    /* Selected state — `aria-selected` in tabs mode (role=tab) OR `aria-checked`
+       in toggle mode (role=radio). Same visual treatment for both. */
+    &[aria-selected='true'],
+    &[aria-checked='true'] {
+      background: var(--civitai-color-surface);
+      color: var(--civitai-color-text);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+    }
+    &:focus-visible {
+      outline: 2px solid var(--civitai-color-primary);
+      outline-offset: 2px;
+    }
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+  [data-civitai-ui-tabpanel] {
+    color: var(--civitai-color-text);
+
+    &:focus-visible {
+      outline: 2px solid var(--civitai-color-primary);
+      outline-offset: 2px;
+    }
+    &[hidden] { display: none; }
+  }
+
+  /* ----- Toast ----- */
+  /*
+   * `toast-region` is the fixed-position `aria-live` host (bottom-right stack).
+   * The behavior — enqueue, auto-dismiss timers, portal — lives in the React
+   * binding's ToastProvider/useToast; the presentational `toast` is a standalone
+   * component so hand HTML and React share one visual contract. Each toast is
+   * opaque (it sits over content) with an intent-colored left accent, mirroring
+   * Alert's `data-color` set.
+   */
+  [data-civitai-ui='toast-region'] {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: min(92vw, 380px);
+    pointer-events: none;
+  }
+  [data-civitai-ui='toast'] {
+    pointer-events: auto;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 12px 14px;
+    border-radius: var(--civitai-radius);
+    background: var(--civitai-color-surface);
+    color: var(--civitai-color-text);
+    border: 1px solid var(--civitai-color-border);
+    border-left: 4px solid var(--civitai-color-border);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+    font-size: 14px;
+
+    &[data-color='info'] { border-left-color: var(--civitai-color-info); }
+    &[data-color='success'] { border-left-color: var(--civitai-color-success); }
+    &[data-color='warning'] { border-left-color: var(--civitai-color-warning); }
+    &[data-color='error'] { border-left-color: var(--civitai-color-error); }
+
+    & [data-civitai-ui-toast-body] {
+      flex: 1;
+      min-width: 0;
+    }
+    & [data-civitai-ui-toast-title] {
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+    & [data-civitai-ui-toast-close] {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: inherit;
+      font-size: 16px;
+      line-height: 1;
+      padding: 0;
+      opacity: 0.7;
+
+      &:hover { opacity: 1; }
+    }
+  }
+
+  /* ----- Tooltip ----- */
+  /*
+   * A hover/focus tooltip: a positioned `role=tooltip` bubble revealed when the
+   * wrapper is hovered or contains focus (pure-CSS reveal), or explicitly via
+   * `data-open='true'` (the React binding also wires `aria-describedby` +
+   * Escape-to-dismiss). The bubble is a dark chip (gray-9) with light text in
+   * both themes.
+   */
+  [data-civitai-ui='tooltip'] {
+    position: relative;
+    display: inline-flex;
+  }
+  [data-civitai-ui-tooltip-bubble] {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 200;
+    max-width: 260px;
+    width: max-content;
+    padding: 4px 8px;
+    border-radius: var(--civitai-radius);
+    background: var(--civitai-color-gray-9);
+    color: var(--civitai-color-primary-fg);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+    text-align: center;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 120ms ease;
+  }
+  /*
+   * Reveal on hover/focus or an explicit `data-open='true'` — BUT
+   * `data-dismissed='true'` overrides (gates every reveal selector), so the
+   * React binding's Escape-to-dismiss can force-HIDE the bubble even while the
+   * pointer still hovers or focus is still within. The dismissed flag is cleared
+   * on the next hover/focus so the tooltip can re-open normally.
+   */
+  [data-civitai-ui='tooltip']:hover [data-civitai-ui-tooltip-bubble]:not([data-dismissed='true']),
+  [data-civitai-ui='tooltip']:focus-within [data-civitai-ui-tooltip-bubble]:not([data-dismissed='true']),
+  [data-civitai-ui-tooltip-bubble][data-open='true']:not([data-dismissed='true']) {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* ----- Image ----- */
+  /*
+   * A media container with a token placeholder background (visible while the
+   * image loads), object-fit control, and a broken-image fallback. `data-status`
+   * (loading|loaded|error) — set by the React binding's onLoad/onError, or by
+   * the author for hand HTML — fades the <img> in on load and swaps to the
+   * fallback overlay on error. Bare markup (no `data-status`) shows the image.
+   */
+  [data-civitai-ui='image'] {
+    position: relative;
+    display: block;
+    overflow: hidden;
+    background: var(--civitai-color-media-placeholder, var(--civitai-color-gray-2));
+    border-radius: var(--civitai-radius);
+  }
+  [data-civitai-ui-image-img] {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 1;
+    transition: opacity 200ms ease;
+
+    &[data-fit='contain'] { object-fit: contain; }
+    &[data-fit='cover'] { object-fit: cover; }
+  }
+  [data-civitai-ui='image'][data-status='loading'] [data-civitai-ui-image-img],
+  [data-civitai-ui='image'][data-status='error'] [data-civitai-ui-image-img] {
+    opacity: 0;
+  }
+  [data-civitai-ui-image-fallback] {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    color: var(--civitai-color-text-dimmed);
+    font-size: 13px;
+    text-align: center;
+  }
+  [data-civitai-ui='image'][data-status='error'] [data-civitai-ui-image-fallback] {
+    display: flex;
+  }
+
+  /* ----- Text ----- */
+  /*
+   * The typography primitive. Alone in this sheet it prescribes NO element of
+   * its own: the author writes the tag the meaning calls for — `<h1>`..`<h6>`
+   * for a heading, `<p>` for a paragraph, `<span>` for inline — and this rule
+   * sizes and colours whatever that is. Nothing in the visual scale implies a
+   * heading level and nothing in a heading level implies a size, which is what
+   * lets an `<h2>` be the small caption of a card.
+   *
+   * `display` is deliberately NOT set, so `<p>`/`<h2>` stay block and `<span>`
+   * stays inline: the element's own semantics keep deciding its box.
+   *
+   * `margin: 0` IS set, and it is a decision rather than a reset for tidiness.
+   * The UA gives headings and paragraphs an em-relative margin that moves with
+   * every `data-size`, spacing in this pack is owned by `stack`/`group`, and
+   * without it `<civitai-text as="h2">` and `<h2 data-civitai-ui="text">` lay
+   * out differently — which is the one thing the two tracks may not do.
+   *
+   * Documented DEFAULTS (MARKUP.md): size=md, weight=normal, no `data-color`.
+   * On the BASE rule so BARE markup renders them, exactly as button and badge
+   * do; the explicit `[data-size]`/`[data-weight]` rules below OVERRIDE.
+   */
+  [data-civitai-ui='text'] {
+    margin: 0;
+    /*
+     * 🔴 `inherit`, NOT `var(--civitai-color-text)` — see the NO COLOUR AXIS
+     * note at the end of this rule. A SPECIFIED value beats an INHERITED one
+     * whatever the specificity, so the token here silently cancelled the
+     * ancestor route this component's whole colour story rests on.
+     */
+    color: inherit;
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.5;
+
+    /*
+     * THE TYPE SCALE — ONE scale, and the reason it runs this far is that the
+     * package must not ship two that disagree.
+     *
+     * The bottom half is the UI ramp: `sm`/`md`/`lg` are byte-identical to
+     * Button's own font-size ramp (13/14/16px), so one size name means one size
+     * across the pack, and `xs` is the 12px the field description already uses.
+     *
+     * The top half is the HEADING ramp, and every step of it is a value
+     * `utilities.css` already ships as `ci-fs-N` — so the two are the same
+     * scale under two spellings, not two scales:
+     *
+     *     lg  16px = ci-fs-6      2xl 24px = ci-fs-4      4xl 32px = ci-fs-2
+     *     xl  20px = ci-fs-5      3xl 28px = ci-fs-3      5xl 40px = ci-fs-1
+     *
+     * What that costs: the t-shirt names do not encode the `ci-fs-N` number,
+     * and the two sequences run in OPPOSITE directions (5xl is ci-fs-1), so a
+     * reader needs the mapping above. That was the cheaper trade — naming the
+     * new steps `fs-1`..`fs-4` would have put two naming conventions inside one
+     * attribute and reversed its direction halfway up. Nothing above `ci-fs-1`
+     * is invented here; 40px is the top of both ladders.
+     *
+     * UNIT: this ramp is px (Button's unit), `ci-fs-*` is rem. They agree at
+     * the default 16px root and diverge if a consumer changes it. Deliberate —
+     * mixing units within one ramp would make it non-monotonic under a changed
+     * root, which is worse than this caveat. Already true of `lg`/`xl` before
+     * the ramp was extended.
+     *
+     * Everything from `xl` up tightens its line-height to 1.25 — a 20px-plus
+     * heading leaded at 1.5 reads as loose. Two leading values in total.
+     */
+    &[data-size='xs'] { font-size: 12px; }
+    &[data-size='sm'] { font-size: 13px; }
+    &[data-size='md'] { font-size: 14px; }
+    &[data-size='lg'] { font-size: 16px; }
+    &[data-size='xl'] { font-size: 20px; line-height: 1.25; }
+    &[data-size='2xl'] { font-size: 24px; line-height: 1.25; }
+    &[data-size='3xl'] { font-size: 28px; line-height: 1.25; }
+    &[data-size='4xl'] { font-size: 32px; line-height: 1.25; }
+    &[data-size='5xl'] { font-size: 40px; line-height: 1.25; }
+
+    /* `normal` / `semibold` / `bold` are the weights `utilities.css` already
+       spells (`ci-normal` 400, `ci-semibold` 600, `ci-bold` 700); `medium` is
+       the 500 this sheet already uses for a radio-group and a toast title. */
+    &[data-weight='normal'] { font-weight: 400; }
+    &[data-weight='medium'] { font-weight: 500; }
+    &[data-weight='semibold'] { font-weight: 600; }
+    &[data-weight='bold'] { font-weight: 700; }
+
+    /*
+     * NO COLOUR AXIS, and that is the same predicate this component already
+     * applies to alignment and truncation rather than a separate judgement.
+     * Every value one would carry already exists as a utility that reaches this
+     * element: `ci-muted` (the dimmed token), `ci-text-info` / `-success` /
+     * `-warning` / `-error` (the intent enum), `ci-text-default` (the body
+     * colour). `color` INHERITS, so a utility on this element or any ancestor
+     * reaches the inner element of `<civitai-text>` through its shadow boundary
+     * too — the inner element is `color: inherit` — which is exactly why a
+     * `data-color` here would be a second copy of a predicate that already has
+     * an implementation one layer down.
+     *
+     * 🔴 WHICH IS WHY THE BASE RULE SAYS `color: inherit` AND NOT THE TOKEN.
+     * The ancestor half of that sentence was measurably FALSE while this rule
+     * specified `var(--civitai-color-text)` — a *specified* value beats an
+     * *inherited* one however far up the utility sits, so `ci-muted` on a wrapper
+     * dimmed a plain `<p>` and left `<p data-civitai-ui="text">` undimmed.
+     * `ci-text-center` on that same wrapper always worked, because nothing here
+     * re-specifies `text-align`. `<civitai-text>`'s `:host` had the identical
+     * defect; both tracks changed together, as they must.
+     *
+     * THE TRADE, and it is NOT limited to a page that paints nothing: Text no
+     * longer paints the token itself, so it takes whatever colour it inherits.
+     * That decides what it renders on every page that DOES set a colour — the
+     * larger population. Measured on both tracks, on a `[data-theme='dark']`
+     * root carrying `color: #e6e6e6` (the shape this repo's blocks had when this
+     * was measured; none sets that colour today): Text computes
+     * `rgb(230, 230, 230)`, where restoring the removed declaration puts both
+     * tracks back at the dark token `rgb(193, 194, 197)`. With no colour anywhere
+     * it lands on the UA default `rgb(0, 0, 0)`.
+     * In this repo: the Tailwind starters colour `body` themselves, so they
+     * would show Text in their own colour once one of them renders it. Every
+     * Civitai App page sets `color: var(--civitai-color-text)` itself — each
+     * example's src/index.css on `:root`, the block starter's on `body` — so
+     * Text there shows the token by INHERITING it rather than by naming it.
+     * (See `src/elements/civitai-text.ts` for the full enumeration.)
+     * `ci-text-default` asks for the
+     * token back, but it ships in a separate stylesheet that neither
+     * `injectStyles()` nor `injectBlocksStyles()` injects — see the cost section
+     * in `src/elements/civitai-text.ts` for every measurement and
+     * `packages/civitai-components/MARKUP.md` for what a consumer has to load.
+     * Both tracks are pinned in `test/civitai-text.browser.test.ts`.
+     *
+     * It is also the direction that stays open: this ships `minor` on a
+     * published package, so adding the axis later is additive and taking it
+     * away would not be.
+     */
+  }
+}

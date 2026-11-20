@@ -1,0 +1,58 @@
+{
+  "$schema": "https://civitai.com/schemas/app-block/v1.json",
+  "blockId": "monetize-demo",
+  "version": "0.1.0",
+  "name": "Monetize Demo",
+  "type": "block",
+  "targets": [
+    {
+      "slotId": "model.sidebar_top",
+      "priority": 100,
+      "requiredContext": ["modelId", "modelVersionId"]
+    }
+  ],
+  "scopes": ["goods:read:self", "goods:purchase:self", "social:tip:self"],
+  "scopeJustifications": {
+    "goods:purchase:self": "Sells the two items declared in `goods` (a style pack and a supporter badge) for Buzz. Each purchase shows its price and needs an explicit confirm in the block before any Buzz moves.",
+    "social:tip:self": "Lets the viewer tip the person the model owner named as this install's tip recipient, behind an in-block confirm, and shows their remaining daily tip allowance."
+  },
+  "goods": [
+    {
+      "id": "style-pack",
+      "title": "Style pack",
+      "description": "Unlocks six extra prompt styles in this block.",
+      "priceBuzz": 100,
+      "payload": { "unlocks": "styles" }
+    },
+    {
+      "id": "supporter",
+      "title": "Supporter badge",
+      "description": "A badge in this block that says you backed it.",
+      "priceBuzz": 20,
+      "payload": { "badge": "supporter" }
+    }
+  ],
+  "settings": {
+    "tip_recipient_user_id": {
+      "scope": "publisher",
+      "type": "number",
+      "widget": "number",
+      "label": "Tip recipient (Civitai user id)",
+      "description": "Who receives tips sent from this block on your model. Leave empty to hide tipping.",
+      "min": 1,
+      "max": 2147483647,
+      "requires_scope": "social:tip:self"
+    }
+  },
+  "bootSkeleton": true,
+  "iframe": {
+    "minHeight": 320,
+    "maxHeight": 1200,
+    "resizable": true,
+    "sandbox": "allow-scripts allow-forms"
+  },
+  "contentRating": "pg",
+  "minApiVersion": "1.0",
+  "buildCommand": "npm run build",
+  "outputDir": "dist"
+}

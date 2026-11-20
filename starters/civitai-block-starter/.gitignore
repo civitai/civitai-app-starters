@@ -3,3 +3,6 @@ dist
 .env
 .env.local
 *.log
+
+# Throwaway probes and experiments: never committed, typechecked or tested.
+scratch/

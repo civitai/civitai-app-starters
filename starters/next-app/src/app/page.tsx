@@ -1,6 +1,7 @@
-import { getMe } from '@/lib/civitai';
+import { getBuzzBalance, getMe } from '@/lib/civitai';
 import { getSession } from '@/lib/session';
 import { scopesFromBitmask } from '@civitai/app-sdk/scopes';
+import { DesignSystemDemo } from '@/components/DesignSystemDemo';
 import { GenerateForm } from '@/components/GenerateForm';
 import { LoginButton } from '@/components/LoginButton';
 import { LogoutControls } from '@/components/LogoutControls';
@@ -19,6 +20,8 @@ export default async function HomePage({
         <h1 className="text-2xl font-semibold">Civitai App Starter</h1>
         {session && <LogoutControls />}
       </header>
+
+      <DesignSystemDemo />
 
       {params.error && (
         <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
@@ -67,14 +70,23 @@ function LoggedOut() {
 }
 
 async function LoggedIn({ accessToken, scope }: { accessToken: string; scope: number }) {
+  const session = { tokens: { access_token: accessToken, expires_at: Date.now() + 60_000, scope } };
+
   // Fetch /me lazily — keeps the page snappy on the first render and surfaces auth issues early.
   let me: Awaited<ReturnType<typeof getMe>> | null = null;
   let meError: string | null = null;
   try {
-    me = await getMe({ tokens: { access_token: accessToken, expires_at: Date.now() + 60_000, scope } });
+    me = await getMe(session);
   } catch (err) {
     meError = err instanceof Error ? err.message : 'unknown';
   }
+
+  // 🔴 SEPARATE CALL, SEPARATE FAILURE MODE. Buzz balance is NOT part of
+  // `/api/v1/me`; it needs the `BuzzRead` scope on a different endpoint, and a
+  // client that was not granted it gets a 403. `getBuzzBalance` turns that into
+  // `null` and the row below is simply not rendered — a missing balance is not
+  // an error, and must never take the profile card down with it.
+  const buzzBalance = await getBuzzBalance(session);
 
   const grantedScopes = scopesFromBitmask(scope);
 
@@ -90,16 +102,18 @@ async function LoggedIn({ accessToken, scope }: { accessToken: string; scope: nu
             <p className="text-sm">
               Signed in as <strong>{me?.username ?? 'unknown'}</strong>
             </p>
-            <p className="mt-1 text-sm">
-              Buzz balance: <strong>{me?.balance ?? '—'}</strong>
-            </p>
+            {buzzBalance != null && (
+              <p className="mt-1 text-sm">
+                Buzz balance: <strong>{buzzBalance}</strong>
+              </p>
+            )}
             <p className="mt-2 text-xs text-zinc-500">
               Granted scopes: <code className="font-mono">{grantedScopes.join(', ')}</code>
             </p>
           </>
         )}
       </section>
-      <GenerateForm initialBalance={me?.balance} />
+      <GenerateForm initialBalance={buzzBalance} />
     </>
   );
 }

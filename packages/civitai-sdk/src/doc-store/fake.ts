@@ -1,0 +1,2011 @@
+import { ApiError, type Http, type RequestOptions } from '../http/index.js';
+import { createDocumentStorage, type DocumentStorage } from './index.js';
+import {
+  compileCollectionSchema,
+  countSchemaPatterns,
+  MANIFEST_MAX_PATTERNS,
+  parseCollectionSchema,
+  schemaViolationMessage,
+  type SchemaFailure,
+} from './schema.js';
+
+/**
+ * An in-memory document store behind the `Http` seam the client takes, enforcing the
+ * server's rules: the same routes, gates, check ORDER, limits, rate limits, error
+ * codes, statuses and envelope as `/api/v1/blocks/storage/…`.
+ *
+ * It is a port of the server's route layer and store, not a sketch of them. The
+ * vendored contract (`schemas/app-block/storage-contract.v1.json`) runs against it in
+ * this package's suite, through the raw `http` and through the real client, so where
+ * the contract describes a rule the fake and the server agree by construction. Rules
+ * the contract does not exercise are ported from the server source and say so where
+ * they diverge.
+ *
+ * WHERE IT DIFFERS ON PURPOSE: rate limits apply only with `enforceRateLimits: true`;
+ * a declaration using a feature the platform has not shipped (`write: "owner"` or
+ * `"anyone"`, log collections, `ttlSeconds`, `dailyWritesPerAuthor`) is refused when
+ * the fake is CREATED rather than per request; and a list cursor is an opaque token
+ * bound to its whole query, not the server's sort-bound keyset string.
+ *
+ * A collection's `ownedModelVersions` rule is enforced; the fake has no model
+ * versions of its own, so which ones a viewer owns is `FakeStorageViewer.modelVersions`
+ * (default none).
+ *
+ * A collection's `schema` is enforced as the server enforces it (`./schema.ts`): every
+ * create and put whose `data` does not match is refused 400 `schema_violation`, before the
+ * ownership check, the trust gate, the write budget and moderation. A schema the server's
+ * manifest parser would refuse is refused when the fake is created, with the server's text.
+ *
+ * Moderation is the server's ENFORCE mode, which the contract's moderation cases
+ * describe: a hit refuses `content_rejected` and a scanner outage
+ * `moderation_unavailable`. The host picks each app's shared-data moderation mode,
+ * and enforce is not its default: in `shadow` (the scan runs after the write) or `off`
+ * (no scan) neither a hit nor an outage refuses the write. The fake has no mode of its
+ * own: `moderate: () => null` is what a shadow or off app sees.
+ *
+ * IMPORTS (civitai/civitai#7494): `sources` adds other apps by blockId, each with its own
+ * collections, data, status and consent, and `collection(name, { from })` reaches them through
+ * the manifest's `storage.imports` with the server's checks in the server's order — the
+ * consumer's read charge, then token kind, declaration, read-only access, sign-in, the source's
+ * approval, declaration and `exportable`, the `apps:storage:import` scope and the viewer's
+ * grant, and the viewer's publish consent IN THE SOURCE for an authoring call into a shared
+ * collection. A `dev` caller is refused every import, as the server refuses a dev token.
+ * `as({ app })` acts as a source app itself, e.g. to seed the parent's data a fork then reads.
+ * `requestGrants` is the host's prompt for the publish grant in a source (civitai/civitai#7586):
+ * Allow records it there and the client's one retry lands, as on a real app page.
+ *
+ * NOT MODELLED: moderator hides (a hidden document reads as not found on the server;
+ * nothing here hides one), moderator exemption from the scanner, the review-preview
+ * namespace, the token middleware's other refusals (revoked instance, context
+ * binding, an approval read that fails), and a failed ownership lookup (the
+ * server's retryable 503 `service_unavailable`).
+ */
+
+// ---------------------------------------------------------------------------
+// Bounds — the server's, one copy here (the contract run pins the ones it reaches)
+// ---------------------------------------------------------------------------
+
+const BASE_SCOPE = 'apps:storage';
+const PUBLISH_SCOPE = 'apps:storage:publish';
+const IMPORT_SCOPE = 'apps:storage:import';
+/** Scopes the host strips when the viewer revokes consent; `apps:storage` is consent-exempt. */
+const CONSENT_GATED = new Set([PUBLISH_SCOPE, IMPORT_SCOPE]);
+/** A blockId, as an import's `from` names one. */
+const BLOCK_ID = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
+const MAX_IMPORTS = 8;
+const MAX_IMPORT_COLLECTIONS = 16;
+/** This app's blockId when the options name none. */
+const DEFAULT_BLOCK_ID = 'this-app';
+
+const COLLECTION_NAME = /^[a-z][a-z0-9_]{0,31}$/;
+const TALLY_NAME = /^[a-z][a-z0-9_]{0,31}$/;
+const KEY = /^[A-Za-z0-9._:-]{1,128}$/;
+const DOT_ONLY = /^\.+$/;
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+const REPORT = 'report';
+/** The update operators a PATCH may carry, and the deprecated tally route each one runs as. */
+const TALLY_OPERATORS = { $inc: 'increment', $mark: 'mark', $unmark: 'unmark' } as const;
+const INDEX_TYPES = ['string', 'number', 'boolean', 'time'] as const;
+
+const B = {
+  docBytes: 65536,
+  depth: 16,
+  stringIndexBytes: 128,
+  equalityFilters: 1,
+  listLimitMax: 100,
+  listLimitDefault: 25,
+  getManyMax: 100,
+  incrementMax: 100,
+} as const;
+/** One document plus the request wrapper around it. */
+const BODY_LIMIT_BYTES = B.docBytes + 16 * 1024;
+
+const DEFAULT_LIMITS = {
+  appBytes: 50 * 1024 * 1024,
+  appDocs: 1_000_000,
+  viewerBytes: 2 * 1024 * 1024,
+  viewerDocs: 1_000,
+};
+
+const MINUTE = 60;
+const DAY = 24 * 60 * 60;
+type RateBucket = 'read' | 'write' | 'tally' | 'report';
+const RATE: Record<RateBucket, { max: number; windowSeconds: number }> = {
+  read: { max: 300, windowSeconds: MINUTE },
+  write: { max: 120, windowSeconds: MINUTE },
+  tally: { max: 30, windowSeconds: MINUTE },
+  report: { max: 20, windowSeconds: DAY },
+};
+/**
+ * burst, daily, rejections: [capacity, refill interval ms]. The document store's own
+ * budget (civitai/civitai#8873): burst 30 (one back a minute), daily 300 (one back every
+ * 4.8 minutes), rejections 10 (one back every 30 minutes).
+ */
+const SHARED_WRITE_BUDGET: readonly (readonly [number, number])[] = [
+  [30, 60 * 1000],
+  [300, (DAY * 1000) / 300],
+  [10, 30 * 60 * 1000],
+];
+/**
+ * Server-side publish's own budget (`DOC_STORE_PUBLISH_BUDGET`): one token per publish call,
+ * burst 10 and daily 10, one back every 2.4 hours; rejections as above. Never the shared one.
+ */
+const PUBLISH_BUDGET: readonly (readonly [number, number])[] = [
+  [10, (DAY * 1000) / 10],
+  [10, (DAY * 1000) / 10],
+  [10, 30 * 60 * 1000],
+];
+/** Keys per publish or unpublish call, and copies pruned per publish. */
+const PUBLISH_MAX_KEYS = 500;
+const PUBLISH_PRUNE_LIMIT = 500;
+
+/** The default scanner's words: the contract's `conventions`, so a test can reach each refusal. */
+export const FAKE_STORAGE_MODERATION = Object.freeze({
+  blockedText: 'contract-blocked-term',
+  blockedLink: 'https://contract-blocked.example/x',
+  scannerDown: 'contract-scanner-down',
+});
+
+const STATUS: Record<string, number> = {
+  invalid_request: 400,
+  index_not_declared: 400,
+  schema_violation: 400,
+  unauthenticated: 401,
+  sign_in_required: 401,
+  insufficient_scope: 403,
+  consent_required: 403,
+  import_not_declared: 403,
+  not_exportable: 403,
+  not_eligible: 403,
+  not_author: 403,
+  write_policy: 403,
+  resource_not_owned: 403,
+  not_found: 404,
+  collection_not_declared: 404,
+  method_not_allowed: 405,
+  version_conflict: 409,
+  too_large: 413,
+  quota_exceeded: 413,
+  content_rejected: 422,
+  rate_limited: 429,
+  storage_disabled: 503,
+  moderation_unavailable: 503,
+  consent_unavailable: 503,
+};
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+export interface FakeStorageViewer {
+  /** The viewer's identity in this fake, and what `showAuthor` collections display. */
+  username: string;
+  /**
+   * The viewer's numeric user id, as the platform keys it. Internal: no response
+   * carries it, which a test can check by choosing a distinctive one. Default: a
+   * small number assigned on first use.
+   */
+  id?: number;
+  /** Passes the minimum-trust gate on shared writes. Default `true`. */
+  trusted?: boolean;
+  /** `details.reason` when untrusted. Default `account_too_new`. */
+  untrustedReason?: string;
+  /**
+   * Ids of the model versions whose model this viewer owns — what a collection's
+   * `ownedModelVersions` rule checks a write against. Default: none, so every id
+   * at a declared field is refused `resource_not_owned`, as the server refuses a
+   * version that is not the writer's (or does not exist).
+   */
+  modelVersions?: readonly number[];
+}
+
+/** Who is calling: a viewer (or `null`, anonymous) holding a token of some kind and scopes. */
+export interface FakeStorageCaller {
+  /** Default: the fake's `viewer`. `null` is an anonymous viewer with a token. */
+  viewer?: FakeStorageViewer | null;
+  /**
+   * `block` (default), `dev` (the developer's own namespace; refused every import, as the
+   * server refuses a dev token) or `none` (no token at all).
+   */
+  token?: 'block' | 'dev' | 'none';
+  /** The token's scopes. Default: that app's manifest `scopes`. */
+  scopes?: readonly string[];
+  /**
+   * Which app's token: this app's blockId (the default) or one of `sources`, so a test can
+   * act as the source itself — seed the parent's data that a fork then reads.
+   */
+  app?: string;
+}
+
+/** Another app in the same fake, reachable through this app's `storage.imports`. */
+export interface FakeStorageSource {
+  /** Its manifest; `storage.collections` is what an import reaches. Its own imports are not followed. */
+  manifest: { scopes?: readonly string[]; storage?: unknown };
+  /** Default `approved`; anything else refuses an import of it `not_eligible` (`source_not_approved`). */
+  status?: string;
+  /**
+   * Scopes the viewer revoked IN THIS SOURCE. Revoking `apps:storage:publish` here is how a
+   * test reaches the publish-in-source refusal: a write, counter or mark through a
+   * `readwrite` import into one of this source's shared collections is refused
+   * `consent_required` with `details: { scope: 'apps:storage:publish', from }`.
+   */
+  consent?: { revoked: readonly string[] };
+}
+
+/** What the viewer allowed for one source when the host's consent prompt showed the import. */
+export interface FakeStorageImportGrant {
+  collections: readonly string[];
+  access: 'read' | 'readwrite';
+}
+
+export type FakeModerationVerdict = 'blocked' | 'link' | 'unavailable' | null;
+
+export interface FakeStorageOptions {
+  /** The app's manifest; `storage.collections` and `storage.imports` are what the fake enforces. */
+  manifest: { scopes?: readonly string[]; storage?: unknown };
+  /** This app's blockId, which an import may not name. Default `this-app`. */
+  blockId?: string;
+  /** Other apps by blockId, for this app's `storage.imports` to reach (and `as({ app })` to act as). */
+  sources?: Record<string, FakeStorageSource>;
+  /**
+   * The viewer's import grants: source blockId → what they allowed. A grant covers an
+   * import when it names every collection the import names at an access at least as wide
+   * (`readwrite` covers `read`). Default: exactly the manifest's imports, as if the viewer
+   * had allowed every prompt; `{}` is none granted. The token must ALSO carry
+   * `apps:storage:import` (the caller's `scopes`, or `consent` revoking it).
+   */
+  importGrants?: Record<string, FakeStorageImportGrant>;
+  /**
+   * The host's consent prompt, for the one grant the client asks for by itself: the
+   * viewer's `apps:storage:publish` IN A SOURCE (`opts.from`), when a write through an
+   * import is refused for want of it (civitai/civitai#7586). Return `true` for Allow —
+   * the fake then records the grant in that source, as the host does, and the client
+   * sends the call once more — or `false` for "Not now". Absent, the client asks nothing
+   * and the refusal reaches the caller.
+   */
+  requestGrants?: (scopes: readonly string[], opts: { from?: string }) => boolean | Promise<boolean>;
+  /** The default caller's viewer. Default `{ username: 'viewer' }`; `null` for anonymous. */
+  viewer?: FakeStorageViewer | null;
+  /** Default `approved`; anything else refuses every call `not_eligible`. */
+  appStatus?: string;
+  /** Consent state: scopes the viewer revoked, or `unavailable` (the marker could not be read). */
+  consent?: { revoked: readonly string[] } | 'unavailable';
+  /** `true` answers every data operation `storage_disabled`, as a server with no database does. */
+  disabled?: boolean;
+  /** Override the per-app and per-viewer ceilings, e.g. a small `viewerDocs` to reach the quota. */
+  limits?: Partial<typeof DEFAULT_LIMITS>;
+  /**
+   * Apply the server's rate limits: the per-minute and per-day windows (reads, private
+   * writes and deletes, marks and counters, reports) and the shared write budget.
+   * Default `false`, so an app's own tests are never throttled; turn it on to test how
+   * the app handles `rate_limited`.
+   */
+  enforceRateLimits?: boolean;
+  /** The clock rate limits and timestamps read. Default `Date.now`. */
+  now?: () => number;
+  /**
+   * Classify one string (a value, an object key or a document key) of a shared write.
+   * Default: {@link FAKE_STORAGE_MODERATION}'s words.
+   */
+  moderate?: (text: string) => FakeModerationVerdict;
+  /**
+   * Serve server-side publish and unpublish (`POST …/_publish/:to`, `…/_unpublish/:to`). Default
+   * `false`, as on civitai.com, where they sit behind a per-app flag that is off: both answer as
+   * an unknown route (404 `not_found`), which the client reports as `publish_unavailable`, so an
+   * app's default tests exercise its fallback. `true` serves them, to test the publish path.
+   */
+  publish?: boolean;
+}
+
+/** One request as the fake received it, and what it answered. */
+export interface FakeStorageCall {
+  method: string;
+  path: string;
+  query: Record<string, string | string[]>;
+  body: unknown;
+  status: number;
+  response: unknown;
+}
+
+export interface FakeStorageSession {
+  /** The `Http` seam, as this caller. */
+  readonly http: Http;
+  /** The real client over that seam. */
+  readonly storage: DocumentStorage;
+}
+
+export interface FakeStorage extends FakeStorageSession {
+  /** The same store, as a different caller. */
+  as(caller: FakeStorageCaller): FakeStorageSession;
+  /** Every request received, in order, by any caller. */
+  readonly calls: FakeStorageCall[];
+}
+
+// ---------------------------------------------------------------------------
+// Manifest
+// ---------------------------------------------------------------------------
+
+type IndexType = (typeof INDEX_TYPES)[number];
+interface Decl {
+  visibility: 'private' | 'shared';
+  /** Shared collections only: the two policies phase one serves. */
+  write?: 'own' | 'none';
+  counters: string[];
+  marks: string[];
+  indexes: Map<string, IndexType>;
+  showAuthor: boolean;
+  /** Pointers into `data` whose ids must be the writer's own model versions; empty when undeclared. */
+  ownedModelVersions: string[];
+  /** The compiled `schema` every document's `data` must match; absent when none is declared. */
+  schema?: (data: unknown) => SchemaFailure | null;
+  /** `false` refuses every import of this collection (`not_exportable`). */
+  exportable: boolean;
+}
+
+/** One of the manifest's `storage.imports`. */
+interface Imp {
+  collections: Set<string>;
+  access: 'read' | 'readwrite';
+}
+
+/** The manifest's `ownedModelVersions` pointer: 1 to 4 plain identifier segments. */
+const OWNED_POINTER = /^(\/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$/u;
+const MAX_OWNED_POINTERS = 4;
+/** Postgres `integer`: the server refuses a larger id before querying for it. */
+const INT4_MAX = 2_147_483_647;
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** Declarations the platform does not serve yet, each with what to do instead. */
+const PHASED: { test: (raw: Record<string, unknown>) => boolean; what: string }[] = [
+  { test: (r) => r.write === 'owner', what: 'write "owner" (owner-written documents)' },
+  { test: (r) => r.write === 'anyone', what: 'write "anyone" (documents any viewer may edit)' },
+  { test: (r) => r.kind === 'log' || r.maxEntries !== undefined, what: 'kind "log" / maxEntries (log collections)' },
+  { test: (r) => r.ttlSeconds !== undefined, what: 'ttlSeconds (expiring documents)' },
+  { test: (r) => r.dailyWritesPerAuthor !== undefined, what: 'dailyWritesPerAuthor (per-collection write budgets)' },
+];
+
+/**
+ * Only what the fake needs to know the declared collections. It is NOT a manifest
+ * validator — `civitai app validate` and the platform's review are; a declaration it
+ * reads here may still be refused there. It refuses, at construction, the two things
+ * it cannot serve: a declaration it cannot read, and a feature the platform has not
+ * shipped (so a test never passes against storage that would not exist).
+ */
+function parseManifest(manifest: unknown): Map<string, Decl> {
+  const out = new Map<string, Decl>();
+  if (!isObject(manifest) || manifest.storage === undefined) return out;
+  const storage = manifest.storage;
+  // `collections` may be absent when `imports` is declared (a fork with no collections of its own).
+  if (!isObject(storage) || (storage.collections === undefined ? storage.imports === undefined : !isObject(storage.collections))) {
+    throw new Error('createFakeStorage: manifest.storage.collections must be an object');
+  }
+  const errors: string[] = [];
+  const names = (v: unknown) => (Array.isArray(v) ? v.filter((n): n is string => typeof n === 'string') : []);
+  // The manifest-wide pattern cap counts the collections that parsed, as the server does.
+  let patterns = 0;
+  for (const [name, raw] of Object.entries(isObject(storage.collections) ? storage.collections : {})) {
+    const at = `storage.collections.${name}`;
+    const before = errors.length;
+    if (!isObject(raw) || (raw.visibility !== 'private' && raw.visibility !== 'shared')) {
+      errors.push(`${at}: needs visibility "private" or "shared"`);
+      continue;
+    }
+    for (const { test, what } of PHASED) {
+      if (test(raw)) errors.push(`${at}: ${what} is not available yet in App Storage`);
+    }
+    const shared = raw.visibility === 'shared';
+    if (shared && raw.write !== 'own' && raw.write !== 'none' && raw.write !== 'owner' && raw.write !== 'anyone') {
+      errors.push(`${at}: a shared collection needs write "own" or "none"`);
+    }
+    const indexes = new Map<string, IndexType>();
+    for (const [path, type] of Object.entries(isObject(raw.indexes) ? raw.indexes : {})) {
+      if ((INDEX_TYPES as readonly unknown[]).includes(type)) indexes.set(path, type as IndexType);
+      else errors.push(`${at}.indexes.${path}: type must be one of ${INDEX_TYPES.join(', ')}`);
+    }
+    const ownedModelVersions: string[] = [];
+    if (raw.ownedModelVersions !== undefined) {
+      const list = raw.ownedModelVersions;
+      if (!shared || raw.write !== 'own') {
+        errors.push(`${at}.ownedModelVersions: applies only to shared collections with write "own"`);
+      } else if (
+        !Array.isArray(list) ||
+        list.length < 1 ||
+        list.length > MAX_OWNED_POINTERS ||
+        !list.every((p) => typeof p === 'string' && OWNED_POINTER.test(p)) ||
+        new Set(list).size !== list.length
+      ) {
+        errors.push(
+          `${at}.ownedModelVersions: must be 1 to ${MAX_OWNED_POINTERS} distinct pointers such as "/workflow/modelVersionId"`,
+        );
+      } else {
+        ownedModelVersions.push(...(list as string[]));
+      }
+    }
+    let schema: Decl['schema'];
+    let parsedSchema: ReturnType<typeof parseCollectionSchema> = null;
+    if (raw.schema !== undefined) {
+      if (shared && raw.write === 'none') {
+        errors.push(
+          `${at}.schema does not apply to write "none" — no document body is ever written to that collection, so a schema would check nothing`,
+        );
+      } else {
+        parsedSchema = parseCollectionSchema(`${at}.schema`, raw.schema, errors);
+        if (parsedSchema) schema = compileCollectionSchema(parsedSchema);
+      }
+    }
+    const decl: Decl = {
+      visibility: raw.visibility,
+      counters: shared ? names(raw.counters) : [],
+      marks: shared ? names(raw.marks) : [],
+      indexes,
+      showAuthor: shared && raw.showAuthor === true,
+      exportable: raw.exportable !== false,
+      ownedModelVersions,
+    };
+    if (shared && (raw.write === 'own' || raw.write === 'none')) decl.write = raw.write;
+    if (schema) decl.schema = schema;
+    if (parsedSchema && errors.length === before) patterns += countSchemaPatterns(parsedSchema);
+    out.set(name, decl);
+  }
+  if (patterns > MANIFEST_MAX_PATTERNS) {
+    errors.push(
+      `storage.collections declare ${patterns} patterns across their schemas — a manifest may declare at most ${MANIFEST_MAX_PATTERNS} in all`,
+    );
+  }
+  if (errors.length > 0) throw new Error(`createFakeStorage: cannot serve this storage declaration:\n- ${errors.join('\n- ')}`);
+  return out;
+}
+
+/**
+ * The manifest's `storage.imports`, refusing at construction what the server's manifest
+ * validation refuses at submit: a shape it cannot read, more than 8, an import of this app
+ * itself, and a second import of the same source.
+ */
+function parseImports(manifest: unknown, blockId: string): Map<string, Imp> {
+  const out = new Map<string, Imp>();
+  const storage = isObject(manifest) && isObject(manifest.storage) ? manifest.storage : undefined;
+  if (storage?.imports === undefined) return out;
+  const list = storage.imports;
+  const errors: string[] = [];
+  if (!Array.isArray(list) || list.length < 1 || list.length > MAX_IMPORTS) {
+    errors.push(`storage.imports: must be 1 to ${MAX_IMPORTS} imports`);
+  } else {
+    list.forEach((raw: unknown, i) => {
+      const at = `storage.imports[${i}]`;
+      const entry = isObject(raw) ? raw : {};
+      const from = typeof entry.from === 'string' ? entry.from : '';
+      const access = entry.access === 'read' ? 'read' : entry.access === 'readwrite' ? 'readwrite' : null;
+      const names: unknown[] = Array.isArray(entry.collections) ? entry.collections : [];
+      if (
+        !BLOCK_ID.test(from) ||
+        access === null ||
+        names.length < 1 ||
+        names.length > MAX_IMPORT_COLLECTIONS ||
+        !names.every((n) => typeof n === 'string' && COLLECTION_NAME.test(n)) ||
+        new Set(names).size !== names.length
+      ) {
+        errors.push(
+          `${at}: needs { from: a blockId, collections: 1 to ${MAX_IMPORT_COLLECTIONS} distinct collection names, access: "read" or "readwrite" }`,
+        );
+        return;
+      }
+      if (from === blockId) errors.push(`${at}: an app cannot import from itself`);
+      else if (out.has(from)) errors.push(`${at}: ${from} is imported more than once`);
+      else out.set(from, { collections: new Set(names as string[]), access });
+    });
+  }
+  if (errors.length > 0) throw new Error(`createFakeStorage: cannot serve this storage declaration:\n- ${errors.join('\n- ')}`);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+class Refusal extends Error {
+  readonly code: string;
+  readonly details?: Record<string, unknown>;
+  constructor(code: string, message: string, details?: Record<string, unknown>) {
+    super(message);
+    this.code = code;
+    if (details) this.details = details;
+  }
+}
+
+const refuse = (code: string, message: string, details?: Record<string, unknown>) =>
+  new Refusal(code, message, details);
+const invalid = (message: string, details?: Record<string, unknown>) => refuse('invalid_request', message, details);
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+interface IndexRow {
+  type: IndexType;
+  text?: string;
+  num?: number;
+}
+
+interface DocRow {
+  key: string;
+  data: Record<string, unknown>;
+  size: number;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+  /** Internal only — never leaves the fake. */
+  authorUid: number;
+  authorKind: 'user' | 'counter';
+  index: Map<string, IndexRow>;
+  counters: Map<string, number>;
+  markCounts: Map<string, number>;
+  /** `${uid}:${name}` */
+  marks: Set<string>;
+}
+
+interface Usage {
+  bytes: number;
+  docs: number;
+}
+
+/** One app in the fake: this app, or a source an import reaches. */
+interface AppState {
+  id: string;
+  collections: Map<string, Decl>;
+  /** Source blockId → import. Always empty for a source: an import is one hop. */
+  imports: Map<string, Imp>;
+  scopes: readonly string[];
+  status: string;
+  consent?: { revoked: readonly string[] } | 'unavailable';
+}
+
+interface Ctx {
+  /** The app whose data, declarations, ceilings and rate limits the call uses. */
+  app: AppState;
+  ns: string;
+  uid: number | null;
+}
+
+const utf8Length = (text: string) => new TextEncoder().encode(text).length;
+
+/**
+ * String order as the server's `COLLATE "C"` columns sort: by Unicode code point
+ * (the byte order of UTF-8). JavaScript's `<` compares UTF-16 code units instead,
+ * which puts an astral character (a surrogate pair, 0xD800…) BEFORE U+E000–U+FFFF.
+ */
+function byCodePoint(a: string, b: string): number {
+  const x = Array.from(a, (c) => c.codePointAt(0)!);
+  const y = Array.from(b, (c) => c.codePointAt(0)!);
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    if (x[i] !== y[i]) return x[i]! < y[i]! ? -1 : 1;
+  }
+  return x.length - y.length < 0 ? -1 : x.length > y.length ? 1 : 0;
+}
+
+/**
+ * A JSON value's text with every object's keys sorted: equal content, equal text, as the
+ * server's jsonb text form compares a copy with its private document.
+ */
+function canonical(value: unknown): string {
+  const sort = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(sort)
+      : isObject(v)
+        ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sort(v[k])]))
+        : v;
+  return JSON.stringify(sort(value));
+}
+
+/** A refusal raised for one document of a publish, with its key added. */
+function withKey(err: unknown, key: string): unknown {
+  return err instanceof Refusal ? refuse(err.code, err.message, { ...err.details, key }) : err;
+}
+
+/**
+ * The stored unit: the length of the database's text form of the JSON, which puts a
+ * space after every `:` and `,`. (Exact except where the two spell a number
+ * differently, e.g. an exponent.)
+ */
+function storedSize(data: unknown): number {
+  let separators = 0;
+  const walk = (v: unknown) => {
+    if (Array.isArray(v)) {
+      separators += Math.max(0, v.length - 1);
+      v.forEach(walk);
+    } else if (isObject(v)) {
+      const entries = Object.entries(v);
+      separators += entries.length + Math.max(0, entries.length - 1);
+      for (const [, x] of entries) walk(x);
+    }
+  };
+  walk(data);
+  return utf8Length(JSON.stringify(data)) + separators;
+}
+
+// ---------------------------------------------------------------------------
+// The fake
+// ---------------------------------------------------------------------------
+
+export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
+  const ownId = options.blockId ?? DEFAULT_BLOCK_ID;
+  const thisApp: AppState = {
+    id: ownId,
+    collections: parseManifest(options.manifest),
+    imports: parseImports(options.manifest, ownId),
+    scopes: options.manifest.scopes ?? [],
+    status: options.appStatus ?? 'approved',
+    ...(options.consent === undefined ? {} : { consent: options.consent }),
+  };
+  const apps = new Map<string, AppState>([[ownId, thisApp]]);
+  for (const [id, source] of Object.entries(options.sources ?? {})) {
+    if (apps.has(id)) throw new Error(`createFakeStorage: sources.${id} is this app's own blockId`);
+    apps.set(id, {
+      id,
+      collections: parseManifest(source.manifest),
+      imports: new Map(),
+      scopes: source.manifest.scopes ?? [],
+      status: source.status ?? 'approved',
+      ...(source.consent === undefined ? {} : { consent: source.consent }),
+    });
+  }
+  const importGrants: Record<string, FakeStorageImportGrant> =
+    options.importGrants ??
+    Object.fromEntries([...thisApp.imports].map(([from, imp]) => [from, { collections: [...imp.collections], access: imp.access }]));
+  const now = options.now ?? (() => Date.now());
+  const limits = { ...DEFAULT_LIMITS, ...options.limits };
+  const moderate =
+    options.moderate ??
+    ((text: string): FakeModerationVerdict => {
+      if (text.includes(FAKE_STORAGE_MODERATION.scannerDown)) return 'unavailable';
+      if (text.includes(FAKE_STORAGE_MODERATION.blockedLink)) return 'link';
+      if (text.includes(FAKE_STORAGE_MODERATION.blockedText)) return 'blocked';
+      return null;
+    });
+  const defaultViewer: FakeStorageViewer | null =
+    options.viewer === undefined ? { username: 'viewer' } : options.viewer;
+  const calls: FakeStorageCall[] = [];
+
+  // Identity: a username → an internal id that no response ever carries.
+  const uids = new Map<string, number>();
+  const uidOf = (viewer: FakeStorageViewer) => {
+    let uid = uids.get(viewer.username);
+    if (uid === undefined) {
+      uid = viewer.id ?? uids.size + 1;
+      uids.set(viewer.username, uid);
+    }
+    return uid;
+  };
+  const usernames = () => new Map([...uids].map(([name, uid]) => [uid, name]));
+
+  const docs = new Map<string, DocRow>();
+  const appUsage = new Map<string, Usage>();
+  const userUsage = new Map<string, Usage>();
+  const windows = new Map<string, { count: number; resetAt: number }>();
+  /** Keyed `${app}:${uid}`: the budget is per viewer per app. */
+  const budgets = new Map<string, number[]>();
+  const cursors = new Map<string, { binding: string; value: string | number; key: string }>();
+  const issueCursor = (binding: string, value: string | number, key: string) => {
+    // Deterministic (a per-fake counter), so an app's snapshot tests are stable.
+    const token = `cursor_${cursors.size + 1}`;
+    cursors.set(token, { binding, value, key });
+    return token;
+  };
+
+  const scopeOf = (ctx: Ctx, coll: string): number => {
+    if (ctx.app.collections.get(coll)!.visibility === 'shared') return 0;
+    if (ctx.uid === null) throw refuse('sign_in_required', 'sign in required');
+    return ctx.uid;
+  };
+  const docId = (ctx: Ctx, coll: string, scope: number, key: string) => `${ctx.ns}\u0000${coll}\u0000${scope}\u0000${key}`;
+  const docsIn = (ctx: Ctx, coll: string, scope: number) => {
+    const prefix = `${ctx.ns}\u0000${coll}\u0000${scope}\u0000`;
+    return [...docs].filter(([id]) => id.startsWith(prefix)).map(([, d]) => d);
+  };
+
+  // --- rate limits ---------------------------------------------------------
+
+  /** A fixed window from the first request, per app; every request counts, refused ones too. */
+  function charge(bucket: RateBucket, uid: number | null, app: string) {
+    if (!options.enforceRateLimits) return;
+    const { max, windowSeconds } = RATE[bucket];
+    const id = `${app}:${bucket}:${uid === null ? 'ip' : `u:${uid}`}`;
+    const t = now();
+    let w = windows.get(id);
+    if (!w || w.resetAt <= t) {
+      w = { count: 0, resetAt: t + windowSeconds * 1000 };
+      windows.set(id, w);
+    }
+    w.count += 1;
+    if (w.count > max) {
+      const left = Math.ceil((w.resetAt - t) / 1000);
+      throw refuse('rate_limited', 'rate limit exceeded', { bucket, retryAfter: left >= 1 ? left : windowSeconds });
+    }
+  }
+
+  /**
+   * Three continuously refilling buckets; each slot is the instant that bucket is full again.
+   * The shared write budget by default; a publish passes its own (its own key, too).
+   */
+  function reserveSharedWrite(
+    uid: string,
+    budget = SHARED_WRITE_BUDGET,
+    refusal = { message: 'shared write budget exhausted', bucket: 'shared-write' },
+  ): (rejected: boolean) => void {
+    if (!options.enforceRateLimits) return () => undefined;
+    const t = now();
+    const full = (budgets.get(uid) ?? [t, t, t]).map((f) => Math.max(f, t));
+    let wait = 0;
+    budget.forEach(([cap, iv], i) => {
+      wait = Math.max(wait, full[i]! - t - (cap - 1) * iv);
+    });
+    if (wait > 0) {
+      throw refuse('rate_limited', refusal.message, {
+        bucket: refusal.bucket,
+        retryAfter: Math.max(1, Math.ceil(wait / 1000)),
+      });
+    }
+    full[0]! += budget[0]![1];
+    full[1]! += budget[1]![1];
+    budgets.set(uid, full);
+    return (rejected: boolean) => {
+      const t2 = now();
+      const f = (budgets.get(uid) ?? [t2, t2, t2]).map((x) => Math.max(x, t2));
+      f[0] = Math.max(f[0]! - budget[0]![1], t2);
+      f[1] = Math.max(f[1]! - budget[1]![1], t2);
+      if (rejected) {
+        const [cap, iv] = budget[2]!;
+        f[2] = Math.min(f[2]! + iv, t2 + 2 * cap * iv);
+      }
+      budgets.set(uid, f);
+    };
+  }
+
+  // --- store ---------------------------------------------------------------
+
+  /** Phased features were refused at construction, so every declared collection is servable. */
+  const declOf = (ctx: Ctx, name: string): Decl => ctx.app.collections.get(name)!;
+
+  function assertShareWritable(decl: Decl) {
+    if (decl.visibility !== 'shared') return;
+    if (decl.write === 'none') throw refuse('write_policy', 'documents in this collection are written by counters only');
+  }
+
+  function assertKey(key: unknown): asserts key is string {
+    if (typeof key !== 'string' || !KEY.test(key)) throw invalid('key must be 1–128 characters of [A-Za-z0-9._:-]');
+    if (DOT_ONLY.test(key)) throw invalid('key must not consist only of dots: it cannot be addressed in a URL path');
+  }
+
+  const requireViewer = (ctx: Ctx): number => {
+    if (ctx.uid === null) throw refuse('sign_in_required', 'sign in required');
+    return ctx.uid;
+  };
+  const requireShared = (decl: Decl, what: string) => {
+    if (decl.visibility !== 'shared') throw invalid(`${what} exist on shared collections only`);
+  };
+
+  function assertStoredString(s: string) {
+    if (s.includes('\u0000') || LONE_SURROGATE.test(s)) throw invalid('data contains a NUL character or an unpaired surrogate');
+  }
+  function assertShape(v: unknown, depth: number) {
+    if (typeof v === 'string') return assertStoredString(v);
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v)) throw invalid('data contains a non-finite number');
+      return;
+    }
+    if (v === null || typeof v === 'boolean') return;
+    if (typeof v !== 'object') throw invalid('data contains a non-JSON value');
+    if (depth > B.depth) throw invalid(`data nests deeper than ${B.depth}`);
+    if (Array.isArray(v)) return v.forEach((x) => assertShape(x, depth + 1));
+    for (const [k, x] of Object.entries(v)) {
+      assertStoredString(k);
+      assertShape(x, depth + 1);
+    }
+  }
+  function serialize(data: unknown): Record<string, unknown> {
+    if (!isObject(data)) throw invalid('data must be a JSON object');
+    if (utf8Length(JSON.stringify(data)) > B.docBytes) {
+      throw refuse('too_large', `document exceeds ${B.docBytes} bytes`, { limit: B.docBytes });
+    }
+    assertShape(data, 1);
+    return data;
+  }
+
+  function indexValue(type: IndexType, raw: unknown, index: string): IndexRow {
+    const bad = (reason: string) => invalid(`index ${index}: ${reason}`, { index });
+    switch (type) {
+      case 'string':
+        if (typeof raw !== 'string') throw bad('expected a string');
+        if (utf8Length(raw) > B.stringIndexBytes) throw bad(`string longer than ${B.stringIndexBytes} bytes`);
+        assertStoredString(raw);
+        return { type, text: raw };
+      case 'number':
+        if (typeof raw !== 'number' || !Number.isFinite(raw)) throw bad('expected a finite number');
+        return { type, num: raw };
+      case 'boolean':
+        if (typeof raw !== 'boolean') throw bad('expected a boolean');
+        return { type, num: raw ? 1 : 0 };
+      case 'time': {
+        const ms = typeof raw === 'number' ? raw : typeof raw === 'string' ? Date.parse(raw) : Number.NaN;
+        if (!Number.isFinite(ms)) throw bad('expected an ISO-8601 time or epoch milliseconds');
+        return { type, num: ms };
+      }
+    }
+  }
+
+  function indexRows(decl: Decl, data: Record<string, unknown>): Map<string, IndexRow> {
+    const rows = new Map<string, IndexRow>();
+    for (const [name, type] of decl.indexes) {
+      let cur: unknown = data;
+      for (const seg of name.split('.')) {
+        cur = isObject(cur) && Object.prototype.hasOwnProperty.call(cur, seg) ? cur[seg] : undefined;
+      }
+      if (cur === undefined || cur === null) continue;
+      rows.set(name, indexValue(type, cur, name));
+    }
+    return rows;
+  }
+
+  /** The ceilings, checked before anything changes, so a refusal leaves the store as it was. */
+  function chargeUsage(ctx: Ctx, uid: number, bytes: number, count: number, ceiling: string) {
+    const app = appUsage.get(ctx.ns) ?? { bytes: 0, docs: 0 };
+    if ((bytes > 0 && app.bytes + bytes > limits.appBytes) || (count > 0 && app.docs + count > limits.appDocs)) {
+      throw refuse('quota_exceeded', 'app storage quota exceeded', { ceiling: 'app' });
+    }
+    const userId = `${ctx.ns}\u0000${uid}`;
+    const user = userUsage.get(userId) ?? { bytes: 0, docs: 0 };
+    if (
+      (bytes !== 0 || count !== 0) &&
+      ((bytes > 0 && user.bytes + bytes > limits.viewerBytes) || (count > 0 && user.docs + count > limits.viewerDocs))
+    ) {
+      throw refuse('quota_exceeded', 'storage quota exceeded', { ceiling });
+    }
+    return () => {
+      appUsage.set(ctx.ns, { bytes: app.bytes + bytes, docs: app.docs + count });
+      userUsage.set(userId, { bytes: user.bytes + bytes, docs: user.docs + count });
+    };
+  }
+
+  function present(ctx: Ctx, coll: string, d: DocRow) {
+    const decl = declOf(ctx, coll);
+    const counters: Record<string, number> = {};
+    const marks: Record<string, number> = {};
+    if (decl.visibility === 'shared') {
+      for (const n of decl.counters) counters[n] = d.counters.get(n) ?? 0;
+      for (const n of decl.marks) if (n !== REPORT) marks[n] = d.markCounts.get(n) ?? 0;
+    }
+    const names = usernames();
+    const author =
+      d.authorKind === 'counter'
+        ? { kind: 'counter' }
+        : {
+            kind: 'user',
+            isViewer: d.authorUid === ctx.uid,
+            ...(decl.showAuthor && names.has(d.authorUid) ? { username: names.get(d.authorUid) } : {}),
+          };
+    const mine =
+      ctx.uid === null
+        ? null
+        : {
+            marks: [...d.marks]
+              .filter((m) => decl.visibility === 'shared' && m.startsWith(`${ctx.uid}:`))
+              .map((m) => m.slice(m.indexOf(':') + 1))
+              .sort(),
+          };
+    return {
+      key: d.key,
+      data: d.data,
+      version: d.version,
+      createdAt: new Date(d.createdAt).toISOString(),
+      updatedAt: new Date(d.updatedAt).toISOString(),
+      author,
+      counters,
+      marks,
+      viewer: mine,
+    };
+  }
+
+  function getMany(ctx: Ctx, coll: string, keys: unknown[]) {
+    if (keys.length > B.getManyMax) throw invalid(`getMany takes at most ${B.getManyMax} keys`);
+    keys.forEach(assertKey);
+    if (keys.length === 0) return [];
+    const scope = scopeOf(ctx, coll);
+    storageOn();
+    return (keys as string[]).map((k) => {
+      const d = docs.get(docId(ctx, coll, scope, k));
+      return d ? present(ctx, coll, d) : null;
+    });
+  }
+
+  function writeDoc(ctx: Ctx, coll: string, key: string, data: unknown, ifVersion: number | undefined) {
+    const decl = declOf(ctx, coll);
+    assertKey(key);
+    const viewer = requireViewer(ctx);
+    assertShareWritable(decl);
+    if (ifVersion !== undefined && !(Number.isSafeInteger(ifVersion) && ifVersion >= 0)) {
+      throw invalid('ifVersion must be a non-negative integer');
+    }
+    const doc = serialize(data);
+    const index = indexRows(decl, doc);
+    const scope = scopeOf(ctx, coll);
+    storageOn();
+    const id = docId(ctx, coll, scope, key);
+    const existing = docs.get(id);
+    const size = storedSize(doc);
+    const tooLarge = () => refuse('too_large', `document exceeds ${B.docBytes} bytes`, { limit: B.docBytes });
+    const ceiling = decl.visibility === 'private' ? 'viewer' : 'author';
+    const t = now();
+    if (existing) {
+      if (ifVersion !== undefined && ifVersion !== existing.version) {
+        throw refuse('version_conflict', 'version conflict', { currentVersion: existing.version });
+      }
+      if (decl.visibility === 'shared' && !(existing.authorKind === 'user' && existing.authorUid === ctx.uid)) {
+        throw refuse('not_author', 'only the author may change this document');
+      }
+      if (size > B.docBytes) throw tooLarge();
+      const commit = chargeUsage(ctx, viewer, size - existing.size, 0, ceiling);
+      commit();
+      Object.assign(existing, { data: doc, size, version: existing.version + 1, updatedAt: t, index });
+      return present(ctx, coll, existing);
+    }
+    if (ifVersion !== undefined && ifVersion !== 0) {
+      throw refuse('version_conflict', 'version conflict', { currentVersion: 0 });
+    }
+    if (size > B.docBytes) throw tooLarge();
+    chargeUsage(ctx, viewer, size, 1, ceiling)();
+    const row: DocRow = {
+      key,
+      data: doc,
+      size,
+      version: 1,
+      createdAt: t,
+      updatedAt: t,
+      authorUid: viewer,
+      authorKind: 'user',
+      index,
+      counters: new Map(),
+      markCounts: new Map(),
+      marks: new Set(),
+    };
+    docs.set(id, row);
+    return present(ctx, coll, row);
+  }
+
+  function remove(ctx: Ctx, coll: string, key: string, ifVersion: number | undefined) {
+    const decl = declOf(ctx, coll);
+    assertKey(key);
+    const viewer = requireViewer(ctx);
+    assertShareWritable(decl);
+    const scope = scopeOf(ctx, coll);
+    storageOn();
+    const id = docId(ctx, coll, scope, key);
+    const row = docs.get(id);
+    if (!row) {
+      if (ifVersion !== undefined && ifVersion !== 0) throw refuse('version_conflict', 'version conflict', { currentVersion: 0 });
+      return { deleted: false };
+    }
+    if (ifVersion !== undefined && ifVersion !== row.version) {
+      throw refuse('version_conflict', 'version conflict', { currentVersion: row.version });
+    }
+    if (decl.visibility === 'shared' && !(row.authorKind === 'user' && row.authorUid === ctx.uid)) {
+      throw refuse('not_author', 'only the author may change this document');
+    }
+    chargeUsage(ctx, viewer, -row.size, -1, decl.visibility === 'private' ? 'viewer' : 'author')();
+    docs.delete(id);
+    return { deleted: true };
+  }
+
+  function increment(ctx: Ctx, coll: string, key: string, counter: string, by = 1) {
+    const decl = declOf(ctx, coll);
+    assertKey(key);
+    requireShared(decl, 'counters');
+    if (!TALLY_NAME.test(counter) || !decl.counters.includes(counter)) {
+      throw invalid(`counter ${counter} is not declared`, { counter });
+    }
+    if (!Number.isSafeInteger(by) || by < 1 || by > B.incrementMax) {
+      throw invalid(`by must be an integer from 1 to ${B.incrementMax}`);
+    }
+    const viewer = requireViewer(ctx);
+    storageOn();
+    const id = docId(ctx, coll, 0, key);
+    let row = docs.get(id);
+    if (!row) {
+      if ((decl.write ?? 'own') !== 'none') throw refuse('not_found', 'document not found');
+      const t = now();
+      const size = storedSize({});
+      chargeUsage(ctx, viewer, size, 1, 'viewer')();
+      row = {
+        key,
+        data: {},
+        size,
+        version: 1,
+        createdAt: t,
+        updatedAt: t,
+        authorUid: viewer,
+        authorKind: 'counter',
+        index: new Map(),
+        counters: new Map(),
+        markCounts: new Map(),
+        marks: new Set(),
+      };
+      docs.set(id, row);
+    }
+    const value = (row.counters.get(counter) ?? 0) + by;
+    row.counters.set(counter, value);
+    return { value };
+  }
+
+  function assertMarkName(decl: Decl, name: string) {
+    requireShared(decl, 'marks');
+    if (name === REPORT) return;
+    if (!TALLY_NAME.test(name) || !decl.marks.includes(name)) throw invalid(`mark ${name} is not declared`, { mark: name });
+  }
+
+  function setMark(ctx: Ctx, coll: string, key: string, name: string, on: boolean) {
+    const decl = declOf(ctx, coll);
+    assertKey(key);
+    assertMarkName(decl, name);
+    const viewer = requireViewer(ctx);
+    storageOn();
+    const row = docs.get(docId(ctx, coll, 0, key));
+    if (!row) throw refuse('not_found', 'document not found');
+    const id = `${viewer}:${name}`;
+    const had = row.marks.has(id);
+    if (on && !had) {
+      row.marks.add(id);
+      row.markCounts.set(name, (row.markCounts.get(name) ?? 0) + 1);
+    } else if (!on && had) {
+      row.marks.delete(id);
+      row.markCounts.set(name, (row.markCounts.get(name) ?? 0) - 1);
+    }
+    return { marked: on, count: row.markCounts.get(name) ?? 0 };
+  }
+
+  type Sort =
+    | { kind: 'key'; desc: boolean }
+    | { kind: 'createdAt' | 'updatedAt'; desc: boolean }
+    | { kind: 'index'; desc: boolean; name: string; type: IndexType }
+    | { kind: 'tally'; desc: boolean; tally: 'counter' | 'mark'; name: string };
+
+  function parseSort(decl: Decl, raw: string | undefined): Sort {
+    const s = raw ?? 'key';
+    const desc = s.startsWith('-');
+    const field = desc ? s.slice(1) : s;
+    if (field === 'key') return { kind: 'key', desc };
+    if (field === 'createdAt' || field === 'updatedAt') return { kind: field, desc };
+    const tally = /^(counter|mark):(.+)$/.exec(field);
+    if (tally) {
+      requireShared(decl, 'counters and marks');
+      const kind = tally[1] as 'counter' | 'mark';
+      const name = tally[2]!;
+      const declared = kind === 'counter' ? decl.counters : decl.marks;
+      if (!declared.includes(name) || (kind === 'mark' && name === REPORT)) {
+        throw refuse('index_not_declared', `${kind} ${name} is not declared`, { field });
+      }
+      return { kind: 'tally', desc, tally: kind, name };
+    }
+    const type = decl.indexes.get(field);
+    if (!type) throw refuse('index_not_declared', `sort field ${field} is not declared`, { field });
+    return { kind: 'index', desc, name: field, type };
+  }
+
+  /** The value a document sorts by; `undefined` = not in this ordering. */
+  function sortValue(sort: Sort, d: DocRow): string | number | undefined {
+    switch (sort.kind) {
+      case 'key':
+        return '';
+      case 'createdAt':
+        return d.createdAt;
+      case 'updatedAt':
+        return d.updatedAt;
+      case 'tally':
+        return (sort.tally === 'counter' ? d.counters : d.markCounts).get(sort.name) ?? 0;
+      case 'index': {
+        const row = d.index.get(sort.name);
+        if (!row || row.type !== sort.type) return undefined;
+        return sort.type === 'string' ? row.text : row.num;
+      }
+    }
+  }
+
+  function list(ctx: Ctx, coll: string, q: ListQuery) {
+    const decl = declOf(ctx, coll);
+    const limit = q.limit ?? B.listLimitDefault;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > B.listLimitMax) throw invalid(`limit must be 1–${B.listLimitMax}`);
+    const scope = scopeOf(ctx, coll);
+    const sort = parseSort(decl, q.sort);
+    let rows = docsIn(ctx, coll, scope);
+
+    const where = Object.entries(q.where ?? {});
+    if (where.length > B.equalityFilters) throw invalid(`at most ${B.equalityFilters} equality filter`);
+    for (const [field, raw] of where) {
+      const type = decl.indexes.get(field);
+      if (!type) throw refuse('index_not_declared', `${field} is not a declared index`, { field });
+      const want = indexValue(type, raw, field);
+      rows = rows.filter((d) => {
+        const row = d.index.get(field);
+        return !!row && row.type === type && (type === 'string' ? row.text === want.text : row.num === want.num);
+      });
+    }
+    if (q.keyPrefix !== undefined) {
+      if (!/^[A-Za-z0-9._:-]{0,128}$/.test(q.keyPrefix)) {
+        throw invalid('keyPrefix must be at most 128 characters of [A-Za-z0-9._:-]');
+      }
+      const prefix = q.keyPrefix;
+      rows = rows.filter((d) => d.key.startsWith(prefix));
+    }
+    if (q.author !== undefined) {
+      if (q.author !== 'me') throw invalid('author must be "me"');
+      const me = requireViewer(ctx);
+      rows = rows.filter((d) => d.authorKind === 'user' && d.authorUid === me);
+    }
+    if (q.markedBy !== undefined || q.mark !== undefined) {
+      if (q.markedBy !== 'me' || q.mark === undefined) throw invalid('markedBy=me and mark are required together');
+      assertMarkName(decl, q.mark);
+      const id = `${requireViewer(ctx)}:${q.mark}`;
+      rows = rows.filter((d) => d.marks.has(id));
+    }
+
+    const keyed = rows
+      .map((d) => ({ d, v: sortValue(sort, d) }))
+      .filter((x): x is { d: DocRow; v: string | number } => x.v !== undefined);
+    const dir = sort.desc ? -1 : 1;
+    const cmp = (a: string | number, b: string | number) =>
+      typeof a === 'string' && typeof b === 'string' ? byCodePoint(a, b) : a < b ? -1 : a > b ? 1 : 0;
+    const order = (a: { v: string | number; key: string }, b: { v: string | number; key: string }) =>
+      (cmp(a.v, b.v) || cmp(a.key, b.key)) * dir;
+    let ordered = keyed.map((x) => ({ d: x.d, v: x.v, key: x.d.key })).sort(order);
+    // OPAQUE, and bound to the query that issued it: a token for a stored position,
+    // refused (`invalid_request`) for any other collection, sort or filter.
+    // (Stricter than the server, which binds a cursor to its sort only.)
+    const binding = JSON.stringify([
+      ctx.ns,
+      coll,
+      q.sort ?? 'key',
+      q.where ?? {},
+      q.keyPrefix ?? null,
+      q.author ?? null,
+      q.markedBy ?? null,
+      q.mark ?? null,
+    ]);
+    if (q.cursor !== undefined) {
+      const cur = cursors.get(q.cursor);
+      if (!cur || cur.binding !== binding) throw invalid('invalid cursor');
+      const bound = { v: cur.value, key: cur.key };
+      ordered = ordered.filter((x) => order(x, bound) > 0);
+    }
+    storageOn();
+    const page = ordered.slice(0, limit);
+    const last = page[page.length - 1];
+    return {
+      items: page.map((x) => present(ctx, coll, x.d)),
+      nextCursor: ordered.length > limit && last ? issueCursor(binding, last.v, last.key) : null,
+    };
+  }
+
+  function storageOn() {
+    if (options.disabled) throw refuse('storage_disabled', 'document storage is unavailable');
+  }
+
+  // --- the route -----------------------------------------------------------
+
+  type Route =
+    | { op: 'info' }
+    | { op: 'list' | 'create' | 'getMany'; collection: string }
+    | { op: 'publish' | 'unpublish'; collection: string }
+    | { op: 'get' | 'put' | 'delete'; collection: string; key: string }
+    | { op: 'increment' | 'mark' | 'unmark'; collection: string; key: string; name: string }
+    // One update operator on one document; translated by `parseTallyPatch` before it runs.
+    | { op: 'patch'; collection: string; key: string };
+  type TallyRoute = Extract<Route, { op: 'increment' | 'mark' | 'unmark' }>;
+
+  function match(method: string, s: string[]): { route: Route } | { methods: string[] } | null {
+    const [a, b, c, d] = s;
+    const pick = (table: Record<string, Route>) =>
+      table[method] ? { route: table[method]! } : { methods: Object.keys(table) };
+    switch (s.length) {
+      case 0:
+        return pick({ GET: { op: 'info' } });
+      case 1:
+        if (a!.startsWith('_')) return null;
+        return pick({ GET: { op: 'list', collection: a! }, POST: { op: 'create', collection: a! } });
+      case 2:
+        if (a === '_get') return pick({ POST: { op: 'getMany', collection: b! } });
+        // Off, publish is not a route at all, as on a server that does not serve it.
+        if (a === '_publish' && options.publish === true) return pick({ POST: { op: 'publish', collection: b! } });
+        if (a === '_unpublish' && options.publish === true) return pick({ POST: { op: 'unpublish', collection: b! } });
+        if (a!.startsWith('_')) return null;
+        return pick({
+          GET: { op: 'get', collection: a!, key: b! },
+          PUT: { op: 'put', collection: a!, key: b! },
+          DELETE: { op: 'delete', collection: a!, key: b! },
+          PATCH: { op: 'patch', collection: a!, key: b! },
+        });
+      case 4:
+        if (a!.startsWith('_')) return null;
+        if (c === 'counters') return pick({ POST: { op: 'increment', collection: a!, key: b!, name: d! } });
+        if (c === 'marks') {
+          return pick({
+            PUT: { op: 'mark', collection: a!, key: b!, name: d! },
+            DELETE: { op: 'unmark', collection: a!, key: b!, name: d! },
+          });
+        }
+        return null;
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * A PATCH body → the tally route it runs as, and the body that route's own parser reads:
+   * the server's `parseTallyPatch` (civitai/civitai#8292), with its messages and its
+   * `details.reason` values. Only the operator's SHAPE is checked here; every value (`by`,
+   * the counter or mark name, a report withdrawal) is the route's, checked where the
+   * deprecated route checks it.
+   */
+  function parseTallyPatch(at: { collection: string; key: string }, body: unknown): { route: TallyRoute; body: unknown } {
+    const refusal = (reason: string, message: string, extra?: Record<string, unknown>) =>
+      invalid(message, { reason, ...extra });
+    if (body === undefined) throw refusal('empty_patch', 'PATCH needs an update operator');
+    if (!isObject(body)) throw refusal('malformed_operator', 'PATCH body must be an object holding one update operator');
+    const fields = Object.keys(body);
+    if (fields.length === 0) throw refusal('empty_patch', 'PATCH needs an update operator');
+    const isOperator = (f: string): f is keyof typeof TALLY_OPERATORS =>
+      Object.prototype.hasOwnProperty.call(TALLY_OPERATORS, f);
+    const unknown = fields.find((f) => f.startsWith('$') && !isOperator(f));
+    if (unknown !== undefined) throw refusal('unknown_operator', `unknown update operator ${unknown}`, { operator: unknown });
+    const operators = fields.filter(isOperator);
+    if (operators.length > 1) throw refusal('multiple_operators', 'PATCH takes exactly one update operator', { operators });
+    const [operator] = operators;
+    if (operator === undefined) {
+      throw refusal(
+        'merge_patch_unsupported',
+        'PATCH takes an update operator ($inc, $mark or $unmark); to change data, PUT the document',
+      );
+    }
+    if (fields.length > 1) throw refusal('malformed_operator', `${operator} cannot be combined with other fields`, { operator });
+    const value = body[operator];
+    const where = { collection: at.collection, key: at.key };
+    if (operator === '$inc') {
+      const counters = isObject(value) ? Object.entries(value) : [];
+      if (counters.length !== 1) throw refusal('malformed_operator', '$inc names exactly one counter: {"<counter>": by}');
+      const [[name, by]] = counters as [[string, unknown]];
+      // The deprecated route's own body, `{ by }`, read by its own parser.
+      return { route: { op: 'increment', ...where, name }, body: { by } };
+    }
+    if (typeof value !== 'string') throw refusal('malformed_operator', `${operator} takes a mark name`, { operator });
+    // A mark's body is empty on the deprecated route too.
+    return { route: { op: TALLY_OPERATORS[operator], ...where, name: value }, body: undefined };
+  }
+
+  type ListQuery = {
+    where?: Record<string, string | number | boolean>;
+    sort?: string;
+    author?: string;
+    markedBy?: string;
+    mark?: string;
+    keyPrefix?: string;
+    limit?: number;
+    cursor?: string;
+  };
+
+  function parseListQuery(query: Record<string, string | string[]>, decl: Decl): ListQuery {
+    const q: ListQuery = {};
+    for (const [name, raw] of Object.entries(query)) {
+      if (Array.isArray(raw)) throw invalid(`${name} must be given once`);
+      const where = /^where\[([^\]]+)\]$/.exec(name);
+      if (where) {
+        const field = where[1]!;
+        let value: string | number | boolean = raw;
+        const type = decl.indexes.get(field);
+        if (type === 'number') {
+          if (raw.trim() === '' || !Number.isFinite(Number(raw))) throw invalid(`where[${field}] must be a number`);
+          value = Number(raw);
+        } else if (type === 'boolean') {
+          if (raw !== 'true' && raw !== 'false') throw invalid(`where[${field}] must be true or false`);
+          value = raw === 'true';
+        } else if (type === 'time' && /^-?[0-9]+$/.test(raw)) {
+          value = Number(raw);
+        }
+        q.where = { ...q.where, [field]: value };
+        continue;
+      }
+      if (name === 'from') continue; // the import selector, resolved before the route runs
+      if (!['sort', 'author', 'markedBy', 'mark', 'keyPrefix', 'limit', 'cursor'].includes(name)) {
+        throw invalid(`unknown query parameter ${name}`);
+      }
+      if (name === 'limit') {
+        if (!/^[0-9]{1,3}$/.test(raw)) throw invalid('limit must be an integer');
+        q.limit = Number(raw);
+      } else if (name === 'author' || name === 'markedBy') {
+        if (raw !== 'me') throw invalid(`${name} must be "me"`);
+        q[name] = 'me';
+      } else {
+        q[name as 'sort' | 'mark' | 'keyPrefix' | 'cursor'] = raw;
+      }
+    }
+    return q;
+  }
+
+  /** A strict body: an object holding only `allowed` keys, each passing its check. */
+  function parseBody(body: unknown, allowed: Record<string, (v: unknown) => boolean>, required: string[] = []) {
+    const value = body === undefined ? {} : body;
+    const issues: { path: string; message: string }[] = [];
+    if (!isObject(value)) issues.push({ path: '', message: 'expected an object' });
+    else {
+      for (const k of Object.keys(value)) {
+        if (!(k in allowed)) issues.push({ path: k, message: 'unrecognized key' });
+        else if (value[k] !== undefined && !allowed[k]!(value[k])) issues.push({ path: k, message: 'invalid value' });
+      }
+      for (const k of required) if (value[k] === undefined) issues.push({ path: k, message: 'required' });
+    }
+    if (issues.length > 0) throw invalid('invalid request body', { issues });
+    return value as Record<string, unknown>;
+  }
+  const isNumber = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
+  const isStringArray = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+
+  /** Every string leaf and object key, plus the document key when the app chose it. */
+  function moderateWrite(input: { data?: Record<string, unknown>; key?: string }) {
+    const fields: string[][] = [];
+    if (input.data !== undefined) {
+      const texts: string[] = [];
+      const walk = (v: unknown) => {
+        if (typeof v === 'string') texts.push(v);
+        else if (Array.isArray(v)) v.forEach(walk);
+        else if (isObject(v)) {
+          for (const [k, x] of Object.entries(v)) {
+            texts.push(k);
+            walk(x);
+          }
+        }
+      };
+      walk(input.data);
+      fields.push(texts);
+    }
+    if (input.key !== undefined) fields.push([input.key]);
+    for (const texts of fields) {
+      const verdicts = texts.map(moderate);
+      if (verdicts.includes('unavailable')) {
+        throw refuse('moderation_unavailable', 'content could not be reviewed right now', { retryAfter: 5 });
+      }
+      const hit = verdicts.includes('link') ? 'link' : verdicts.includes('blocked') ? 'blocked' : null;
+      if (hit) throw refuse('content_rejected', 'content was rejected by moderation', { category: hit });
+    }
+  }
+
+  function assertTrusted(viewer: FakeStorageViewer) {
+    if (viewer.trusted === false) {
+      throw refuse('not_eligible', 'this account cannot write shared data yet', {
+        reason: viewer.untrustedReason ?? 'account_too_new',
+      });
+    }
+  }
+
+  /**
+   * The collection's `ownedModelVersions` rule, as the server's
+   * `doc-store-ownership.ts` applies it: a pointer that resolves to nothing is
+   * allowed; every value found must be a positive `integer` id — all of them are
+   * checked before any ownership — and then the writer's own version. One code
+   * and message for every reason, so a refusal reveals nothing about whether a
+   * version exists.
+   */
+  function assertOwnedModelVersions(decl: Decl, data: Record<string, unknown>, viewer: FakeStorageViewer) {
+    if (decl.ownedModelVersions.length === 0) return;
+    const notOwned = (pointer: string) =>
+      refuse('resource_not_owned', 'the model version at this field is not one the author owns', { pointer });
+    const claimed: { pointer: string; id: number }[] = [];
+    for (const pointer of decl.ownedModelVersions) {
+      let cur: unknown = data;
+      let found = true;
+      for (const seg of pointer.split('/').slice(1)) {
+        if (!isObject(cur) || !Object.prototype.hasOwnProperty.call(cur, seg)) {
+          found = false;
+          break;
+        }
+        cur = cur[seg];
+      }
+      if (!found) continue;
+      if (typeof cur !== 'number' || !Number.isInteger(cur) || cur < 1 || cur > INT4_MAX) throw notOwned(pointer);
+      claimed.push({ pointer, id: cur });
+    }
+    const owned = new Set(viewer.modelVersions ?? []);
+    for (const { pointer, id } of claimed) {
+      if (!owned.has(id)) throw notOwned(pointer);
+    }
+  }
+
+  /**
+   * The collection's `schema`, against the WHOLE body the write would store (a put replaces
+   * it). The server checks it in the route layer first, so a refusal spends nothing.
+   */
+  function assertMatchesSchema(coll: string, decl: Decl, data: unknown) {
+    const failure = decl.schema?.(data);
+    if (!failure) return;
+    throw refuse('schema_violation', schemaViolationMessage(coll, failure), {
+      collection: coll,
+      pointer: failure.pointer,
+      keyword: failure.keyword,
+    });
+  }
+
+  /** The server's refusals that are ITS fault: refunded without a rejection charge. */
+  const isOurFault = (err: unknown) =>
+    !(err instanceof Refusal) ||
+    (err.code === 'rate_limited' ? err.details?.reason === 'contention' : ['storage_disabled', 'moderation_unavailable', 'consent_unavailable'].includes(err.code));
+
+  function handle(
+    caller: FakeStorageCaller & { token: NonNullable<FakeStorageCaller['token']> },
+    method: string,
+    path: string,
+    query: Record<string, string | string[]>,
+    sent: unknown,
+  ) {
+    const segments = path.replace(/^\/+/, '').split('/').filter(Boolean);
+    if (segments[0] !== 'blocks' || segments[1] !== 'storage') {
+      throw new Error(`fake storage: no route for ${path}`);
+    }
+    let rest: string[];
+    try {
+      rest = segments.slice(2).map((s) => decodeURIComponent(s));
+    } catch {
+      throw refuse('not_found', 'no such storage route');
+    }
+    // The wire: only POST, PUT and PATCH bodies are read, and only what JSON carries.
+    let body =
+      (method === 'POST' || method === 'PUT' || method === 'PATCH') && sent !== undefined
+        ? (JSON.parse(JSON.stringify(sent)) as unknown)
+        : undefined;
+    const viewer = caller.viewer === undefined ? defaultViewer : caller.viewer;
+    const app = apps.get(caller.app ?? ownId);
+    if (!app) throw new Error(`fake storage: no app ${String(caller.app)} — name it in \`sources\``);
+
+    // The token middleware: its refusals come first, whatever the path.
+    if (caller.token === 'none') throw refuse('unauthenticated', 'a block token is required');
+    if (app.status !== 'approved') {
+      throw refuse('not_eligible', 'app block is not approved', { reason: 'app_not_approved' });
+    }
+    const consent = app.consent;
+    const consentUnavailable = consent === 'unavailable';
+    const revoked: readonly string[] = consent === undefined || consent === 'unavailable' ? [] : consent.revoked;
+    const tokenScopes = (caller.scopes ?? app.scopes).filter(
+      (s) => !(CONSENT_GATED.has(s) && (consentUnavailable || revoked.includes(s))),
+    );
+    if (!tokenScopes.includes(BASE_SCOPE)) throw refuse('insufficient_scope', `${BASE_SCOPE} scope required`);
+
+    const m = match(method, rest);
+    if (!m) throw refuse('not_found', 'no such storage route');
+    if ('methods' in m) throw refuse('method_not_allowed', 'method not allowed');
+    let route = m.route;
+    // Every collection route also takes `from` (an import); `info` takes none.
+    const allowedQuery =
+      route.op === 'list'
+        ? null
+        : route.op === 'delete'
+          ? ['ifVersion', 'from']
+          : route.op === 'info' || route.op === 'publish' || route.op === 'unpublish'
+            ? []
+            : ['from'];
+    if (allowedQuery) {
+      const stray = Object.keys(query).find((k) => !allowedQuery.includes(k));
+      if (stray) throw invalid(`unknown query parameter ${stray}`);
+    }
+    const uid = viewer === null ? null : uidOf(viewer);
+    if (caller.token === 'dev' && uid === null) throw refuse('sign_in_required', 'sign in required');
+    const ownCtx: Ctx = { app, ns: `${app.id}\u0000${caller.token === 'dev' ? `dev:${uid}` : 'prod'}`, uid };
+    // Before the body is read, as the server resolves it; the call then runs AS THE SOURCE:
+    // its data, declarations, ceilings and rate limits, and only the scopes the import confers.
+    const imported =
+      route.op === 'info' || route.op === 'publish' || route.op === 'unpublish'
+        ? null
+        : resolveImport(caller, route, query, ownCtx, tokenScopes, consentUnavailable);
+    const ctx = imported?.ctx ?? ownCtx;
+    const scopes: readonly string[] = imported?.scopes ?? tokenScopes;
+    const consentGone = imported ? false : consentUnavailable;
+    const from = imported?.from;
+    /** A write that changes what the collection's other viewers see, without the publish scope. */
+    const publishRefusal = () =>
+      consentGone
+        ? refuse('consent_unavailable', 'permission state is temporarily unavailable', { retryAfter: 1 })
+        : from === undefined
+          ? refuse('consent_required', `${PUBLISH_SCOPE} has not been granted`, { scope: PUBLISH_SCOPE })
+          : refuse('consent_required', `${PUBLISH_SCOPE} has not been granted in ${from}`, { scope: PUBLISH_SCOPE, from });
+    if (body !== undefined && utf8Length(JSON.stringify(body)) > BODY_LIMIT_BYTES) {
+      throw refuse('too_large', `request body exceeds ${BODY_LIMIT_BYTES} bytes`, { limit: BODY_LIMIT_BYTES });
+    }
+    // A PATCH runs AS the tally route its operator names, with that route's own body, so
+    // every check below is the deprecated route's. Translated once the body is read and
+    // before sign-in, any budget or the collection is looked at, as the server does.
+    if (route.op === 'patch') {
+      const tally = parseTallyPatch(route, body);
+      route = tally.route;
+      body = tally.body;
+    }
+    const requireSignedIn = (): number => {
+      if (uid === null) throw refuse('sign_in_required', 'sign in required');
+      return uid;
+    };
+
+    if (route.op === 'info') requireSignedIn();
+    if (route.op === 'info' || route.op === 'list' || route.op === 'get' || route.op === 'getMany') {
+      charge('read', uid, ctx.app.id);
+    }
+    if (route.op === 'info') {
+      storageOn();
+      const app = appUsage.get(ctx.ns) ?? { bytes: 0, docs: 0 };
+      const mine = userUsage.get(`${ctx.ns}\u0000${uid}`) ?? { bytes: 0, docs: 0 };
+      return {
+        status: 200,
+        body: {
+          collections: Object.fromEntries(
+            [...ctx.app.collections].map(([name, d]) => [
+              name,
+              {
+                kind: 'docs',
+                visibility: d.visibility,
+                ...(d.visibility === 'shared' ? { write: d.write ?? 'own' } : {}),
+                counters: [...d.counters],
+                marks: [...d.marks],
+                indexes: Object.fromEntries(d.indexes),
+                showAuthor: d.showAuthor,
+              },
+            ]),
+          ),
+          limits: {
+            docBytes: B.docBytes,
+            appBytes: limits.appBytes,
+            appDocs: limits.appDocs,
+            viewerBytes: limits.viewerBytes,
+            viewerDocs: limits.viewerDocs,
+            listLimitMax: B.listLimitMax,
+            getManyMax: B.getManyMax,
+            rate: {
+              readsPerMinute: RATE.read.max,
+              privateWritesPerMinute: RATE.write.max,
+              marksAndCountersPerMinute: RATE.tally.max,
+              reportsPerDay: RATE.report.max,
+              sharedWritesBurst: SHARED_WRITE_BUDGET[0]![0],
+              sharedWritesPerDay: SHARED_WRITE_BUDGET[1]![0],
+            },
+          },
+          usage: { app: { ...app }, viewer: { ...mine } },
+        },
+      };
+    }
+
+    if (!COLLECTION_NAME.test(route.collection) || !ctx.app.collections.has(route.collection)) {
+      throw refuse('collection_not_declared', `collection ${route.collection} is not declared`, { collection: route.collection });
+    }
+    const coll = route.collection;
+    const decl = declOf(ctx, coll);
+    const shared = decl.visibility === 'shared';
+
+    switch (route.op) {
+      case 'list':
+        return { status: 200, body: list(ctx, coll, parseListQuery(query, decl)) };
+      case 'get': {
+        const [doc] = getMany(ctx, coll, [route.key]);
+        if (!doc) throw refuse('not_found', 'document not found');
+        return { status: 200, body: doc };
+      }
+      case 'getMany': {
+        const { keys } = parseBody(body, { keys: isStringArray }, ['keys']);
+        return { status: 200, body: { items: getMany(ctx, coll, keys as unknown[]) } };
+      }
+      case 'create':
+      case 'put':
+      case 'delete': {
+        const me = requireSignedIn();
+        assertShareWritable(decl);
+        if (route.op !== 'delete' && shared && decl.write === 'own' && !scopes.includes(PUBLISH_SCOPE)) {
+          throw publishRefusal();
+        }
+        const created = route.op === 'create' ? parseBody(body, { data: isObject }, ['data']) : null;
+        const putIn = route.op === 'put' ? parseBody(body, { data: isObject, ifVersion: isNumber }, ['data']) : null;
+        let deleteVersion: number | undefined;
+        if (route.op === 'delete' && query.ifVersion !== undefined) {
+          const raw = query.ifVersion;
+          if (Array.isArray(raw) || !/^[0-9]{1,15}$/.test(raw)) throw invalid('ifVersion must be a non-negative integer');
+          deleteVersion = Number(raw);
+        }
+        // Every write that sets `data`, before the trust gate, the write budget and the
+        // moderation scan (and so before the store's own checks), as the server orders it:
+        // the collection's schema, then the owned-model-version rule.
+        const newData = created?.data ?? putIn?.data;
+        if (newData) assertMatchesSchema(coll, decl, newData);
+        if (newData) assertOwnedModelVersions(decl, newData as Record<string, unknown>, viewer!);
+        const write = (moderated: boolean, landed: () => void) => {
+          if (created) {
+            if (moderated) moderateWrite({ data: created.data as Record<string, unknown> });
+            const doc = writeDoc(ctx, coll, newKey(), created.data, 0);
+            landed();
+            return { status: 201, body: doc };
+          }
+          if (putIn && route.op === 'put') {
+            if (moderated) moderateWrite({ data: putIn.data as Record<string, unknown>, key: route.key });
+            const doc = writeDoc(ctx, coll, route.key, putIn.data, putIn.ifVersion as number | undefined);
+            landed();
+            return { status: 200, body: doc };
+          }
+          if (route.op !== 'delete') throw new Error('fake storage: unreachable write op');
+          return { status: 200, body: remove(ctx, coll, route.key, deleteVersion) };
+        };
+        if (!shared || route.op === 'delete') {
+          charge('write', uid, ctx.app.id);
+          return write(false, () => undefined);
+        }
+        assertTrusted(viewer!);
+        const release = reserveSharedWrite(`${ctx.app.id}:${me}`);
+        let hasLanded = false;
+        try {
+          return write(true, () => {
+            hasLanded = true;
+          });
+        } catch (err) {
+          if (!hasLanded) release(!isOurFault(err));
+          throw err;
+        }
+      }
+      case 'increment': {
+        requireSignedIn();
+        // Through an import, a tally in a SHARED source collection changes what its other
+        // viewers see, so it needs the viewer's publish consent there, whatever `write` is.
+        if (from !== undefined && shared && !scopes.includes(PUBLISH_SCOPE)) throw publishRefusal();
+        const { by } = parseBody(body, { by: isNumber });
+        charge('tally', uid, ctx.app.id);
+        if (shared) assertTrusted(viewer!);
+        if (shared && decl.write === 'none') moderateWrite({ key: route.key });
+        return { status: 200, body: increment(ctx, coll, route.key, route.name, by as number | undefined) };
+      }
+      case 'publish':
+        return { status: 200, body: publishDocs(ctx, coll, body, viewer!, requireSignedIn(), scopes, publishRefusal) };
+      case 'unpublish':
+        return { status: 200, body: unpublishDocs(ctx, coll, body, requireSignedIn()) };
+      case 'mark':
+      case 'unmark': {
+        // A report cannot be withdrawn (withdraw + re-file would re-open a document a
+        // moderator dismissed). The server refuses it FIRST — before sign-in, any budget
+        // or the trust lookup — so it is a 400 for everyone and costs nothing.
+        if (route.op === 'unmark' && route.name === REPORT) {
+          throw invalid('a report cannot be withdrawn', { mark: route.name });
+        }
+        requireSignedIn();
+        if (from !== undefined && shared && !scopes.includes(PUBLISH_SCOPE)) throw publishRefusal();
+        if (route.op === 'mark') parseBody(body, {});
+        charge('tally', uid, ctx.app.id);
+        if (route.op === 'mark' && route.name === REPORT) charge('report', uid, ctx.app.id);
+        if (shared) assertTrusted(viewer!);
+        const result = setMark(ctx, coll, route.key, route.name, route.op === 'mark');
+        return { status: 200, body: route.name === REPORT ? { marked: result.marked } : result };
+      }
+    }
+  }
+
+  /**
+   * Server-side publish, as the server's `runPublish` and `publishCopies` do it, in their order:
+   * the body and the keys, the two collections, the publish consent, the trust gate, then every
+   * body that would be written checked (schema, `ownedModelVersions`) before the publish budget
+   * is spent, then moderation, then every change applied at once — the ceilings checked for the
+   * whole publish first, so a refusal leaves the store exactly as it was. Moderator hides are not
+   * modelled, so `hidden` never appears here.
+   */
+  function publishDocs(
+    ctx: Ctx,
+    to: string,
+    body: unknown,
+    viewer: FakeStorageViewer,
+    me: number,
+    scopes: readonly string[],
+    publishRefusal: () => Refusal,
+  ) {
+    const input = parseBody(
+      body,
+      { from: (v) => typeof v === 'string', keys: isStringArray, prune: (v) => typeof v === 'boolean' },
+      ['from', 'keys'],
+    );
+    const keys = assertPublishKeys(input.keys as string[]);
+    const prune = input.prune === true;
+    const from = input.from as string;
+    if (!COLLECTION_NAME.test(from) || !ctx.app.collections.has(from)) {
+      throw refuse('collection_not_declared', `collection ${from} is not declared`, { collection: from });
+    }
+    const fromDecl = declOf(ctx, from);
+    const toDecl = declOf(ctx, to);
+    if (fromDecl.visibility !== 'private' || toDecl.visibility !== 'shared') {
+      throw invalid('publish copies from a private collection into a shared one', { reason: 'publish_visibility' });
+    }
+    assertShareWritable(toDecl);
+    if (!scopes.includes(PUBLISH_SCOPE)) throw publishRefusal();
+    // One token of the private-write / delete window per call, never given back, before the
+    // trust gate and any read: the server's throttle on publishes that change nothing.
+    charge('write', me, ctx.app.id);
+    assertTrusted(viewer);
+    storageOn();
+
+    const sourceOf = (key: string) => docs.get(docId(ctx, from, me, key));
+    const copyOf = (key: string) => docs.get(docId(ctx, to, 0, key));
+    const mine = (d: DocRow) => d.authorKind === 'user' && d.authorUid === me;
+    const plan = keys.map((key) => {
+      const source = sourceOf(key);
+      const copy = copyOf(key);
+      let action: 'create' | 'update' | 'unchanged' | 'missing' | 'not_author';
+      if (copy && !mine(copy)) action = 'not_author';
+      else if (!source) action = 'missing';
+      else if (!copy) action = 'create';
+      else action = canonical(copy.data) === canonical(source.data) ? 'unchanged' : 'update';
+      return { key, action, source, copy };
+    });
+    const toWrite = plan.filter((p) => p.action === 'create' || p.action === 'update');
+    for (const p of toWrite) {
+      try {
+        assertMatchesSchema(to, toDecl, p.source!.data);
+        assertOwnedModelVersions(toDecl, p.source!.data, viewer);
+      } catch (err) {
+        throw withKey(err, p.key);
+      }
+    }
+    const release = reserveSharedWrite(`${ctx.app.id}:${me}:publish`, PUBLISH_BUDGET, {
+      message: 'publish budget exhausted',
+      bucket: 'publish',
+    });
+    let landed = false;
+    try {
+      for (const p of toWrite) {
+        try {
+          moderateWrite({ data: p.source!.data, key: p.key });
+        } catch (err) {
+          throw withKey(err, p.key);
+        }
+      }
+      // The caller's own visible copies whose key has no private document left.
+      let candidates: string[] = [];
+      let pruneIncomplete = false;
+      if (prune) {
+        candidates = docsIn(ctx, to, 0)
+          .filter((d) => mine(d) && !sourceOf(d.key))
+          .map((d) => d.key)
+          .sort(byCodePoint);
+        pruneIncomplete = candidates.length > PUBLISH_PRUNE_LIMIT;
+        candidates = candidates.slice(0, PUBLISH_PRUNE_LIMIT);
+      }
+      const pruneSet = new Set(candidates);
+      let bytes = 0;
+      let count = 0;
+      for (const p of toWrite) {
+        const doc = serialize(p.source!.data);
+        indexRows(toDecl, doc);
+        const size = storedSize(doc);
+        bytes += size - (p.copy?.size ?? 0);
+        if (!p.copy) count += 1;
+      }
+      for (const key of candidates) {
+        bytes -= copyOf(key)!.size;
+        count -= 1;
+      }
+      const commit = chargeUsage(ctx, me, bytes, count, 'author');
+      commit();
+      const t = now();
+      const result = {
+        created: [] as string[],
+        updated: [] as string[],
+        unchanged: [] as string[],
+        pruned: [] as string[],
+        skipped: [] as { key: string; reason: string }[],
+        pruneIncomplete,
+      };
+      for (const p of plan) {
+        if (p.action === 'create' || p.action === 'update') {
+          const data = JSON.parse(JSON.stringify(p.source!.data)) as Record<string, unknown>;
+          const index = indexRows(toDecl, data);
+          const size = storedSize(data);
+          if (p.copy) {
+            Object.assign(p.copy, { data, size, version: p.copy.version + 1, updatedAt: t, index });
+            result.updated.push(p.key);
+          } else {
+            docs.set(docId(ctx, to, 0, p.key), {
+              key: p.key,
+              data,
+              size,
+              version: 1,
+              createdAt: t,
+              updatedAt: t,
+              authorUid: me,
+              authorKind: 'user',
+              index,
+              counters: new Map(),
+              markCounts: new Map(),
+              marks: new Set(),
+            });
+            result.created.push(p.key);
+          }
+        } else if (p.action === 'unchanged') {
+          result.unchanged.push(p.key);
+        } else if (!(p.action === 'missing' && pruneSet.has(p.key))) {
+          result.skipped.push({ key: p.key, reason: p.action });
+        }
+      }
+      for (const key of candidates) {
+        docs.delete(docId(ctx, to, 0, key));
+        result.pruned.push(key);
+      }
+      landed = true;
+      // A publish that changed nothing gives its token back.
+      if (result.created.length + result.updated.length + result.pruned.length === 0) release(false);
+      return result;
+    } catch (err) {
+      if (!landed) release(!isOurFault(err));
+      throw err;
+    }
+  }
+
+  function unpublishDocs(ctx: Ctx, to: string, body: unknown, me: number) {
+    const { keys: raw } = parseBody(body, { keys: isStringArray }, ['keys']);
+    const keys = assertPublishKeys(raw as string[]);
+    const toDecl = declOf(ctx, to);
+    if (toDecl.visibility !== 'shared') {
+      throw invalid('unpublish removes documents from a shared collection', { reason: 'publish_visibility' });
+    }
+    assertShareWritable(toDecl);
+    charge('write', me, ctx.app.id);
+    storageOn();
+    const result = { deleted: [] as string[], skipped: [] as { key: string; reason: string }[] };
+    let bytes = 0;
+    const gone: string[] = [];
+    for (const key of keys) {
+      const copy = docs.get(docId(ctx, to, 0, key));
+      if (!copy) result.skipped.push({ key, reason: 'missing' });
+      else if (!(copy.authorKind === 'user' && copy.authorUid === me)) result.skipped.push({ key, reason: 'not_author' });
+      else {
+        bytes += copy.size;
+        gone.push(key);
+      }
+    }
+    if (gone.length > 0) chargeUsage(ctx, me, -bytes, -gone.length, 'author')();
+    for (const key of gone) {
+      docs.delete(docId(ctx, to, 0, key));
+      result.deleted.push(key);
+    }
+    return result;
+  }
+
+  /** 1–500 keys, each valid, none twice; returned in key order. */
+  function assertPublishKeys(keys: string[]): string[] {
+    if (keys.length === 0) throw invalid('keys must name at least one document', { reason: 'empty_keys' });
+    if (keys.length > PUBLISH_MAX_KEYS) {
+      throw invalid(`at most ${PUBLISH_MAX_KEYS} keys per call`, { reason: 'too_many_keys', max: PUBLISH_MAX_KEYS });
+    }
+    const seen = new Set<string>();
+    for (const key of keys) {
+      assertKey(key);
+      if (seen.has(key)) throw invalid('a key is named twice', { reason: 'duplicate_key', key });
+      seen.add(key);
+    }
+    return [...seen].sort(byCodePoint);
+  }
+
+  /**
+   * `?from=<blockId>` on a collection route, as the server's `resolveImportAccess` checks it,
+   * in its order — or `null` without one. Charged to the CONSUMER's read bucket first, so
+   * every refusal below is charged too.
+   */
+  function resolveImport(
+    caller: FakeStorageCaller & { token: NonNullable<FakeStorageCaller['token']> },
+    route: Exclude<Route, { op: 'info' }>,
+    query: Record<string, string | string[]>,
+    consumer: Ctx,
+    tokenScopes: readonly string[],
+    consentUnavailable: boolean,
+  ): { ctx: Ctx; scopes: string[]; from: string } | null {
+    const from = query.from;
+    if (from === undefined) return null;
+    if (Array.isArray(from)) throw invalid('from must be given once');
+    charge('read', consumer.uid, consumer.app.id);
+    if (!BLOCK_ID.test(from)) throw invalid('from must be an app blockId', { from });
+    // Only an ordinary production token imports. (Hub and review tokens are not modelled.)
+    if (caller.token === 'dev') {
+      throw refuse('not_eligible', 'a development token cannot reach another app', { reason: 'import_dev_token' });
+    }
+    const coll = route.collection;
+    const declared = consumer.app.imports.get(from);
+    if (!declared || !declared.collections.has(coll)) {
+      throw refuse('import_not_declared', `this app does not declare an import of ${coll} from ${from}`, {
+        from,
+        collection: coll,
+      });
+    }
+    const op = route.op === 'list' || route.op === 'get' || route.op === 'getMany' ? 'read' : route.op === 'delete' ? 'delete' : 'author';
+    if (op !== 'read' && declared.access === 'read') {
+      throw refuse('write_policy', `the import from ${from} is read-only`, { from, reason: 'import_read_only' });
+    }
+    if (consumer.uid === null) throw refuse('sign_in_required', 'sign in required');
+    // A source's own imports are never followed, and a source is never this app.
+    const source = from === consumer.app.id ? undefined : apps.get(from);
+    if (!source || source.status !== 'approved') {
+      throw refuse('not_eligible', `the app ${from} is not available`, { reason: 'source_not_approved' });
+    }
+    const decl = source.collections.get(coll);
+    if (!decl) throw refuse('collection_not_declared', `collection ${coll} is not declared by ${from}`, { collection: coll, from });
+    if (!decl.exportable) throw refuse('not_exportable', `${from} does not share ${coll} with other apps`, { collection: coll, from });
+    const consentRequired = () =>
+      refuse('consent_required', `${IMPORT_SCOPE} has not been granted`, { scope: IMPORT_SCOPE, from });
+    if (!tokenScopes.includes(IMPORT_SCOPE)) {
+      if (consentUnavailable) {
+        throw refuse('consent_unavailable', 'permission state is temporarily unavailable', { retryAfter: 1 });
+      }
+      throw consentRequired();
+    }
+    // The viewer's grant must cover the CURRENT import: every collection it names, at its access.
+    const grant = importGrants[from];
+    if (
+      !grant ||
+      ![...declared.collections].every((c) => grant.collections.includes(c)) ||
+      (declared.access === 'readwrite' && grant.access !== 'readwrite')
+    ) {
+      throw consentRequired();
+    }
+    // The viewer's own publish consent IN THE SOURCE, for an authoring call only. The
+    // consumer's own `apps:storage:publish` never counts.
+    const sourceRevoked: readonly string[] =
+      source.consent === undefined || source.consent === 'unavailable' ? [] : source.consent.revoked;
+    const publishes =
+      op === 'author' &&
+      declared.access === 'readwrite' &&
+      source.scopes.includes(PUBLISH_SCOPE) &&
+      !sourceRevoked.includes(PUBLISH_SCOPE);
+    return {
+      ctx: { app: source, ns: `${source.id}\u0000prod`, uid: consumer.uid },
+      scopes: publishes ? [BASE_SCOPE, PUBLISH_SCOPE] : [BASE_SCOPE],
+      from,
+    };
+  }
+
+  /** A sortable server-chosen key, ULID-shaped: time, then a per-fake sequence. */
+  let seq = 0;
+  const newKey = () => `${now().toString(36).padStart(10, '0')}${(seq++).toString(36).padStart(16, '0')}`.toUpperCase();
+
+  function session(caller: FakeStorageCaller): FakeStorageSession {
+    const resolved = { ...caller, token: caller.token ?? 'block' };
+    const http = (async (method: string, path: string, opts: RequestOptions = {}) => {
+      // The query as a URL carries it: null/undefined dropped, everything a string.
+      const query: Record<string, string | string[]> = {};
+      for (const [k, v] of Object.entries(opts.query ?? {})) {
+        const values = (Array.isArray(v) ? v : [v]).filter((x) => x != null).map(String);
+        if (values.length === 1) query[k] = values[0]!;
+        else if (values.length > 1) query[k] = values;
+      }
+      const call: FakeStorageCall = { method, path, query, body: opts.body, status: 0, response: undefined };
+      calls.push(call);
+      try {
+        const reply = handle(resolved, method, path, query, opts.body);
+        call.status = reply.status;
+        call.response = JSON.parse(JSON.stringify(reply.body)) as unknown;
+        return call.response;
+      } catch (err) {
+        if (!(err instanceof Refusal)) throw err;
+        const response: Record<string, unknown> = { code: err.code, message: err.message, error: err.message };
+        if (err.details) response.details = err.details;
+        call.status = STATUS[err.code] ?? 500;
+        call.response = response;
+        throw new ApiError(call.status, err.message, response);
+      }
+    }) as Http;
+    const prompt = options.requestGrants;
+    const requestGrants =
+      prompt &&
+      (async (scopes: readonly string[], { from }: { from?: string }) => {
+        const allowed = await prompt(scopes, { from });
+        // Allow records the publish grant IN THE SOURCE, which every later write there reads.
+        const source = from === undefined ? undefined : apps.get(from);
+        if (allowed && source && from !== ownId && scopes.length === 1 && scopes[0] === PUBLISH_SCOPE) {
+          const revoked = source.consent === undefined || source.consent === 'unavailable' ? [] : source.consent.revoked;
+          source.consent = { revoked: revoked.filter((s) => s !== PUBLISH_SCOPE) };
+        }
+        return allowed;
+      });
+    return { http, storage: createDocumentStorage(http, requestGrants ? { requestGrants } : {}) };
+  }
+
+  const own = session({});
+  return { ...own, as: session, calls };
+}

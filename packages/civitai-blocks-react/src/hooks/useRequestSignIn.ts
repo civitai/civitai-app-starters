@@ -1,0 +1,38 @@
+import { useCallback } from 'react';
+
+import { getTransport } from '../transport/singleton.js';
+import { useTransportConnection } from './useTransportConnection.js';
+
+/** What {@link useRequestSignIn} returns. */
+export interface UseRequestSignIn {
+  requestSignIn: (payload?: { returnUrl?: string }) => void;
+}
+
+/**
+ * Anonymous conversion. Asks the host to start civitai.com's login flow when a
+ * logged-out viewer (`useBlockContext().viewer === null`) clicks an action that
+ * needs auth/money — e.g. the block's Generate button. The host validates the
+ * message like every inbound one (origin + `event.source` pinned, only honored
+ * after BLOCK_READY) and opens its login UI.
+ *
+ * `returnUrl` is an optional same-origin in-app path to return to after sign-in;
+ * the host sanitises it (rejecting absolute / protocol-relative values) and
+ * defaults to the current page when omitted.
+ *
+ * Fire-and-forget: the host doesn't reply. After login the page reloads / the
+ * block re-inits as an authenticated viewer.
+ *
+ * @example
+ * const { requestSignIn } = useRequestSignIn();
+ * if (viewer === null) return <button onClick={() => requestSignIn()}>Sign in</button>;
+ */
+export function useRequestSignIn(): UseRequestSignIn {
+  useTransportConnection();
+  const requestSignIn = useCallback((payload?: { returnUrl?: string }) => {
+    getTransport().sendMessage({
+      type: 'REQUEST_SIGN_IN',
+      ...(payload ? { payload } : {}),
+    });
+  }, []);
+  return { requestSignIn };
+}

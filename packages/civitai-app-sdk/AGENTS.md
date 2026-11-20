@@ -9,19 +9,22 @@
 ## Stack
 
 TypeScript strict, ESM-only, zero runtime dependencies. Built with `tsc`
-to `dist/`. Tested with `vitest`. Published to npm with subpath exports
-(`./oauth`, `./scopes`, `./cookies`, `./orchestrator`).
+to `dist/`. Tested with `vitest`. Published to npm with subpath exports: `package.json`
+`exports` is the list (it is not copied here, so it cannot fall behind).
 
 ## Where things live
 
 | Path | Purpose |
 |---|---|
 | `src/oauth/` | PKCE, authorize URL builder, code exchange, refresh, revoke, `fetchMe`. The OAuth flow as stateless functions. |
-| `src/scopes/` | `TokenScope` bitmask + `bitmaskFromScopes` / `scopesFromBitmask` / `hasScope` / `getScopeLabel`. Mirrors `civitai/civitai`'s `src/shared/constants/token-scope.constants.ts` — keep in sync. |
-| `src/cookies/` | AES-256-CTR `sealCookie` / `unsealCookie` + `buildSetCookieHeader` / `readCookie`. Used by every starter to seal sessions into one `httpOnly` cookie. |
+| `src/scopes/` | `TokenScope` bitmask + `bitmaskFromScopes` / `scopesFromBitmask` / `hasScope` / `getScopeLabel`. Mirrors `civitai/civitai`'s `packages/civitai-auth/src/token-scope.ts` (`@civitai/auth/token-scope`) — keep in sync. `src/shared/constants/token-scope.constants.ts` there is now only a re-export shim of that file, so do not diff against it. The opt-in bits above `Full` (`1 << 25` and up) are not mirrored here today. |
+| `src/cookies/` | AES-256-GCM `sealCookie` / `unsealCookie` + `buildSetCookieHeader` / `readCookie`. Used by every starter to seal sessions into one `httpOnly` cookie. |
 | `src/orchestrator/` | Orchestrator client factory, `estimateWorkflow` / `submitWorkflow` / `getWorkflow` / `pollWorkflow`, `buildTextToImageBody`, types + `OrchestratorError`. |
-| `src/blocks/` | Civitai App Blocks contract: `BlockManifestV1`, `defineBlock`, `BLOCK_SCOPES`, typed parent↔block `postMessage` protocol. **Subpath-only** (`@civitai/app-sdk/blocks`) — deliberately not re-exported from `src/index.ts` so default-imports stay lean. Hooks + iframe transport live in [`@civitai/blocks-react`](../civitai-blocks-react/) so this module stays runtime-agnostic. |
-| `schemas/app-block/v1.json` | JSON Schema (draft-07) for the manifest. Shipped at the `./schemas/app-block/v1.json` subpath for offline validation; kept in lockstep with `defineBlock`. |
+| `src/blocks/` | Civitai Apps contract: `BlockManifestV1`, `BLOCK_SCOPES`, typed parent↔block `postMessage` protocol. **Subpath-only** (`@civitai/app-sdk/blocks`) — deliberately not re-exported from `src/index.ts` so default-imports stay lean. Hooks + iframe transport live in [`@civitai/blocks-react`](../civitai-blocks-react/) so this module stays runtime-agnostic. 🔴 **Zero runtime dependencies, and it must stay that way** — this ships into sandboxed iframes and every app inherits its install graph. Anything needing a dependency or `node:*` goes in a node-only subpath (see `src/manifest/`, `src/vite/`). |
+| `src/manifest/` | **Node-only.** `defineBlock` — build-time manifest validation, DERIVED from `schemas/app-block/v1.json` by compiling it with Ajv, not hand-mirrored (that mirror is #330). Plus `SCHEMA_DIVERGENCES` (five prose-only server rejections, each strictly additive) and `KNOWN_GAPS`. Optional peer: `ajv`. |
+| `src/vite/` | **Node-only.** `blockManifestPlugin` — `defineBlock` as a Vite plugin firing from `configResolved`, registered by every scaffold that ships a manifest; on the dev server only, `transformIndexHtml` also exposes the manifest's `scopes` + `storage` to `@civitai/sdk` (a dev-tunnel local preview). There are **no per-scaffold copies**; the plugin ships from the package. Optional peers: `ajv` (runtime), `vite` (types only). |
+| `src/safe-storage/` | Opaque-origin `localStorage`/`sessionStorage` repair. Block iframes are sandboxed without `allow-same-origin`, where *reading* those globals throws — usually from a dependency nobody can guard. **The only module in this package with an import side effect**, and deliberately so: import order is hoisted, so a side-effect import is the only thing that can beat a dependency that reads storage while evaluating. `src/blocks/index.ts` imports it first; `@civitai/blocks-react` does too. It replaces a global only after a round-trip probe proves it unusable — never touches working storage, never fabricates storage where the runtime has none (Node/SSR/workers). |
+| `schemas/app-block/v1.json` | **THE canonical manifest contract** (JSON Schema draft 2020-12) — a byte-identical vendored copy of https://civitai.com/schemas/app-block/v1.json, enforced by `scripts/check-canonical-schema.sh`. Shipped at the `./schemas/app-block/v1.json` subpath for offline validation. 🔴 It is the AUTHORITY, and `defineBlock` **compiles it** rather than mirroring it: `src/manifest/defineBlock.ts` runs Ajv over this file, so there is no second copy of the rules to drift. Anything on top of it is an entry in `SCHEMA_DIVERGENCES` (a server rejection the canonical states only in prose) and must be strictly additive — `test/manifest/divergences.test.ts` fails an entry whose fixture the canonical does not accept, and fails a rule with no entry. **Do not re-introduce a hand-written rule set here; that is the #330 defect.** |
 | `src/index.ts` | Re-exports the headline functions. Subpath exports stay the primary public surface. |
 | `package.json` `exports` | Drives what's importable. Adding a new subpath means adding a new entry here. |
 
@@ -50,6 +53,17 @@ to `dist/`. Tested with `vitest`. Published to npm with subpath exports
 - ❌ Adding runtime dependencies without an explicit reason. Even small
   ones (e.g. `cookie`) get rewritten by hand here.
 - ❌ Persisting state in module scope. Every function is stateless.
+  (The one sanctioned import side effect is `src/safe-storage/`'s
+  install-on-import — it stores no state, and hoisting makes a side effect the
+  only mechanism that can run before a dependency's own module body. Don't
+  "clean it up" into an opt-in call; that reintroduces the bug it fixes.)
+- ❌ **Never set `"sideEffects": false`** in `package.json`. The safe-storage
+  fix *is* a bare `import '.../safe-storage/index.js'` in `src/blocks/`, and
+  a blanket `false` lets bundlers tree-shake it away — silently, with every
+  test still green, because Node/vitest doesn't tree-shake. The allow-list
+  (`dist/safe-storage/index.js` + `dist/blocks/index.js`, and
+  `dist/index.js` in `@civitai/blocks-react`) is load-bearing: extend it if
+  another module gains an import side effect, never replace it with `false`.
 - ❌ Mutating arguments. Inputs are read-only; return new objects.
 - ❌ `console.log` from library code. Throw or return; let callers log.
 
@@ -59,7 +73,7 @@ to `dist/`. Tested with `vitest`. Published to npm with subpath exports
 |---|---|
 | New Civitai HTTP call | Add to the closest existing module (`oauth/` for auth-shaped, `orchestrator/` for orchestrator). Export from `src/index.ts` + add a subpath export to `package.json` if it's its own area. |
 | New scope constant | `civitai/civitai` is the source of truth — copy the new flag into `src/scopes/index.ts` and update `tokenScopeLabels` / `TokenScopePresets` if relevant. |
-| New cookie-shape helper | `src/cookies/index.ts`. Keep the AES-256-CTR + HMAC envelope; don't swap algorithms without a major bump. |
+| New cookie-shape helper | `src/cookies/index.ts`. Keep the AES-256-GCM (AEAD) envelope — the GCM auth tag *is* the integrity check, so no separate MAC is layered on top. Don't swap algorithms without a major bump. |
 | Breaking API change | Author a **major** changeset; document the migration path in the changeset body. |
 | Anything for one specific framework | **Wrong layer.** Put it in the starter, not the SDK. |
 

@@ -1,0 +1,137 @@
+import type { ModelMessage, UserContent } from 'ai';
+
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+
+/** The image types a tool's reply may show the assistant; any other binary content is left out. */
+export const TOOL_IMAGE_TYPES: readonly string[] = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+/** The most images one tool result shows. */
+export const MAX_IMAGES_PER_RESULT = 2;
+/** The most bytes (decoded) one tool result's images may hold in all. */
+export const MAX_IMAGE_BYTES_PER_RESULT = 512 * 1024;
+/** One image a tool returned, as base64. */
+export interface ToolImage {
+  mediaType: string;
+  data: string;
+}
+
+// Written when the tool returns, before anyone knows whether a next step runs or the model takes the
+// image, so it says what will be tried, never that it was seen.
+const SHOWN = (type: string) => `[${type} image: sent to you once, with the next step if there is one and the model takes images; it is not saved]`;
+const NOT_SHOWN = (type: string) => `[${type} image not shown: images cannot be sent to you here]`;
+const NOT_AN_IMAGE = (type: string) => `[${type} content left out: only JPEG, PNG, WebP and GIF images are shown]`;
+const TOO_BIG = (type: string, bytes: number) =>
+  `[${type} image left out: ${Math.ceil(bytes / 1024)} KiB is over the ${MAX_IMAGE_BYTES_PER_RESULT / 1024} KiB a tool result may show]`;
+const TOO_MANY = (type: string) => `[${type} image left out: a tool result shows at most ${MAX_IMAGES_PER_RESULT} images]`;
+const MALFORMED = (type: string) => `[${type} image left out: its data is not valid base64]`;
+
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/** Decoded bytes of well-formed base64, or `undefined` when it is not. */
+function decodedBytes(data: string): number | undefined {
+  if (data.length % 4 !== 0 || !BASE64.test(data)) return undefined;
+  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+  return (data.length / 4) * 3 - padding;
+}
+
+/**
+ * A tool result's binary content: the images the assistant may see, within the caps, and one note
+ * line for each binary part, in order, saying what became of it (shown, or left out and why). Text
+ * and resource links are not read here (`mcpResultToText` keeps them); a result with no binary part
+ * has no note. `canShow` false: no image is kept, each one's note says it was not shown.
+ */
+export function toolImagesOf(result: CallToolResult, canShow: boolean): { images: ToolImage[]; notes: string[] } {
+  const images: ToolImage[] = [];
+  const notes: string[] = [];
+  let bytes = 0;
+  for (const block of result.content) {
+    let type: string;
+    let data: string;
+    if (block.type === 'image' || block.type === 'audio') ({ mimeType: type, data } = block);
+    else if (block.type === 'resource' && 'blob' in block.resource) {
+      notes.push(NOT_AN_IMAGE(block.resource.mimeType || 'binary'));
+      continue;
+    } else continue;
+    if (block.type !== 'image' || !TOOL_IMAGE_TYPES.includes(type)) {
+      notes.push(NOT_AN_IMAGE(type || 'binary'));
+      continue;
+    }
+    const size = decodedBytes(data);
+    if (size === undefined) notes.push(MALFORMED(type));
+    else if (!canShow) notes.push(NOT_SHOWN(type));
+    else if (images.length >= MAX_IMAGES_PER_RESULT) notes.push(TOO_MANY(type));
+    else if (bytes + size > MAX_IMAGE_BYTES_PER_RESULT) notes.push(TOO_BIG(type, size));
+    else {
+      bytes += size;
+      images.push({ mediaType: type, data });
+      notes.push(SHOWN(type));
+    }
+  }
+  return { images, notes };
+}
+
+/**
+ * The images one reply's tools returned, by tool call id: made by `AgentCore` for each reply and handed
+ * to its tools as `experimental_context` (see {@link toolImagesIn}), so nothing outlives the reply or
+ * reaches another. They never enter a tool's output, so the reply's messages, its saves and the parts
+ * it shows hold only the note in their place. Each is shown once: in the step right after the one
+ * whose call returned it (a step asked for again after a dropped connection shows it again).
+ */
+export class ToolImages {
+  readonly #byCall = new Map<string, { toolName: string; images: ToolImage[] }>();
+  #refused = false;
+
+  /** The model refused a request that carried images: none is sent for the rest of the reply. */
+  refuse(): void {
+    this.#refused = true;
+    this.#byCall.clear();
+  }
+
+  /** Whether images can still be sent in this reply. */
+  get open(): boolean {
+    return !this.#refused;
+  }
+
+  add(toolCallId: string, toolName: string, images: ToolImage[]): void {
+    if (images.length === 0 || this.#refused) this.#byCall.delete(toolCallId);
+    else this.#byCall.set(toolCallId, { toolName, images });
+  }
+
+  /**
+   * `messages` with one user message after the tool messages they end on (the last step's results),
+   * holding the images those results returned, in call order: the OpenAI-compatible chat API takes
+   * images only in a user message. Results before that step, and before `from` (an earlier reply's,
+   * whose call may have had the same id), get none; a call id used twice in the step gets them after
+   * its last result only. `undefined` when none of those results has any, so the request goes exactly
+   * as it would have.
+   */
+  withImages(messages: ModelMessage[], from = 0): ModelMessage[] | undefined {
+    if (this.#byCall.size === 0) return undefined;
+    let first = messages.length;
+    while (first > from && messages[first - 1]!.role === 'tool') first--;
+    const seen = new Set<string>();
+    const shown: Exclude<UserContent, string> = [];
+    // From the end, so a call id used twice in the step is shown after its last result only.
+    for (const message of messages.slice(first).reverse()) {
+      if (message.role !== 'tool') continue;
+      for (const part of [...message.content].reverse()) {
+        if (part.type !== 'tool-result' || seen.has(part.toolCallId)) continue;
+        seen.add(part.toolCallId);
+        const entry = this.#byCall.get(part.toolCallId);
+        if (!entry) continue;
+        shown.unshift({ type: 'text', text: `Returned by ${entry.toolName} (${part.toolCallId}):` }, ...entry.images.map((image) => ({ type: 'image' as const, image: image.data, mediaType: image.mediaType })));
+      }
+    }
+    return shown.length > 0 ? [...messages, { role: 'user', content: shown }] : undefined;
+  }
+}
+
+/** What `AgentCore` hands its tools as `experimental_context`. */
+export interface ToolImagesContext {
+  toolImages: ToolImages;
+}
+
+/** The reply's image store a tool was handed, if its caller has one and it still sends images. */
+export function toolImagesIn(context: unknown): ToolImages | undefined {
+  const images = (context as Partial<ToolImagesContext> | null | undefined)?.toolImages;
+  return images instanceof ToolImages && images.open ? images : undefined;
+}

@@ -15,7 +15,7 @@ export async function POST() {
   });
 
   const authorizeUrl = buildAuthorizeUrl({
-    baseUrl: env.CIVITAI_BASE_URL,
+    baseUrl: env.CIVITAI_AUTH_URL,
     clientId: env.CIVITAI_CLIENT_ID,
     redirectUri: REDIRECT_URI,
     scope: REQUESTED_SCOPES,

@@ -19,9 +19,9 @@ const CIVITAI_HOSTS_BASE = [
   'https://image.civitai.com',
 ];
 
-/** Fold the configured CIVITAI_BASE_URL / ORCHESTRATOR_URL origins into the
- * CSP allow-list so a self-hosted Civitai dev (e.g. https://civitai-dev.blue)
- * works without users hand-editing CSP. */
+/** Fold the configured CIVITAI_AUTH_URL / CIVITAI_BASE_URL / ORCHESTRATOR_URL
+ * origins into the CSP allow-list so a self-hosted Civitai dev (e.g.
+ * https://civitai-dev.blue) works without users hand-editing CSP. */
 function originOrNull(url: string): string | null {
   try { return new URL(url).origin; } catch { return null; }
 }
@@ -30,6 +30,7 @@ const CIVITAI_HOSTS = Array.from(
   new Set(
     [
       ...CIVITAI_HOSTS_BASE,
+      originOrNull(config.CIVITAI_AUTH_URL),
       originOrNull(config.CIVITAI_BASE_URL),
       originOrNull(config.ORCHESTRATOR_URL),
     ].filter((host): host is string => Boolean(host)),

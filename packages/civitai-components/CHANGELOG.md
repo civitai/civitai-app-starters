@@ -1,0 +1,1378 @@
+# @civitai/components
+
+## 0.13.0
+
+### Minor Changes
+
+- ae33f6c: **App reactions: a block can read and set the viewer's reactions on images it was served (scope `social:react:self`, civitai/civitai#6144).** A reaction made this way is a reaction on civitai.com: it pays the reactor and the image owner as the site's own button does, moves rankings, notifies, and draws on the same per-viewer quota. Apps may set `Like`, `Heart`, `Laugh` and `Cry`, never `Dislike`. Image is the only entity type.
+
+  - **`@civitai/app-sdk`.** The `SET_ENTITY_REACTION` → `ENTITY_REACTION_RESULT` and `GET_ENTITY_REACTIONS` → `ENTITY_REACTIONS_RESULT` messages, as the host implements them: a write takes `{ entityType, entityId, reaction, reacted, ticket? }` (a desired state, not a toggle) and answers `{ entityType, entityId, reaction, reacted, changed, counts, viewerReactions, statsUnknown }`; a read takes `{ entityType, ids, tickets? }` (at most 100 ids) and answers `{ entityType, byId, unavailable }`, where `byId` is keyed by the id as a string and an id without a valid ticket is listed in `unavailable` instead of answered. Every failure is one of the closed `ENTITY_REACTION_ERROR_CODES`: `invalid-request`, `sign-in-required`, `review-mode`, `not-ready`, `needs-consent`, `entity-unavailable`, `rate-limited`. New exports from `./blocks`: `APP_REACTIONS`, `STORED_REACTIONS`, `REACTION_ENTITY_TYPES`, `REACTION_READ_MAX_IDS`, `REACT_TICKET_MAX_LENGTH`, `ENTITY_REACTION_ERROR_CODES`, `isEntityReactionErrorCode`, `isAppReaction`, and the types `BlockAppReaction`, `BlockStoredReaction`, `BlockReactionEntityType`, `BlockEntityReactionErrorCode`, `BlockReactionCounts`, `BlockEntityReactionState`, `BlockEntityReactionResult`, `BlockEntityReactionsResult`. `BLOCK_TO_PARENT_MESSAGE_TYPES` lists both requests.
+  - **`@civitai/blocks-react`.** `useReactions(entityType, ids, { tickets })` returns `{ byId, unavailable, loading, error, toggle, pending }`. It reads `ids` in chunks of 100 on mount, then reads only the images that need it (an id added to `ids`, or one whose ticket changed), because the host counts every read against the block instance's shared catalog rate limit. An answer is never applied over a write on the same image that started after the read was sent, and an older answer never overwrites a newer one. `toggle(id, reaction, reacted)` moves `byId[id]` at once, puts it back on failure, adopts the host's `viewerReactions` on success, and rejects with a `ReactionError` (`.code`, `.signInRequired`, `.needsConsent`, `.timedOut`, `.busy`). A `toggle` on an image without a ticket, or on one whose same reaction is already in flight, is refused without sending anything: the server checks the ticket after its rate limit, so sending it would spend one of the viewer's reactions. A busy refusal rejects the call without setting the hook's `error`. After a failed write the image is read again if the write timed out (it may have landed) or the image has no state. Also exported: `ReactionError`, `REACTIONS`, `REACTION_ERROR_CODES`, `isReactionErrorCode`, and the reaction types from `@civitai/app-sdk/blocks`. `createMockHost` and `<Harness>` answer both messages: seed images with `reactionStates`, force a code with `reactionError` (both live-tunable with `setScenario`; a forced `review-mode` or `not-ready` is answered before the sign-in, payload and scope checks, as the host's own gate orders them), and declare `social:react:self` in `declaredScopes` or every call answers `needs-consent`, as the real host does for an ungranted scope. The mock accepts any well-formed ticket, since a real one is an HMAC only the server can check. `@civitai/blocks-react/testing` exports the `MockReactionSeed` type. The live dev host refuses both with `entity-unavailable`: the server's reaction procedures need the viewer's civitai.com session.
+  - **`@civitai/components`.** `<civitai-reaction>` takes a `reaction` property (a string such as `Like`, reflected as an attribute). When it is non-empty it is carried as-is in the `react` event's `detail.reaction` and is the accessible name when there is no `label`; the element does not check it against any list. `emoji` stays display only. Without a `reaction`, or with an empty one, the event detail is exactly `{ emoji, reacted, count }`, as before.
+  - **`@civitai/sdk`.** The host snapshot is refreshed from civitai `cd79a91fe4`, so `request()` settles `SET_ENTITY_REACTION`, `GET_ENTITY_REACTIONS` and `OPEN_MEDIA_UPLOAD` instead of refusing them as unknown, and `SCOPES` names `social:react:self`.
+
+## 0.12.0
+
+### Minor Changes
+
+- 6727901: `blockTokenSource` takes an optional `signedIn()`. When it returns `false`, a `401` on a `mine` search ends as `unauthorized` straight away, without calling `getToken({ fresh: true })`: the catalog answers an anonymous viewer's `mine` with a `401`, and a new token would get the same answer. Every other `401`, and every `401` when `signedIn` is absent or returns `undefined`, still gets the one fresh-token retry.
+
+## 0.11.0
+
+### Minor Changes
+
+- f4adc63: Add `<civitai-resource-picker>` (`@civitai/components/civitai-resource-picker`, `…/define`): a modal that lets the viewer pick one version of a published resource from the Civitai catalog — their own (`owner="mine"`) or anyone's — with search, a version select (newest first) and badges on gated versions.
+
+  - Results come from a pluggable `source` (`{ search(params, signal) }`). `blockTokenSource({ origin, getToken, fetch? })` ships with it: plain `fetch` against `GET /api/v1/blocks/models` with a raw block token, asking `getToken({ fresh: true })` once for a new token after a `401`. It never falls back to the public `/api/v1/models`.
+  - A `mine` search is shown only when the server echoes `metadata.owner: 'mine'`; any other answer (including none, from a server that predates the parameter) is an error, never a list.
+  - `pick` carries `{ modelId, modelVersionId, name, versionName, creatorUsername, baseModel, earlyAccessDeadline?, access, owner }`; `dismiss` fires on close without a pick; `show()` resolves with the pick or `null`. `owner` is a UX hint, never proof of ownership.
+  - `access` reads the server's `paidAccess` gate: a timed gate is `early-access` (badge "Early access until …"), a permanent one `paid`.
+  - Debounced search, aborts superseded searches and drops late answers, retries `429`/`503` after `Retry-After` (twice, then "Try again"). A failed "Load more" keeps the list and offers that page again; changing `owner` while open drops the shown rows and searches again.
+  - Like the other viewer-bound elements it is in no `register` entry; import its `/define`.
+
+## 0.10.1
+
+### Patch Changes
+
+- 03f355e: `custom-elements.json` now lists what each element inherits. The base classes were never analysed, so every form control (checkbox, number-input, radio-group, segmented-control, select, slider, switch, text-input, textarea) was missing the attributes all of them share — `name`, `value`, `label`, `description`, `error`, `required`, `disabled`, `size` — and image, video and audio were missing `src`, `alt`, `fallback`, `pending`, `blocked` and `status`, along with their `load` and `error` events. `<civitai-text-input>` listed 5 attributes; it now lists 13. Each inherited entry carries `inheritedFrom`, and `CivitaiElement`, `CivitaiField` and `CivitaiMediaElement` are declared as modules of their own, with no tag: the set of elements and tags is unchanged. Every element also lists the `change` and `invalid` events `CivitaiElement` re-dispatches out of its shadow root. An entry an element declares itself stays its own (segmented-control's `size` keeps its own type), and an inherited one names the nearest class that declares it. Every element's `superclass` now resolves: to a declaration in the manifest at the module it names, or to the global `HTMLElement` (`package: "global:"`) for the light-DOM elements that extend it. No code changes; only the manifest's content.
+
+## 0.10.0
+
+### Minor Changes
+
+- f3882f0: Add `@civitai/components/testing/happy-dom`, a vitest setup file that installs a minimal `ElementInternals` / `attachInternals` stand-in when the test DOM lacks one. happy-dom implements neither, so `<civitai-button>` and every form control (checkbox, number-input, radio-group, segmented-control, select, slider, switch, text-input, textarea) threw `TypeError: this.attachInternals is not a function` on construction in a block's own test suite. Use it with `setupFiles: ['@civitai/components/testing/happy-dom']`. It does nothing where `attachInternals` exists, and no runtime entry imports it.
+
+## 0.9.3
+
+### Patch Changes
+
+- 13d004e: Comment only. The `[data-civitai-ui='text']` rule's comment in `components.css` (also embedded in the generated `componentsCss` string) no longer says in-repo blocks colour a `[data-theme]` root `#e6e6e6`, or that no in-repo consumer renders Text: every Civitai App page sets `color: var(--civitai-color-text)` itself, and the block starter renders `<civitai-text>`. No rule or value changes.
+- e174afd: Docs only. `@civitai/components` MARKUP.md: correct which in-repo pages set an ancestor text colour — no in-repo page sets `#1a1a1a` / `#e6e6e6` any more — every `starters/examples/*` app sets `color: var(--civitai-color-text)` on `:root` and `civitai-block-starter` on `body`, so they join `demo/` and `playground/` as pages that inherit the token. `@civitai/app-sdk` README: the `blockManifestPlugin` sentence no longer counts "six" examples (there are eleven, and all register it).
+
+## 0.9.2
+
+### Patch Changes
+
+- 42e6e11: docs: a `:root` token override loses silently, and all three packages told authors otherwise
+
+  `@civitai/components`' cascade promise — "every rule lives in
+  `@layer civitai.components`, so your own unlayered CSS always wins with no
+  `!important`" — is true of **this package's rules** and false of the **tokens**.
+  `@civitai/theme`'s sheet carries no cascade layer and declares its tokens at
+  `:root` / `[data-theme='…']`, specificity `0-1-0`. So an app's own
+  `:root { --civitai-color-primary: … }` does not outrank them, it **ties**, and
+  stylesheet order decides.
+
+  🔴 **The order that loses is the one the framework itself produces.**
+  `useBlocksStyles()` injects from a `useEffect`, so the token sheet lands _after_
+  a bundler-injected app stylesheet. Measured in Chromium: in that order a `:root`
+  brand override resolves to civitai's own `#1971C2` with no error and no warning
+  — and it does so with or without `data-theme` present, so the host theme stamp
+  is not the cause. An author branding a block the obvious way gets civitai blue
+  and nothing to debug.
+
+  Nothing in the three packages said so. The one piece of correct advice that did
+  exist — `MARKUP.md`'s inline-`style` example — happens to be order-immune, but
+  read as one option among equals rather than as the route that works.
+
+  - `@civitai/components` `src/components.css`: 🔴 **the sheet's own header
+    carried the unqualified promise this release retracts** — _"ALL rules live in
+    `@layer civitai.components` so a consumer's own unlayered CSS always wins the
+    cascade WITHOUT specificity fights"_ — and it is single-sourced into **16** generated
+    artifacts under `src/` by `pnpm --filter @civitai/components generate` (which
+    also rewrites `dist/components.css` and the root `styles.css`, carrying the
+    same header) — so it was the most-published copy of the wrong claim and the
+    last one anyone would look at. Now scoped to _this sheet_ with the token
+    exception stated: one edit, every artifact.
+  - `@civitai/components` `MARKUP.md`: _Cascade / overriding_ now separates the
+    layered rules from the unlayered tokens, says **scope a token override, never
+    declare one at `:root`**, and gives the routes measured to win in either order
+    (inline `style`, or a class on the block root). It also records that a scoped
+    value crosses into component shadow roots. This is the CANONICAL copy; the
+    others below point at it rather than restating it.
+  - `@civitai/components` `README.md`: the correction on the npm page, where the
+    unqualified "your own unlayered CSS always wins" sentence lived — cut to the
+    one-clause rule plus the `MARKUP.md` link it already carried. The utilities
+    section's "override the custom properties to retune every utility at once" now
+    says _on a scope, not `:root`_. ⚠️ With a caveat that matters: those tokens
+    live in `utilities.css`, a **different** unlayered sheet, and nothing injects
+    it for you — a consumer links it themselves, so there the stylesheet order is
+    _theirs_ to control and a `:root` override can be made to work. Scoping is
+    still the advice because it needs no ordering discipline at all. Measured for
+    the token sheet; that sheet is the same shape by construction, not separately
+    measured.
+  - `@civitai/theme` `README.md`: a _Recolouring a token (brand overrides)_
+    section, because this is the sheet with no layer and its own page never
+    mentioned the interaction. It also states plainly what is **not** supported:
+    the package exports token values and `injectTokens(doc?)`, the generator is
+    internal, and only the literal strings `light`/`dark` select a token block, so
+    `data-theme="mybrand"` selects none and inherits dark. You recolour the token
+    set; there is no named-theme API.
+  - `@civitai/blocks-react` `src/ui/styles.ts`: this is the function whose
+    effect-time injection creates the losing order, so the warning belongs on it.
+    🔴 **It is on `useBlocksStyles()`' own JSDoc, not the file-level comment** —
+    measured, the file-level block reaches the published `.d.ts` **not at all**:
+    it floats above a non-exported const that `tsc` elides, so it attaches to no
+    emitted declaration, and `files` ships no `src`. A block author hovering the
+    hook is the named audience and the file comment never reached them. Kept to a
+    pointer rather than a paraphrase of the matrix: a JSDoc copy of another
+    package's README, on another release cadence, is a desync nothing in CI can
+    see, and this repo has already measured that exact failure once.
+  - `@civitai/theme` `test/generation-parity.test.ts`: two node-tier assertions —
+    that the emitted sheet contains no `@layer`, and that its base block declares
+    the tokens ON the root element at full specificity — `:root` is required, so
+    `:root` and `:root, :host` pass while `:host` alone, `:where(:root)`,
+    `:root > *` and `:root body` all fail. That is the **defining**
+    property consumers depend on, and until now it was asserted nowhere — the
+    parity test stays green if you layer, because both sides of the comparison
+    move together.
+
+  Prose and JSDoc only — no behaviour change in any of the three. A patch release
+  is needed because the published artifacts _are_ these documents.
+
+  Backed by tests rather than by reasoning, at two levels:
+  `@civitai/components`' `test/token-override-order.browser.test.ts` asserts every
+  documented route in **both** stylesheet orders, with fixture controls naming the
+  real civitai value the trap resolves to; and the theme-package assertions above
+  pin the property those cases are a consequence of. The browser cases record the
+  trap as well as the happy paths, but as EVIDENCE rather than as the tripwire —
+  and measured, they are a PARTIAL detector: a `@layer` wrap reddens both
+  order-dependent cases, while a zero-specificity base (`:where(:root)`) reddens
+  exactly **one**, because `[data-theme='dark']` keeps its `0-1-0` specificity and
+  still wins on order. That is why the property is pinned at source in the theme
+  package, in **two** assertions rather than one: a substring check for `@layer`
+  cannot see `:where(`, so the selector shape is asserted alongside it.
+
+  Not documented, deliberately: `:root:root`. The specificity notch does beat the
+  theme's blocks in both orders, but nobody asked for it, it has no named
+  consumer, it teaches a specificity hack, and it buys nothing a scoped override
+  does not already buy unconditionally.
+
+- Updated dependencies [42e6e11]
+  - @civitai/theme@0.5.1
+
+## 0.9.1
+
+### Patch Changes
+
+- 04c7425: docs: the "default = light" claim is false under @civitai/theme's dark base
+
+  Both packages document the unthemed default, and both descriptions become wrong
+  the moment `@civitai/theme@0.5.0` ships. They are consumer-facing in the strict
+  sense — `MARKUP.md` is `@civitai/components`' self-declared canonical contract,
+  `README.md` is its npm page, and the `@civitai/blocks-react` JSDoc ships inside
+  the published `.d.ts` — so leaving them would have published a default that
+  contradicts the one the tokens emit.
+
+  - `@civitai/components` `MARKUP.md` / `README.md`: the default is now the **dark**
+    palette and nothing consults the OS preference. Only `light` and `dark` select a
+    token block; any other value selects none and inherits the dark base. Both say
+    what the previous behaviour was, so a reader upgrading can tell which world
+    their own code was written for, and that an explicit `data-theme` added _only_
+    to defeat the OS can now be dropped.
+  - `@civitai/blocks-react` `src/ui/styles.ts`: the JSDoc asserted the deleted
+    `@media (prefers-color-scheme: dark) { :root:not([data-theme]) { … } }` as live
+    fact, and opened with a 🔴 warning that reading "no `data-theme`" as non-light
+    "is how the explicit attribute gets deleted" — exactly backwards once the base
+    is dark. Replaced, with the reversal stated rather than quietly rewritten.
+  - `@civitai/blocks-react` `src/ui/BlockGate.tsx`: `readDocumentTheme`'s doc called
+    the explicit wrapper attribute "load-bearing" because only it could stop the OS
+    deciding. That reason is gone. The attribute **stays**, and the doc now gives
+    the one difference that survives: the read is `document.documentElement`, while
+    inheritance takes the nearest `[data-theme]` ancestor — the same on a direct
+    load, but that is a property of the deployment, not of the code.
+
+  No behaviour change in either package; prose and JSDoc only. A patch release is
+  needed because the published artifacts _are_ these documents.
+
+- Updated dependencies [04c7425]
+  - @civitai/theme@0.5.0
+
+## 0.9.0
+
+### Minor Changes
+
+- c66ae73: `<civitai-image>` now passes `loading` and `decoding` through to its `<img>`.
+
+  The `<img>` is built inside the element's shadow root, so nothing in the
+  consuming page could reach those attributes — an app rendering a grid of tiles
+  had no way to say `loading="lazy"` and got an eager decode for every off-screen
+  one. Both are plain passthroughs: unset renders no attribute at all, so the
+  default stays HTML's and no existing markup changes behaviour.
+
+- 38d0907: `<civitai-menu>` is adoptable by an App Block: it works in a non-browser DOM, and
+  its items can sit in a container the consumer owns.
+
+  Two independent blockers, either of which alone stopped a real adoption (#485).
+
+  **It threw in every non-browser DOM.** The element read its own open state through
+  `:popover-open` and drove its panel with `showPopover()`. Neither exists in
+  `jsdom` or `happy-dom` at any version, so a consumer's own suite — the
+  `happy-dom` environment `@civitai/blocks-react/testing` is documented for — could
+  not mount a screen containing a menu, let alone open one. The panel's visibility
+  is now decided by a `data-open` attribute the element writes, which is true in
+  every DOM and assertable outside a browser. `showPopover()`/`hidePopover()` are
+  **still called wherever they exist**, so a real browser keeps the two things
+  popover was chosen for: escape from a clipping ancestor via the top layer, and
+  native light dismiss. One code path, not two — the attribute is the state, the
+  popover API is presentation.
+
+  **Its items could not be given an addressable hook.** `part="panel"` styles the
+  panel but is not a query target, and `document.querySelector` does not pierce a
+  shadow root, so a test id or analytics hook had nowhere to live. Wrapping the
+  items in a `<div>` of your own used to break the menu outright:
+  `assignedElements({ flatten: true })` returned the `<div>`, the `role="menuitem"`
+  filter yielded zero items, and `show()` focused nothing. The menu now descends
+  into assigned elements to collect items, in DOM order, so a consumer-owned
+  container is a **supported pattern** — several containers, and wrapped mixed with
+  unwrapped, included.
+
+  `@civitai/blocks-react/testing` gains **`installPopoverShim`** (plus
+  `PopoverShimHandle` and `PopoverShimOptions`) for consumers whose _own_ code calls
+  into the popover API. The components do not need it. It is inert in a real
+  browser, and it deliberately does not paper over the remaining limitation: under
+  `happy-dom` a click on slotted content never reaches a listener on the `<slot>`
+  Lit bound `@click` to, so a trigger click is silent. The shim measures that on
+  install, exposes it as `slottedClicksReachSlots`, and warns — drive overlay
+  elements with `show()`/`hide()` there.
+
+  Both READMEs document the environment, the `show()`-not-click constraint, and the
+  container pattern; `popover` previously appeared in no README in the repo.
+
+  Minor rather than major for `@civitai/components`: nothing a consumer can observe
+  from outside the shadow root changes. The `.panel` class name, `part="panel"`, and
+  `:popover-open` matching in a real browser are all unchanged; what changed is
+  which selector the element's _own_ rule keys on, plus strictly looser acceptance
+  of the markup you may put inside it.
+
+## 0.8.1
+
+### Patch Changes
+
+- a65190f: **BREAKING (`@civitai/components-react`): the custom elements supersede the
+  hand-written React layer.** The `.` entry no longer exports `Button`, `Card`,
+  `TextInput`, `Alert`, `Badge`, `Loader`, `Stack`, `Group`, `Slider`,
+  `SegmentedControl`, `Select`, `Checkbox`, `Radio`, `RadioGroup`, `NumberInput`,
+  `Textarea`, `TabPanel`, `Toast`, `ToastProvider`/`useToast`, `Tooltip`, `Image`,
+  `Text` (with `TextProps`/`TextAs`/`TextSize`/`TextWeight`), or
+  `injectStyles`/`useComponentStyles`. It re-exports the generated
+  `@lit/react` element bindings instead — `CivitaiButton`, `CivitaiCard`,
+  `CivitaiTextInput`, and so on.
+
+  ## Migrating
+
+  The import rename is the easy half:
+
+  ```diff
+  -import { Button, Card, TextInput } from '@civitai/components-react';
+  +import { CivitaiButton, CivitaiCard, CivitaiTextInput } from '@civitai/components-react';
+  ```
+
+  🔴 **Renaming alone is NOT enough, and THREE cases are silent — they type-check
+  and then quietly do the wrong thing.** Two are prop NAMES: the elements' names
+  are not the React layer's, and `@lit/react` passes anything it does not
+  recognise straight to `React.createElement`, where an unknown name becomes a
+  plain HTML attribute rather than an error. The third is a prop DEFAULT, which
+  no rename can reveal — the names match and the rendering changes anyway.
+
+  | Was (0.8.x)                               | Is (0.9.0)                                    | What a bare rename does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+  | ----------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `<Alert title="Saved">`                   | `<CivitaiAlert heading="Saved">`              | 🔴 `title` is a **global** HTML attribute, so it becomes a mouse-hover tooltip and the bold heading silently disappears. No type error.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+  | `<Alert onClose={fn}>`                    | `<CivitaiAlert closable onClose={fn}>`        | 🔴 `onClose` is in the event map so it type-checks and attaches, but the element renders no dismiss button without `closable`. Dead callback, no button, no error.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+  | `<Toast title=… onClose=…>`               | `<CivitaiToast heading=… closable onClose=…>` | 🔴 identical to Alert, same two traps.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+  | `<Card>` (no props)                       | `<CivitaiCard withBorder padding="md">`       | 🔴 SAME NAMES, DIFFERENT DEFAULTS. The React `Card` defaulted `padding='md'` and `withBorder={true}`; `<civitai-card>` defaults to `padding=''` and `withBorder` unset. A bare `<CivitaiCard>` silently loses **16px of padding** in both themes, and its border weakens: in **dark** it disappears (`--civitai-card-border-width: 0`), in **light** it stays 1px but drops from the opaque `--civitai-color-border` to a 55%-opacity mix — light gives a borderless card a default hairline because surface and body are both `#fefefe` there. Pass both props explicitly. `<Card withBorder padding="lg">` with both already stated is unaffected. |
+  | `<Button variant size loading fullWidth>` | unchanged                                     | ✅ same names AND same defaults                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+
+  `Card` is the only default that moved. Badge, Loader, Slider, RadioGroup,
+  SegmentedControl, Image, Stack, Group and Button all carry element constructor
+  defaults identical to the React ones they replace — which is a statement about
+  DEFAULTS only; several of them still need the contract read for other reasons,
+  listed below.
+
+  Everything else:
+
+  - **Handlers receive the DOM event**, not an extracted value:
+    `onChange={(e) => e.currentTarget.value}`. Field elements re-dispatch the
+    native `change`, which commits on blur/Enter rather than per keystroke — so a
+    controlled input that previously updated per keystroke now updates on commit.
+  - **`injectStyles` / `useComponentStyles` are gone** from this package because
+    nothing here needs them: the elements are self-styling in shadow DOM and
+    inject the `@civitai/theme` tokens themselves. Import `injectStyles` from
+    `@civitai/components` if you also render bare `data-civitai-ui` markup.
+  - **`segmentId` is gone.** It existed to wire `aria-controls` for the deleted
+    `SegmentedControl`'s `mode="tabs"`. The elements split that case out:
+    `<civitai-segmented-control>` is the panel-less `radiogroup`, and
+    `<civitai-tabs>` / `<civitai-tab-panel>` own the panel-switching one and do
+    their own wiring.
+  - 🔴 **Every PROP TYPE the root used to export is gone** — `ButtonProps`,
+    `ButtonVariant`, `ButtonSize`, `CardPadding`, `Gap`, `AlertColor`,
+    `BadgeColor`, `SegmentedControlMode`, `SegmentItem`, `ImageFit`,
+    `ImageStatus`, `ToastApi`, `ToastOptions` and the rest. `export *` re-exports
+    **values only**, and the bindings derive their props from the element class
+    rather than declaring named interfaces. To name one, go through the
+    component: `React.ComponentProps<typeof CivitaiButton>`. Element-level unions
+    — `BadgeVariant`, `LoaderSize`, `ButtonVariant`, `ButtonSize`, `CardPadding`
+    and friends — do still have named exports, but on the **per-element
+    subpath**, NOT on the `@civitai/components` root, which exports only
+    `componentsCss`, `COMPONENT_NAMES`, `ComponentName` and `injectStyles`:
+
+    ```ts
+    import type { BadgeVariant } from "@civitai/components/civitai-badge";
+    import type {
+      ButtonVariant,
+      ButtonSize,
+    } from "@civitai/components/civitai-button";
+    ```
+
+  🔴 **`Text` is the one removal with a PUBLISHED predecessor of its own age.**
+  It landed in `@civitai/components-react@0.8.0` (#477) on both tracks while this
+  change was in flight, so `<Text>` existed publicly for exactly one release.
+  Its replacement is `CivitaiText`, generated from `<civitai-text>`; the element,
+  its CSS and its a11y coverage are untouched — only the hand-written React twin
+  is gone. Anyone who adopted `<Text>` in 0.8.0 renames it like the rest.
+
+  Not a rename at all: if you were using `TabPanel`, `Toast`/`ToastProvider`/
+  `useToast`, `Tooltip`, `Radio` or `Image`, read the element's own contract
+  first — `civitai-toast-region` owns the live region the provider used to,
+  and there is no standalone `civitai-radio` (use `<civitai-radio-group>`).
+
+  **Why.** The package had been shipping two unrelated implementations behind two
+  entry points: 22 hand-written components on `.` that re-rendered the
+  `data-civitai-ui` contract and imported no element, and 47 generated bindings on
+  `./elements` that were genuinely downstream of the elements and had no consumer
+  at all. (Both counts include `Text`/`civitai-text`, which landed on main from
+  #477 while this was in flight and was merged in here — the hand-written half
+  deleted with the other 21, the element kept.) Nothing compared the two, so they diverged where it was invisible —
+  `<Alert onClose>` rendered a dismiss button on one surface and not the other
+  with no type error, and `SegmentedControl` carried three different ARIA role
+  models and two-of-six keyboard nav across the layers. Collapsing onto the
+  elements removes the class, not the instances: there is now one implementation,
+  and a test fails if anything that is not a generated binding appears under
+  `src/`.
+
+  **Known cost, accepted deliberately.** Server rendering is now best-effort.
+  `@lit/react` assigns props as properties from effects, which do not run on the
+  server, so the wrappers emit bare tags that fill in after hydration; the
+  previous React layer server-rendered real markup. Where server output matters,
+  write the `<civitai-*>` tag directly in JSX so its attributes survive SSR, or
+  keep SEO-critical copy in ordinary HTML — which is what the `next-app` starter
+  demo now does.
+
+  **Test coverage moved rather than shrank.** The `html-vs-react-parity` suite is
+  deleted: it asserted that the React arm and a hand-written HTML arm computed
+  identically, and with one implementation there is no second arm — keeping it
+  would have compared the elements to themselves. The axe a11y sweep was
+  retargeted onto the elements and still covers every component family in light
+  and dark. The opt-in visual-regression layer was **deleted, not retargeted** —
+  an audit found it had never run anywhere: its `VITE_RUN_VR` opt-in was set in
+  no workflow, script or `.env`, and no baselines were ever committed. It was 50
+  tests, every one of them a skip — the layer enumerated `A11Y_CASES` × 2 themes,
+  and that array stood at 25 cases when it was deleted. (No share of the browser
+  tier is quoted. Two successive drafts of this sentence got that denominator
+  wrong in the same way, by omitting the parity suite; the count of inert tests
+  is what the deletion rests on, and it needs no ratio.) The entry-point guard
+  that required the `.` entry to reach no element module was rewritten rather
+  than dropped: it now pins that the root and the presentational barrel reach
+  the SAME external specifiers — set equality, so an extra at the root and a gap
+  at the root both fail — and that the root still reaches no `@civitai/sdk`.
+
+  **Release sequencing.** The two starters in this repo import the new names, and
+  their `@civitai/components-react` pins are `^0.8.0` — which, being 0.x, admits
+  only `0.8.x`, and 0.8.0 is the release that shipped `Text` on the old layer.
+  Between merging this and publishing 0.9.0, `npx tiged` of those starters
+  scaffolds a project that does not compile. `changeset version` rewrites the
+  pins, so the fix is to publish promptly rather than to change anything here;
+  the nightly published-starter smoke job will flag the window while it is open.
+
+  `@civitai/components` (patch): stop shipping `dist/utilities.generated.*`, about
+  39 kB no consumer could reach (19,549 B of `.js` plus 19,383 B of `.d.ts` — the
+  glob takes both) — nothing imports it and there is no
+  `./utilities` export key, the utility layer being published as `./utilities.css`.
+  Unlike `styles.generated`, which `src/index.ts` imports and so ships via the `.`
+  entry. Same reasoning as the existing `!dist/css` exclusion; no API change.
+
+## 0.8.0
+
+### Minor Changes
+
+- 4aa3a9f: Add `Text` — the typography primitive — on both tracks:
+  `data-civitai-ui="text"` and `<civitai-text>`, plus the `<Text>` React binding.
+
+  **Why.** The pack had no text, heading or paragraph component on either track —
+  the only text-named elements were the two form controls, `civitai-text-input`
+  and `civitai-textarea`. A consumer composing a page out of this pack could not
+  put a headline, a paragraph or a section title on it, so every composed page
+  read as a pile of self-labelling widgets. That is a hole in the design system
+  rather than in any one consumer. (Typography _utilities_ were never the hole:
+  `utilities.css` already ships `ci-fs-1`…`ci-fs-6`, the weights, `ci-muted` and
+  `ci-truncate`. It is the component level that was empty — and note that
+  `utilities.css` is **not** the transitional sheet; `bootstrap-compat.css` is the
+  one markup migrates away from, toward these.)
+
+  **The API**, derived from the components already here rather than invented:
+
+  - **The element is the consumer's choice, and it carries the meaning.** `as`
+    (element attribute) / the tag itself (attribute track): `p` (default), `span`,
+    or `h1`–`h6`. A heading is a REAL heading element — that is what puts it in
+    the document outline and a screen reader's heading list; `role="heading"` on a
+    styled box is not a substitute. `<civitai-text as="h2">` renders an `<h2>`
+    inside its shadow root, and an axe positive control (a deliberately skipped
+    level must be REPORTED) is what proves that heading reaches the accessibility
+    tree with its level intact.
+  - **Size and heading level are independent.** `data-size` never changes what an
+    element means and the element never changes the size, so an `<h2>` can be the
+    small print of a card and a `<p>` can be the lede.
+  - `data-size`: `xs` · `sm` · `md` (default) · `lg` · `xl` · `2xl` · `3xl` ·
+    `4xl` · `5xl` — 12/13/14/16/20/24/28/32/40px. **One scale, in two halves.**
+    `sm`/`md`/`lg` are byte-identical to Button's own font-size ramp, so one size
+    name means one size across the pack, and `xs` is the 12px the field
+    description already uses. Everything from `lg` up is a value `utilities.css`
+    already ships as `ci-fs-N` — `lg`=`ci-fs-6`, `xl`=`ci-fs-5`, `2xl`=`ci-fs-4`,
+    `3xl`=`ci-fs-3`, `4xl`=`ci-fs-2`, `5xl`=`ci-fs-1` — so the package has one
+    type scale under two spellings rather than two that disagree. Nothing above
+    `ci-fs-1` is invented. `xl` and up lead at 1.25; below it, 1.5.
+  - `data-weight`: `normal` (default) · `medium` · `semibold` · `bold` — the
+    weights `utilities.css` already spells, plus the 500 this sheet already uses.
+  - **No colour axis**, and by the same predicate as alignment and truncation
+    below: every value one would take already exists as a utility that reaches
+    this element. `ci-muted` is the dimmed token, `ci-text-info` / `-success` /
+    `-warning` / `-error` the intent enum, `ci-text-default` the body colour, and
+    `color` **inherits** — so a utility on the element, or on any ancestor, reaches
+    `<civitai-text>`'s shadow content too (its inner element is `color: inherit`).
+    Both tracks are therefore `color: inherit` and Text does **not** paint
+    `--civitai-color-text` itself: a _specified_ value beats an _inherited_ one at
+    any specificity, so a token on the element would silently cancel every ancestor
+    utility and make the sentence above false.
+    ⚠️ **The trade, and it applies to pages that DO set a colour — not only to pages
+    that set none.** Text renders in whatever colour it inherits, so wherever an
+    ancestor colour and the token disagree, Text now follows the ancestor. Measured
+    on both tracks, in the shape a block in this repo actually has — a
+    `[data-theme="dark"]` root carrying `color: #e6e6e6` — Text computes
+    `rgb(230, 230, 230)`, while restoring the removed declaration on the same
+    fixture puts both tracks back at the dark token `rgb(193, 194, 197)` with the
+    plain `<p>` beside them still at `rgb(230, 230, 230)`. Dark is where that
+    reads, a soft grey token against a near-white block colour. Light behaves the
+    same: `color: rgb(24, 24, 27)` on `<body>` gives `rgb(24, 24, 27)` where the
+    token `rgb(34, 34, 34)` used to win. Every in-repo consumer is in that
+    population, by two routes — four starters set the colour on `<body>` with
+    Tailwind (`text-zinc-900 dark:text-zinc-100`), and seven set it on a
+    `[data-theme]` root as `#1a1a1a` / `#e6e6e6` (`civitai-block-starter` plus the
+    six apps under `starters/examples/`). The package's own `demo/` and
+    `playground/` still show the token, but by inheriting it from
+    `body { color: var(--civitai-color-text) }` rather than because Text names it.
+    With no colour anywhere Text lands on the UA default `rgb(0, 0, 0)`,
+    `@civitai/theme` shipping tokens and no `color`. `ci-text-default` asks for the
+    token explicitly — see the `utilities.css` note below for what has to be loaded
+    for that class to do anything.
+    This ships `minor` on two published packages, so adding the axis later stays
+    additive while taking it away would not be.
+  - **Margins are reset to `0`.** The UA's heading/paragraph margins are
+    em-relative, so they would move with every `data-size`; vertical rhythm here
+    belongs to `stack`/`group`. It is also what makes the two tracks lay out
+    identically.
+
+  **Tokens: nothing new — and 🔴 Text references no colour token in any declaration
+  of its own.** `@civitai/theme` exposes `--civitai-font` and `--civitai-font-mono`
+  and no size, weight or leading scale — Mantine expresses those per component — so
+  Text adds no token and states its px scale in `MARKUP.md` as a table, the way
+  every other component in this sheet states its metrics. What it does _not_ do is
+  read `--civitai-color-text`: both tracks are `color: inherit`, so overriding that
+  token does not retheme Text on its own. Measured — with
+  `--civitai-color-text: rgb(200, 0, 0)` on a wrapper, both tracks compute
+  `rgb(0, 0, 0)` (the inherited page colour), and only adding `ci-text-default`
+  moves them to `rgb(200, 0, 0)`. The token still reaches Text, but by inheritance
+  from an ancestor that paints with it, or through a `ci-text-*` utility — not
+  because Text names it.
+
+  **Deliberately NOT in v1** — each already has an implementation one layer down,
+  and one predicate decides all three: **colour** → `ci-muted` / `ci-text-*`,
+  **alignment** → `ci-text-start` / `ci-text-center` / `ci-text-end`,
+  **truncation** → `ci-truncate`. `color` and `text-align` inherit, so the first
+  two reach `<civitai-text>` as well; `overflow` does not, so truncation on the
+  element track is a real follow-up rather than an oversight. Adding any of them
+  later is additive; removing one would not be.
+
+  ⚠️ **Colouring Text requires `utilities.css`, which is a separate stylesheet — and
+  no injection path in these packages ships it.** It is not bundled into
+  `styles.css`; `injectStyles()` injects the tokens and `styles.css` only, and
+  `@civitai/blocks-react`'s `injectBlocksStyles()` — reached on mount by 20 of the
+  21 component modules in that package's `/ui`, `SettingsForm` being the one
+  exception and deliberately unstyled — adds that package's interactive CSS on top
+  and still no utilities. So an App Block author who hand-writes
+  `<p data-civitai-ui="text">`, which rendering a `/ui` component is documented to
+  style, gets the new inherit behaviour together with a
+  `ci-text-default` that silently does nothing: measured, that markup under an
+  ancestor `color: rgb(24, 24, 27)` with `injectStyles()` alone computes
+  `rgb(24, 24, 27)`, the class having no effect. Load
+  `@civitai/components/utilities.css` alongside `styles.css` if you colour, align or
+  truncate text. `demo/index.html` links all three.
+
+  **Both tracks — a choice, not a rule.** Most elements in this package have no
+  attribute-track twin, so "every other component ships both" would be false; the
+  relationship that holds is the converse (nearly every attribute slug also has an
+  element). Text ships both to stay on the side of that pattern and of a published
+  consumption mode.
+
+  Additive: no existing component, attribute, token or export changes behaviour.
+
+## 0.7.1
+
+### Patch Changes
+
+- 5c28d23: README: correct the "exactly two exports" claim. The `exports` map has 100 keys, and three of
+  them are CSS (`./styles.css`, `./utilities.css`, `./bootstrap-compat.css`) — two of which this
+  same README documents further down. The true constraint is unchanged and is what the sentence
+  now says: no CSS subpath is per-component.
+- d5f1afa: README: drop the 68-line `#358` CSS-split pricing memo from the published tarball.
+
+  The tables, the two 🔴 row-attribution callouts and the `MEASURE_CARRIERS=1`
+  reproduction recipe priced an open issue for maintainers, not consumers — the
+  slices they measure are excluded from the tarball and nothing imports them. The
+  consumer-facing consequence is unchanged and still stated in full: there is no
+  supported way to import one component's rules. No API or behaviour change.
+
+## 0.7.0
+
+### Minor Changes
+
+- c49ade1: `<civitai-workflow-button>` prices a workflow, runs it on the viewer's Buzz and
+  reports it — as one control. The price is in its label before a press; while it
+  runs it spins, names the stage the workflow is at, says how many jobs are ahead
+  of it while a step still waits in a queue, counts its steps off as they
+  finish and fills its own background with the lowest progress rate any step
+  reports; a second press asks whether to cancel,
+  offering the workflow id to copy. A finished run
+  says how it ended before the button offers its price again. A metered workflow,
+  billed as it runs, is offered without a price rather than as free. It
+  emits `priced`, `submitted`, `progress`, `finished`, `canceled` and `error`, so
+  an app stops rebuilding submit-watch-cancel around every generate button.
+
+  `variant`, `size`, `full-width` and `disabled` pass through to the button it
+  wraps, so an app never needs `::part` CSS for what a plain button already does.
+
+  Like `<civitai-sign-in-button>` it needs `@civitai/sdk` (an optional peer) and
+  sits behind its own entry point, out of `register` and the CDN bundles.
+
+- c49ade1: `<civitai-sign-in-button>` passes `full-width` through to the button it wraps,
+  so an app does not need `::part` CSS for what a plain button already does.
+
+## 0.6.0
+
+### Minor Changes
+
+- f84cf81: `<civitai-video>` and `<civitai-audio>`, siblings of `<civitai-image>` that
+  follow HTML's own three media elements, and the states a generated file goes
+  through, now on all three:
+
+  - `pending` while the file is still being made: a loader, and nothing requested.
+  - `blocked` when it is withheld from the viewer: the `blocked` slot says why,
+    and the file is never requested.
+  - `fallback` when it fails to load, which is how an expired signed URL shows up;
+    listen for `error` to hand it a fresh `src`.
+
+  `status` gains `blocked` alongside `loading`, `loaded` and `error`, and `load`
+  and `error` still do not bubble, matching the media events they stand in for.
+
+  `openable` turns an image, or a `preview` video, into a real button that emits
+  `open`, so a gallery opens a viewer from the keyboard as well as a click. A
+  `preview` video plays muted and looping, without controls, while hovered or
+  focused; any other video keeps its native controls. `--civitai-media-max-height`
+  caps the height of an image or a video.
+
+  `<civitai-image>` is unchanged unless these are used: same parts, events and
+  look, and its parity test against the legacy markup still passes.
+
+  React: `CivitaiVideo` (`onVideoLoad`, `onVideoError`, `onOpen`), `CivitaiAudio`
+  (`onAudioLoad`, `onAudioError`), and `onOpen` on `CivitaiImage`.
+
+## 0.5.0
+
+### Minor Changes
+
+- 266a021: Three more: `<civitai-button-group>`, `<civitai-input-group>` and
+  `<civitai-confirm-dialog>`.
+
+  The two grouping elements are **light DOM**, for a reason worth recording:
+  joining controls means reaching their `::part(button)` and `::part(control)`,
+  and a part crosses exactly one shadow boundary. From the document those parts
+  are reachable; from a shadow root the controls had been slotted into they are
+  not. So the grouping element styles children the page owns.
+
+  `<civitai-confirm-dialog>` extends `<civitai-modal>` — the focus trap, the top
+  layer and Escape all come from one implementation, and the modal grew two
+  render hooks for it. `await dialog.ask()` resolves `true`, `false` on cancel,
+  and `false` on a dismissal, so a caller is never left waiting on a promise that
+  will not settle. A destructive confirmation lands focus on Cancel.
+
+  The React binding map now follows the superclass chain. That fixed a gap nobody
+  had noticed: `<civitai-switch>` extends `<civitai-checkbox>` rather than the
+  field base directly, so it had been generated **without** `onChange` or
+  `onInvalid` despite dispatching both.
+
+- 266a021: The image card, in parts: `<civitai-media-card>` (media plus `top-start`,
+  `top-end` and `bottom` overlay slots over a scrim), `<civitai-reaction>`
+  (emoji, abbreviated count, pressed state, emits `react`) and
+  `<civitai-action-button>` (a circle that expands to its label on hover or
+  focus, crossfading to a second icon in an inverted chip when it opens).
+
+  Two details that are easy to get wrong and are pinned by tests: the overlays are
+  SIBLINGS of the media link rather than children, because a menu button inside an
+  anchor is invalid and unreachable by keyboard; and a control sitting on the media
+  takes its contrast from the image, not the page, so the card overrides it to the
+  scheme-independent ramp instead of letting it follow the theme.
+
+  The `top-end` corner stacks vertically, since that is where the site hangs the
+  action button under the kebab; `top-start` and `bottom` stay rows.
+
+  Counts read the way civitai.com's own `abbreviateNumber` writes them —
+  `13100` is `13.1k`, uppercased in CSS.
+
+- 266a021: The utility layer is no longer in a cascade layer. A layered rule loses to any
+  unlayered one regardless of specificity, so every `ci-*` class silently lost to
+  legacy CSS it exists to beat — measured against Bootstrap's reboot, `ci-mt-6`
+  computed to `0px`. Components stay layered, so consumers can still override
+  those. Adds `ci-border-bottom` and `ci-border-end`.
+- 266a021: Publish a CDN bundle and the custom-elements manifest.
+
+  `elements.js` at the package root makes the one-script-tag form work: jsDelivr
+  ignores `exports`, so a subpath like `/register` 404s there — the same reason
+  `styles.css` is copied to the root. The build fails over **25 kB gzip**, which
+  is the budget the whole element set has to live within; three elements plus Lit
+  and the tokens currently come to about 11 kB.
+
+  `custom-elements.json` is the published contract — tags, attributes,
+  properties, parts and slots. It is derived from the element sources rather than
+  JSDoc: tag names come from `defineElement(TAG, …)`, parts and slots from the
+  Lit templates. Nothing is restated, so nothing can drift, and a test fails if
+  the manifest stops matching what the package registers.
+
+- 266a021: Fields take `size`. `<civitai-button>`, `<civitai-badge>`, `<civitai-loader>`
+  and `<civitai-segmented-control>` all had `sm | md | lg`; no field did, so a
+  toolbar could not put a select next to a small button without them disagreeing
+  about height. `CivitaiField` carries it now, which is every text input,
+  textarea, number input, select and slider at once.
+- 266a021: Add `<civitai-image>` and `<civitai-slider>`.
+
+  `<civitai-image>` tracks `loading` / `loaded` / `error` and reflects it, so
+  `:host([status='error'])` and a consumer's own CSS can both see the state. It
+  reconciles from the element after render as well as from `load`/`error`, because
+  a cached image can already be `complete` before the listeners attach and fire
+  neither.
+
+  `status` is the reliable contract and the `load`/`error` events are the
+  convenience on top: a cached image settles immediately, so a consumer attaching
+  a listener after mount can miss the event entirely.
+
+  `<civitai-slider>` is a themed native range — arrow keys, Home/End and
+  `aria-valuenow` all come from the control rather than being reimplemented — with
+  the value read-out, description and error wired through the shared field base.
+
+  An unset range is not empty: the browser parks it at the midpoint of min/max.
+  The element now derives that before rendering, so its value, its read-out and
+  `FormData` agree with what is on screen instead of reporting `''`.
+
+- 266a021: Add `<civitai-menu>` with `<civitai-menu-item>` and `<civitai-menu-label>` — the
+  kebab popup the site uses on tags and on the image toolbar. It sits in the top
+  layer via the Popover API, which is what lets it escape a clipping ancestor;
+  arrow keys walk the items, Escape and a choice both return focus to the trigger,
+  and a disabled item is announced rather than skipped.
+
+  `<civitai-tag>` gains `confidence` (0–1 from the tagger), drawn as a bar behind
+  the label and tinted with the rating. It is separate from `score`, which is the
+  vote total.
+
+- 266a021: `<civitai-modal>` answers `show()`, `hide()` and `toggle()`, the same three
+  `<civitai-menu>` already had. Setting `open` still works; this is only so the
+  two do not disagree about how a box is opened.
+
+  The README gains the four authoring rules an API review had to reconstruct:
+  when content is a property and when it is a slot, that parts are named after
+  the property that fills them, why no element needs `exportparts`, and that
+  visibility is a property with the methods as sugar.
+
+- 266a021: Add `<civitai-modal>` and `<civitai-collapse>`.
+
+  `<civitai-modal>` is built on native `<dialog>.showModal()`, so the focus trap,
+  the top layer, the inert background and focus restore all come from the
+  platform. The React binding it replaces documents the opposite — _"this does
+  NOT trap focus inside the panel — Tab can still reach content behind the
+  overlay"_ — so this is a strict accessibility upgrade rather than a port.
+
+  It also sidesteps two risks the plan flagged: nothing is portalled to
+  `document.body` (the top layer needs no z-index or portal), and nothing reads
+  `document.activeElement` to restore focus, which returns the host rather than
+  the focused inner node.
+
+  Escape is honoured through the dialog's `cancel` event, so `close-on-escape`
+  turns it off by preventing the default rather than by swallowing the key.
+
+  Both elements name their label `heading`, not `title`: `title` is a global
+  attribute and would render a browser tooltip over the whole component.
+
+- 266a021: Add `<civitai-sign-in-button>`, the first element that acts as the viewer
+  through `@civitai/sdk`. Inside a civitai.com page it asks the host, and is
+  inert until `BLOCK_INIT`: with no validated host origin a press sends nothing,
+  and the control renders disabled. Given a `signIn` from the SDK's
+  `createSignIn()`, the same button leaves for Civitai itself, so an app outside
+  civitai.com gets one button for both.
+
+  It has its own entry points, `@civitai/components/civitai-sign-in-button` and
+  `/define`, and is left out of `register`, `elements.js` and `site-elements.js`,
+  so a page that wants only the look never bundles the SDK. `@civitai/sdk` is an
+  optional peer dependency: install it only to use this element.
+
+- 266a021: Add the first civitai.com vocabulary elements: `<civitai-avatar>` (initials
+  fallback, cosmetic frame), `<civitai-rating-badge>` (the `g`/`pg`/`pg13`/`r`/`x`
+  ladder, spelled as the site already spells it) and `<civitai-tag>` (the votable
+  tag pill, emitting `vote` with `{ name, vote }`).
+
+  They ship in a second CDN bundle, `site-elements.js`, which is the generic kit
+  plus these — load one bundle or the other, never both. Two disjoint bundles
+  would each carry their own 8.5 kB of Lit, and a page with a tag in it wants
+  buttons too.
+
+  These elements are presentational: state in as attributes, intent out as an
+  event. Nothing here talks to the host.
+
+- 266a021: Add `<civitai-checkbox>` and `<civitai-radio-group>`.
+
+  `<civitai-radio-group>` owns the whole set and renders its radios from a `data`
+  property, rather than coordinating slotted children the way the React binding
+  does. Native `name`-based exclusion is **tree-scoped**: radios in sibling shadow
+  roots never group, so two could be checked at once and arrow keys would not move
+  between them. Keeping them in one root keeps exclusion, roving focus and ARIA
+  native instead of reimplemented.
+
+  That means there is no standalone `<civitai-radio>` element. A lone radio that
+  cannot group with its siblings is a trap, and the group covers the real use.
+
+  `<civitai-checkbox>` submits its value only when checked, defaults that value to
+  `on`, and carries `indeterminate` — which is a property with no attribute on a
+  native checkbox, so it is set imperatively after each render.
+
+  Neither `checked` nor `indeterminate` is reflected. The `checked` ATTRIBUTE is
+  the default `form.reset()` returns to, exactly as on a native checkbox, so
+  writing live state back to it would make reset a no-op. This is the third
+  element where reflecting the value-ish property broke reset, and every
+  form-associated element now has a test pinning it.
+
+- 266a021: A utility layer, at `./utilities.css`. Elements cover the components; they
+  cannot cover the markup between them — the row, the gap, the margin — and this
+  package had no answer for that, so every hand-HTML author wrote their own. An
+  API review put a number on it: of the 205 Bootstrap classes one real consumer
+  uses, **135 are layout and spacing**, none of which an element can replace.
+
+  217 classes under a `ci-` prefix, generated from `src/utilities.spec.ts` and
+  spending the same tokens the elements do: colour utilities name
+  `--civitai-color-*` rather than a shade, so they follow the theme into dark
+  mode. Spacing is a scale of its own, `--civitai-space-0` through `-6`, because
+  Mantine expresses spacing per component and `@civitai/theme` has nothing to
+  derive a ramp from. The grid is CSS Grid rather than floats or percentages.
+
+  `./bootstrap-compat.css` ships alongside it and is **transitional**: Bootstrap's
+  own class names mapped onto the same declarations, keeping Bootstrap's
+  breakpoints rather than ours, so a page adopts the tokens before it touches its
+  markup. A browser test asserts all 214 aliases compute identically to the `ci-`
+  utility behind them, which is what makes deleting a rule safe once its markup
+  moves.
+
+- 266a021: `<civitai-text-input>` and `<civitai-textarea>` take `maxlength` and
+  `autocomplete` and hand them to the control, which is where the UA reads them.
+  Both were missing, and `civitai-brawl` needed all three of its lobby inputs
+  capped when it adopted the elements.
+- 266a021: One field contract, not four. `<civitai-checkbox>`, `<civitai-radio-group>` and
+  `<civitai-segmented-control>` each carried their own `ElementInternals` plumbing;
+  `<civitai-slider>` re-rendered the label, description and error chrome by hand.
+  All four now sit on `CivitaiField`, which grew three hooks for the cases that
+  genuinely differ — `formValue()`, `missing` and `missingMessage`.
+
+  The visible part: `<civitai-segmented-control>` gains `label`, `description`,
+  `error`, `required` and `disabled`, with the `label` and `error` parts and the
+  `reportValidity()` the others already had. Previously `required` on it set no
+  validity at all, so a form submitted regardless. Checkbox and radio group gain
+  `reportValidity()`.
+
+  **Breaking — `select` carries a value, not an element.** `<civitai-menu>`'s
+  `select` detail was `{ item: HTMLElement }`, which no framework outside the DOM
+  can receive: it cannot be serialized to Blazor, and React handlers had to read
+  `textContent` back off the node. It is now `{ value: string }`, and
+  `<civitai-menu-item>` takes a `value` attribute that falls back to the item's own
+  text the way an `<option>` does.
+
+  **Breaking — two parts renamed.** `part="title"` on alert, modal and toast is now
+  `part="heading"`, matching the property that fills it. `part="trigger"` on
+  collapse is now `part="button"`, matching every other element that renders one.
+
+  `<civitai-tabs>` marks `change` `composed`, so it escapes a consumer's shadow
+  root rather than stopping at it. `<civitai-image>` dispatches `load` and `error`
+  under literal names; the computed one left `custom-elements.json` with an event
+  that had no `name` field, and the manifest now describes all 11 events.
+
+- 266a021: Add custom elements: `<civitai-button>`, `<civitai-text-input>` and
+  `<civitai-segmented-control>`.
+
+  Behaviour has only ever existed in the React layer — `MARKUP.md` tells
+  hand-HTML authors to implement the segmented control's keyboard handling
+  themselves — so the two Svelte starters got a stylesheet and homework. These
+  elements carry the behaviour with the style, identically in plain HTML, Svelte,
+  Vue and React.
+
+  New entry points, all additive: `./register`, `./<tag>`, `./<tag>/define` and
+  `./internals`. `./styles.css` and the `.` entry are untouched, and the `.` entry
+  still pulls no renderer, so nothing an existing consumer imports changes.
+
+  All three are form-associated, which gives back what a control inside a shadow
+  root otherwise loses: `type="submit"`/`type="reset"` on the button, `FormData`
+  round-tripping and Enter-to-submit on the text input, and `form.reset()` on all
+  of them. `change` is re-dispatched across the boundary, because it is
+  `composed: false` and would otherwise never reach a consumer's listener.
+
+  `<civitai-segmented-control>` implements the WAI-ARIA roving tabindex: the group
+  is one tab stop, arrows wrap across enabled segments, Home/End jump to the ends,
+  and selection follows focus. It is a `radiogroup` only — the React binding's
+  `mode="tabs"` is deliberately absent, because a tab's `aria-controls` is an
+  IDREF and an IDREF cannot reach a light-DOM panel from inside a shadow root.
+  axe flags it, so tabs get their own element rather than a broken mode here.
+
+  One deliberate difference from the React binding: `error` also makes the field
+  _invalid_ (`setValidity({ customError })`), so a form will not submit while a
+  message is showing. The React binding only draws it, which contradicts the
+  `aria-invalid` it sets. Clear `error` when the problem is fixed.
+
+  Computed-style parity against the attribute markup each element replaces is
+  asserted across every variant, size and theme.
+
+- 266a021: `<civitai-button>` takes `color` (`info | success | warning | error`), which
+  recolours every variant by rebinding the primary accent, and `href`, which
+  renders an anchor — navigation is a link whatever it looks like. A disabled
+  link drops its `href` rather than navigating while looking inert.
+
+  `<civitai-select>` refuses to shrink below its longest option; squeezed by a
+  crowded toolbar row it clipped its own value. `<civitai-table>` reaches the
+  button a sortable grid puts in its header, which inherits neither font nor
+  colour and had stopped the header treatment dead.
+
+- 266a021: Add `<civitai-toast>` and `<civitai-toast-region>`, completing the element set.
+
+  `<civitai-toast-region>` owns the queue and the auto-dismiss timers, and renders
+  its toasts as its **own light-DOM children**. An `aria-live` region announces
+  nodes added to itself, so shadow content it rendered would not be announced.
+
+  Its API is imperative, like the React `useToast()` it replaces:
+  `region.show({ message, heading, color, duration, urgent })` returns an id;
+  `dismiss(id)` and `clear()` take it away. A `duration` of `0` is sticky. Timers
+  are cleared when the region is removed, so none fire against a detached element.
+
+  `<civitai-toast>` is the presentational card and carries its `role` on the host
+  — `status` normally, `alert` when urgent — because the role has to sit on the
+  element the live region actually sees appear.
+
+- 266a021: Port six presentational primitives to elements: `<civitai-card>`,
+  `<civitai-stack>`, `<civitai-group>`, `<civitai-badge>`, `<civitai-loader>`
+  and `<civitai-alert>`.
+
+  Computed-style parity against the attribute markup each replaces is asserted
+  across every variant, size, colour and both themes — 58 cases.
+
+  Two fidelity fixes fell out of that. The shared `:host` baseline was setting
+  `line-height: 1`, which the legacy `[data-civitai-ui]` rule never did, so
+  every element whose counterpart inherited a line height was being relaid out;
+  the baseline now carries exactly what that rule carries. And the loader's ring
+  is the host's own box rather than an inline child's, so it keeps the legacy
+  `inline-block` box instead of gaining descender space beneath it.
+
+  `<civitai-alert>` names its heading `heading`, not `title`: `title` is a
+  global attribute and would render a browser tooltip over the whole alert.
+
+  Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- 266a021: Add `<civitai-textarea>`, `<civitai-number-input>` and `<civitai-select>`, on a
+  shared field base.
+
+  `CivitaiField` owns what every labelled control needs — ids, the
+  `aria-describedby` wiring, validity, `form.reset()` semantics and the value the
+  form sees — so each control spells out only itself. `<civitai-text-input>` moved
+  onto it with no change to its behaviour; its existing tests passed untouched.
+
+  `<civitai-number-input>` is a native `type="number"`, so the browser's spinners,
+  arrow-key stepping and `min`/`max`/`step` all work rather than being
+  reimplemented. `<civitai-textarea>` deliberately does NOT submit on Enter, since
+  Enter is a newline there.
+
+  `<civitai-textarea>` leaves `rows` at the native default of 2 rather than
+  `blocks-react`'s 3. The two existing surfaces disagree, and the contract this
+  element replaces is the attribute markup — picking 3 would resize every
+  migrating textarea.
+
+  `<civitai-select>` takes its options as a `data` property, since an attribute
+  cannot carry them, and renders a placeholder as a disabled empty first option.
+
+- 266a021: Five elements a real consumer needed and the vocabulary had no answer for.
+
+  `<civitai-switch>` **extends** `<civitai-checkbox>` rather than restating it —
+  the payoff from folding every control onto one field base last release, since
+  the form participation, validity and error chrome all arrive for free and
+  `role="switch"` is the only difference that matters.
+
+  `<civitai-progress>` drops `aria-valuenow` entirely when `indeterminate`,
+  because a bar that does not know its extent should not claim one.
+  `<civitai-pagination>` keeps the first and last page either side of an ellipsis
+  so the buttons do not move under the pointer as you page, and emits `change`.
+  `<civitai-breadcrumb>` renders its separator as a pseudo-element, which is what
+  keeps it out of the trail a screen reader reads.
+
+  `<civitai-table>` is **light DOM on purpose**: a slotted `<tr>` inside a shadow
+  `<table>` leaves the table formatting context and stops being a row. It styles a
+  table the page already owns, so it works over a data grid's generated markup
+  instead of asking anyone to give up sorting and virtualization.
+
+  The CDN bundle budgets move to 32 kB and 38 kB gzip. No element is an outlier
+  to shave — an all-in-one bundle simply grows with the vocabulary, and a page
+  that counts bytes imports `@civitai/components/<tag>/define` instead.
+
+- 266a021: `<civitai-nav-list>` and `<civitai-nav-item>` — navigation primitives rather
+  than an app shell, because the reusable part of a sidebar is the nav tree's
+  behaviour and not the chrome around it. Lay the page out with the utilities.
+
+  `current` on the list is an `href`, matched exactly. It marks that item and
+  opens every group above it, however deep — the part sidebars usually get
+  wrong, landing on a nested route with the section containing it still
+  collapsed. An item is a link when it has an `href` and a disclosure when it
+  has children; an `href` _with_ children is still a disclosure, never an anchor
+  that also toggles. Depth is counted by the item itself, so nesting indents
+  without anyone tracking levels in markup.
+
+  Icons stay slotted. The package ships no icon set, so an app brings its own and
+  pays for nothing it does not use.
+
+- 266a021: Add `<civitai-tooltip>`, `<civitai-tabs>` and `<civitai-tab-panel>`.
+
+  All three render in the **light DOM**, which is the only way they can work.
+  `aria-describedby` and `aria-controls` are IDREFs, and an IDREF cannot cross a
+  shadow boundary — a bubble or a tablist rendered in a shadow root could never
+  reference a trigger or a panel the author put in the page. axe proved it when
+  `<civitai-segmented-control>` tried to carry a `tabs` mode; splitting them out
+  is what that finding forced.
+
+  Because there is no shadow root to render into, these are the only elements
+  here that are not Lit components. Their styles are injected into the document
+  once, scoped to the tag name so they cannot collide with the attribute CSS.
+
+  `<civitai-tooltip>` joins an existing `aria-describedby` rather than replacing
+  it, and Escape genuinely dismisses the bubble even while the pointer still
+  hovers or focus is still inside — the reveal is gated on the dismissal flag,
+  which clears on the next hover or focus.
+
+  `<civitai-tabs>` implements the roving tabindex: one tab stop, arrows wrapping
+  across enabled tabs, Home/End, and selection following focus. Only the selected
+  panel is shown; the rest are `hidden`, so they leave the a11y tree and the tab
+  order.
+
+### Patch Changes
+
+- 266a021: Add a cross-engine contract suite and a capability probe.
+
+  The elements rest on a handful of platform features that do not degrade — a
+  browser missing `ElementInternals` or constructable stylesheets does not render
+  a worse button, it renders a broken one. `test:contract` probes each feature
+  directly and names what breaks without it, then exercises the cross-engine
+  surface: upgrade, token inheritance across the shadow boundary, form
+  association, `change` escaping the shadow root, and `::part` reachability.
+
+  It runs on chromium, firefox and webkit, as an **advisory** CI job. The cost
+  there is the browser install rather than the tests — `playwright install
+--with-deps` was measured wedging for over two hours on one commit — so three
+  engines must not be able to block a PR. The chromium half already runs inside
+  the required job, so nothing is checked only in the advisory one.
+
+  Also guards against `:host-context()`, which has never shipped in Firefox. A
+  runtime probe cannot see that we used it, only that a browser lacks it, so the
+  guard reads the source instead.
+
+- 266a021: Make every entry point importable with no DOM. `civitai-tooltip`, `civitai-tabs`
+  and `civitai-toast-region` subclass `HTMLElement` directly, and a class body is
+  evaluated at import — so `import '@civitai/components/register'` threw
+  `ReferenceError: HTMLElement is not defined` in Node and took down any
+  server-rendered app. Registration already no-opped without `customElements`;
+  the class declaration did not. A test now imports all 34 entry points with no
+  DOM present.
+- 266a021: Express "gray in light, surface in dark" as tokens instead of descendant selectors.
+
+  Four rules in `components.css` were written as `[data-theme='dark'] <descendant>`.
+  An ancestor selector cannot cross a shadow boundary and `:host-context()` has
+  never shipped in Firefox, so those four decisions were unreachable from a custom
+  element. They are now `--civitai-card-border-width`, `--civitai-color-track`,
+  `--civitai-color-segmented-bg` and `--civitai-color-media-placeholder`, which
+  inherit into a shadow root like any custom property.
+
+  Mantine has no variable carrying either side of these pairs, so `TokenSpec.source`
+  and `.literal` now each accept a `{ light, dark }` pair resolved against its own
+  scheme's variable map. `--civitai-card-border-width` is a width rather than a
+  colour: dark removes the default hairline's box, and a transparent colour would
+  leave 1px of it on every card.
+
+  No visual change — computed styles are unchanged in both themes. Existing tokens
+  and artifact bytes are untouched; the new tokens are appended.
+
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+- Updated dependencies [266a021]
+  - @civitai/theme@0.4.0
+
+## 0.4.3
+
+### Patch Changes
+
+- bcc24bf: Publish first-party deps as caret ranges instead of exact pins, and stop shipping sourcemaps that cannot resolve their sources (#374, #376).
+
+  **#374 — exact inter-package pins duplicated `@civitai/theme` and `@civitai/components`.**
+  `@civitai/components`, `@civitai/components-react` and `@civitai/blocks-react` declared
+  their first-party deps as `workspace:*`. pnpm rewrites the workspace protocol at pack
+  time, and `*` publishes an **exact** pin — measured off the real tarballs:
+  `@civitai/components@0.4.2` shipped `"@civitai/theme": "0.3.1"`, not `"^0.3.1"`.
+
+  Two exact pins from two different releases can never intersect, so co-installing
+  adjacent releases produced duplicate physical copies. Measured outside this workspace
+  with a real `npm install --package-lock-only` over a closed registry built from the
+  actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
+  `@civitai/blocks-react@0.56.1`:
+
+                                    before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                             @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                    after    @civitai/theme       0.3.1                   — 1 copy
+                                             @civitai/components  0.4.2                   — 1 copy
+
+  That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
+  wins**, so the first token bump that changes a _value_ would have shipped stale tokens
+  underneath new component CSS — silently, and only in the duplicated install.
+
+  The three manifests now use `workspace:^`, which publishes `^<version>`.
+
+  **Scope of the fix, stated rather than implied.** `^` on a `0.x` version locks the
+  minor, so this removes duplication across patch-adjacent releases only. Measured at
+  the second point too: an app on `@civitai/components-react@0.3.1` (theme `0.2.1`)
+  alongside `@civitai/blocks-react@0.56.1` (theme `0.3.1`) still resolves 2 copies,
+  before and after. That is correct and deliberate — a `0.x` minor is a breaking change
+  under this repo's own convention, so those two releases genuinely disagree about which
+  theme they need, and widening the range to `>=x.y.z <1.0.0` would trade a duplicate
+  copy for an incompatible pairing of component CSS with theme tokens.
+
+  One consequence worth knowing at release time: because `^0.3.1` already admits
+  `0.3.2`, `changeset version` no longer cascades a re-release of every dependent on a
+  theme patch bump (verified against both manifest shapes — with `workspace:*` a theme
+  `0.3.1 → 0.3.2` bump dragged `@civitai/components` and `@civitai/components-react` to
+  `0.4.3`; with `workspace:^` it leaves them at `0.4.2`).
+
+  **#376 — every shipped sourcemap dangled.**
+  All five packages build with `sourceMap` + `declarationMap`, so `dist/` fills with
+  `*.js.map` and `*.d.ts.map` whose `sources` point at `../src/*.ts`. No package lists
+  `src` in `files`. Measured off the real packed file lists at the previous state: **270
+  shipped maps, 270 dangling source references, zero resolvable** — `@civitai/blocks-react`
+  160, `@civitai/app-sdk` 46, `@civitai/components-react` 48, `@civitai/theme` 12,
+  `@civitai/components` 4. A consumer's devtools loaded each map and then had nothing to
+  show.
+
+  The maps are now excluded from the tarballs (`"!dist/**/*.map"`) and still emitted into
+  `dist/`, where they are _not_ dangling — inside this repo `src` sits right beside them,
+  so go-to-definition from a starter still lands in the real `.ts`. **No consumer
+  debuggability is lost, because there was none.** Shipping `src` instead was measured
+  and rejected: `packages/civitai-blocks-react/src` alone is 879,895 B, in a package
+  whose design constraint is that every app inherits its install graph.
+
+  Tarball delta across the five packages: **−114,574 B gzipped, −580,786 B unpacked**
+  (`@civitai/blocks-react` alone: −77,441 B gzipped, −413,492 B unpacked).
+
+  Enforced going forward by `scripts/check-shipped-sourcemaps.mjs` (`pnpm
+check:shipped-sourcemaps`), which reads the real packed file list and every real map's
+  `sources` rather than grepping for the `files` entry — so shipping `src` or inlining
+  `sourcesContent` satisfies it equally.
+
+- Updated dependencies [bcc24bf]
+  - @civitai/theme@0.3.2
+
+## 0.4.2
+
+### Patch Changes
+
+- e06173f: Slice `src/components.css` per component at build time, as internal artifacts. The build now also writes one standalone, layered stylesheet per `/* ----- Name ----- */` section to `dist/css/<slug>.css` (plus a JS-injectable string compiled from `src/css/<slug>.generated.ts`).
+
+  **No public API change — `patch`, not `minor`.** These files are deliberately NOT declared in `exports`: `@civitai/components/css/button` does not resolve, and the package still exports exactly `.` and `./styles.css`. They are also excluded from the published tarball (`files` carries `"!dist/css"`) — they exist on disk for this repo's own measurement and for issue #358, and nothing else. Files on disk are reversible; an `exports` key on a published package is not, and nothing imports these yet. Whether to open the surface — and in what shape — is issue #358, which `pnpm measure:css-split` prices from these real artifacts. Treat `dist/css/*` as private, unstable and unpublished.
+
+  **What the split is worth, stated for the right split.** A `@civitai/blocks-react/ui` Button bundle is 52,568 B, 95.4% of it stylesheet text. Over this package's slices (Button + Loader, which `ui/Button.tsx` imports) it is **26,556 B concatenated / 25,518 B merged** — roughly half. A further 12,038 B is reachable only if `@civitai/blocks-react` **also** splits its own `INTERACTIVE_STYLES` sheet (Modal, Select, Slider, Collapse, SegmentedControl, ResourceCard), which is a change nobody has made and which this package cannot make. The 14,518 B / 13,480 B figures quoted earlier were that combined number, not this split's. 🔴 **None of these savings is banked by this release.** Every figure below the 52,568 B baseline requires a consumer to import the per-component slices, and nothing does — the subpaths are unexported and the artifacts are out of the tarball. The only bundle any shipped code produces today is still the 52,568 B one; this release makes the alternative measurable, not available.
+
+  **Reassembly is asserted byte-identical** against the source sheet before any artifact is written. Stated narrowly, because the guard was previously described as more than it is: that assertion proves the **partition arithmetic** of `sliceComponentsCss` + `composeSheet` — the pieces recompose to exactly the input. It does **not** prove the sheet was cut in the right places; an unrecognised section marker merges into the previous slice and reassembly stays perfect. A separate boundary guard counts the raw `/* ----- ` markers and pins that count against the number of sections, and that is what would catch it.
+
+  `componentsCss`, `injectStyles()`, `dist/components.css` and the package-root `styles.css` are byte-identical to before and still carry the whole sheet, because `@civitai/blocks-react`'s `useBlocksStyles()` injecting the whole pack is a documented contract (`MARKUP.md`): rendering any one `/ui` component styles hand-written `data-civitai-ui="…"` markup elsewhere on the page. Nothing in `@civitai/blocks-react` changed.
+
+## 0.4.1
+
+### Patch Changes
+
+- ee25ac9: Docs: drop the version from the copy-paste CDN `<link>` URLs, so the stylesheet
+  a reader loads can never fall behind the contract the same file documents.
+
+  `MARKUP.md`, both `README.md`s and `demo/index.html` pinned
+  `@civitai/theme@0.2.0` and `@civitai/components@0.3.0`. Both still return **HTTP
+  200** — jsDelivr serves every published version forever — so this never surfaced
+  as a broken link. It served an old stylesheet, and each file had reached the
+  point of contradicting itself. Measured on the CDN, with `@0.9.9` on both
+  packages as the negative control (404, 50-byte body):
+
+  - `theme@0.2.0/styles.css` — 200, 5,560 B, **zero** `--civitai-bp-*` tokens.
+    `packages/civitai-theme/README.md` documents `var(--civitai-bp-md)` eleven
+    lines above the link that pinned it, and the developer-docs responsive guide
+    is written entirely against those tokens. `theme@0.3.0` ships all five
+    (`xs`/`sm`/`md`/`lg`/`xl`), 5,826 B.
+  - `components@0.3.0/styles.css` — 200, 28,042 B, **zero** `data-nowrap` rules,
+    and `[data-civitai-ui='group']` with no `flex-wrap`. `MARKUP.md` documents
+    `data-nowrap="true"` as the opt-out for the wrapping `group` that shipped in
+    `components@0.4.0` (31,970 B, 2 `data-nowrap` rules). So a reader following
+    the current markup contract got the pre-`0.4.0` overflow behaviour and an
+    attribute with nothing behind it — no console error, no failed request.
+
+  **Why unversioned rather than a bump to `@0.4.0`/`@0.3.0`.** A bump is the same
+  defect rescheduled — `0.3.1` (77ce989) already did exactly that, and these four
+  files were stale again one minor later. Nothing can catch it in-band: the two
+  packages version **independently** and publish on separate changesets, and
+  `MARKUP.md` is static prose shipped verbatim in `files` (npm → mirrored into
+  developer.civitai.com), so no build step is in a position to rewrite the pin.
+  Removing the version makes the rot structurally impossible instead of merely
+  deferred: `cdn.jsdelivr.net/npm/@civitai/<pkg>/styles.css` tracks the `latest`
+  dist-tag and resolves 200 on every CDN, because both packages already ship a
+  real root `styles.css` for exactly this reason (jsDelivr ignores package.json
+  `exports` — see the header comment on each build script).
+
+  The trade-off is stated where it belongs and taken deliberately: unversioned
+  means a future publish reaches a copy-pasted page unannounced. Pinned means the
+  page silently renders documented markup unstyled, which is the failure that has
+  actually happened, twice, and it fails in the direction that looks like the docs
+  being wrong. Unversioned can only be _ahead_ of the docs — additive, so
+  undocumented rules exist but nothing documented goes missing. Each file now says
+  so at the point of copy-paste, and tells a reader who does want a reproducible
+  build to take each version from that package's own npm page — never one version
+  across both links, since a version a package never published is a hard 404 and
+  a 404'd stylesheet also renders unstyled with no error.
+
+  Gated by `tests/guards/doc-cdn-urls.test.mjs` (offline; runs under
+  `pnpm test:guards` in the required `Starter` job), which fails on any versioned
+  `@civitai/*` jsDelivr URL in those four shipped docs. Verified as a regression
+  test rather than an invariant guard: **red at `72d555a` naming all 7 literals,
+  green at HEAD.** `CHANGELOG.md`s are deliberately out of scope — they quote
+  pinned URLs as history, and nobody copy-pastes from a changelog.
+
+  Docs-only, but it needs a release: all four files are in their package's `files`
+  array, so the corrected copy only reaches npm — and the docs generated from it —
+  on a publish.
+
+- Updated dependencies [ee25ac9]
+  - @civitai/theme@0.3.1
+
+## 0.4.0
+
+### Minor Changes
+
+- 393d9a1: Responsive base layer: `group` wraps by default, and `BlockGate` always injects the design-system styles.
+
+  ⚠️ **Upgrading — one visible layout change.** A `group` row now **wraps** instead of overflowing, and its children may shrink. If you relied on a group staying on one line — a deliberately horizontal-scrolling toolbar, for example — add `data-nowrap="true"` to restore the previous behaviour:
+
+  ```html
+  <div data-civitai-ui="group" data-nowrap="true">…</div>
+  ```
+
+  This affects bare markup and `@civitai/components-react`'s `<Group>`. `@civitai/blocks-react`'s `<Group>` is unchanged — it already wrapped.
+
+  **`@civitai/components` — `[data-civitai-ui='group']` now sets `flex-wrap: wrap` and lets children shrink (`min-width: 0`), with `data-nowrap="true"` to opt out.**
+
+  There are **three** `group` surfaces, and they did not agree:
+
+  - `@civitai/blocks-react`'s `<Group>` defaults `wrap = true` and writes `flex-wrap` as an _inline_ style — its consumers have always wrapped;
+  - `@civitai/components-react`'s `<Group>` writes no inline style at all and has no `wrap` prop, so it resolved against the CSS;
+  - bare `data-civitai-ui="group"` markup — the framework-agnostic contract this package exists to serve — likewise.
+
+  The CSS carried no `flex-wrap`, so the latter two did not wrap. Nothing could see it, because each surface was only ever tested against itself. Measured in headless Chromium: three 140px controls in a 320px slot produced **436px of content in a 320px box**. They now reflow onto two rows and fit, and a test pins the CSS default against the rendered React default so they cannot drift apart again.
+
+  **Be precise about what this is:** for `blocks-react` it aligns the CSS to a default that was already shipping, but for `@civitai/components-react` and for bare markup it is a genuinely **new default**.
+
+  `min-width: 0` lets one long unbroken label narrow instead of pushing the whole row past its container. It applies to a child with the default `overflow: visible`; per CSS Flexbox §4.5 a child with any other `overflow` already has an automatic minimum size of 0.
+
+  **`@civitai/blocks-react` — `BlockGate` now calls `useBlocksStyles()` on both branches.**
+
+  Styling used to arrive as a side effect of rendering a `/ui` component, since each one injects for itself. A block that wraps its root in `BlockGate` but renders none of them — its own markup, another UI library, a canvas — got the stylesheets on the direct-load fallback and **zero design-system CSS on the happy path**. Wrapping the root is the one thing every block is told to do, so that is where it belongs.
+
+  ***
+
+  **Bump level: `minor`, decided — not an open question.**
+
+  An adversarial audit recommended `major` for `@civitai/components`, on the grounds that `RELEASING.md` reserves it for "a behavior change that existing callers will notice" and this change is justified precisely by the fact that they do notice (436px of overflow becomes two rows). That reading is sound; it was considered and **the maintainer chose `minor`**, since publishing `@civitai/components@1.0.0` off `0.3.1` is a product decision rather than a correctness one.
+
+  Recorded so a later reader knows this was weighed rather than missed, and so the trade-off is visible: shipping as `minor` means **this changelog entry is the only warning consumers get**, which is why the upgrade note is at the top rather than buried here. The concrete case it exists for is a published App Block rendering bare `data-civitai-ui="group"` as a deliberately horizontal-scrolling toolbar — that starts wrapping, and `data-nowrap="true"` is the one-attribute fix.
+
+### Patch Changes
+
+- Updated dependencies [73412e3]
+  - @civitai/theme@0.3.0
+
+## 0.3.1
+
+### Patch Changes
+
+- 77ce989: Refresh the stale CDN version pins in the shipped docs (`MARKUP.md`, both
+  `README.md`s, `demo/index.html`) to the currently-published versions —
+  `@civitai/theme@0.2.0` and `@civitai/components@0.3.0`.
+
+  Both links were still pinned at `@0.1.1` (published 2026-07-22), two minors
+  behind `components@0.3.0` (2026-07-29) and one behind `theme@0.2.0`
+  (2026-07-23). That URL still resolves — jsDelivr serves every published version
+  forever — so this never surfaced as a broken link. It silently served an old
+  stylesheet: `components@0.1.1/styles.css` is 8,713 B and carries rules for **10**
+  distinct `data-civitai-ui` values; `@0.3.0` is 28,042 B and carries **20**.
+
+  `MARKUP.md` documents 19 component sections. So an external HTML author
+  following the markup contract verbatim wrote correct, contract-shaped markup for
+  `checkbox`, `image`, `radio`, `radio-group`, `segmented-control`, `select`,
+  `slider`, `toast`, `toast-region` and `tooltip` against CSS that has no rules for
+  any of them — they render as unstyled bare elements, with no console error and no
+  failed request to notice. The theme pin was stale the same way: 17 `--civitai-*`
+  tokens at `0.1.1` vs 27 at `0.2.0`, so every token added since resolved to
+  nothing.
+
+  **These packages version INDEPENDENTLY — there is no shared version number.**
+  `@civitai/theme` has never published a `0.3.0`. Applying one version across both
+  links (the obvious-looking "bump them all to 0.3.0" fix) produces
+  `…/@civitai/theme@0.3.0/styles.css`, which is a hard 404 — and a stylesheet that
+  404s renders an unstyled page with no error either, so the wrong fix fails the
+  same silent way as the stale pin it replaces. `demo/index.html`'s comment now
+  says so at the point of copy-paste.
+
+  Every URL written here was verified to return 200 before commit, with the check
+  first validated against known-bad inputs (`theme@0.3.0` and `components@0.9.9`
+  both correctly reported 404).
+
+  Docs-only, but it needs a release: `MARKUP.md`, `README.md` and `demo/` are all
+  in `@civitai/components`'s `files`, and `README.md` is in `@civitai/theme`'s, so
+  the corrected copy only reaches npm — and the docs generated from it — on a
+  publish.
+
+- Updated dependencies [77ce989]
+  - @civitai/theme@0.2.1
+
+## 0.3.0
+
+### Minor Changes
+
+- 6b0a2e6: Add five new UI primitives so App Blocks stop hand-rolling them: **Slider**,
+  **SegmentedControl / Tabs**, **Toast**, **Tooltip**, and **Image**.
+
+  Each ships in both consumption forms — framework-agnostic
+  `data-civitai-ui="…"` markup (styled by `@civitai/components`, contract in
+  `MARKUP.md`, all rules inside `@layer civitai.components`, token-driven via
+  `--civitai-*`) and an ergonomic `forwardRef` React binding in
+  `@civitai/components-react`. The interactive ones carry real behavior in the
+  React binding:
+
+  - **Slider** (`data-civitai-ui="slider"`) — themed native `<input type="range">`
+    with label/description/error field wiring, invalid state, and an optional live
+    value read-out (also mirrored to `aria-valuetext` for screen readers).
+  - **SegmentedControl / Tabs** (`data-civitai-ui="segmented-control"` +
+    `TabPanel`) — WAI-ARIA **roving tabindex** + **arrow-key / Home / End
+    navigation** (selection follows focus) in two role modes: `'toggle'` (default)
+    = `role="radiogroup"`/`role="radio"` for a panel-less value switch, and
+    `'tabs'` = `role="tablist"`/`role="tab"` with `aria-controls` ⇄
+    `aria-labelledby` tab-panel semantics.
+  - **Toast** (`ToastProvider` + `useToast`, presentational `Toast`,
+    `data-civitai-ui="toast-region"`) — an `aria-live` notification host with a
+    queue, auto-dismiss timers, and intent colors.
+  - **Tooltip** (`data-civitai-ui="tooltip"`) — a hover/focus `role="tooltip"`
+    bubble with `aria-describedby` wiring and real Escape-to-dismiss (a
+    `data-dismissed` flag overrides the CSS reveal even while hovered/focused).
+  - **Image** (`data-civitai-ui="image"`) — a media container with a token
+    placeholder background, `object-fit` control, and broken-image fallback
+    driven by `data-status`.
+
+  Covered by probe-oracle styling anchors, HTML⇄React computed-style parity, and
+  axe a11y checks (keyboard nav for SegmentedControl, `aria-live` for Toast).
+
+## 0.2.1
+
+### Patch Changes
+
+- cce1716: Patch release (0.2.1) — implement the documented component defaults in the base CSS.
+
+  `MARKUP.md` documents a default `data-variant` / `data-size` / `data-color` for several components, but `@civitai/components` gated **all** of that styling on an **explicit** attribute — so a bare element (including MARKUP's own minimal examples) rendered unstyled or zero-size. This was a doc-vs-code mismatch: the docs were correct; the CSS did not match them.
+
+  The documented defaults now live on the unconditional **base** rule, so bare markup (`<span data-civitai-ui="badge">`, `<button data-civitai-ui="button">`, a bare alert / loader) renders the documented default; the explicit `data-variant` / `data-size` / `data-color` rules still **override**.
+
+  **Components that had the gap (now fixed):**
+
+  - **Badge** — no default variant (`filled`) or size (`md`): a bare badge had no padding and no fill. Now renders filled + md.
+  - **Button** — no default size (`md`): a bare button had no height/padding. The base filled default is also completed (`border-color` + hover).
+  - **Alert** — no default color (`info`): a bare alert rendered neutral chrome instead of the documented info intent (tinted bg + border). Now renders the info intent.
+  - **Loader** — no default size (`md`): a bare loader was `0×0` (invisible). Now renders the 22px md spinner.
+
+  Badge's `light` variant now resets `border-color: transparent` explicitly (it previously relied on the base transparent border, which the fix changes to primary) — light badges are visually unchanged. **No documented default was changed** — the CSS was made to match the docs, not vice versa.
+
+  The `@civitai/components-react` bindings are behaviorally unchanged (they already emit explicit attributes; the CSS defaults benefit hand-written HTML consumers) and get the patch as the lockstep React binding of `@civitai/components`.
+
+## 0.2.0
+
+### Minor Changes
+
+- b896dd9: Design-system minor release (0.2.0, lockstep) — resolves the three deferred DX items from #181.
+
+  **F5 — default light-mode Card hairline (VISIBLE CHANGE).** In light mode `--civitai-color-surface` equals `--civitai-color-body`, so a borderless `Card` was invisible against the page. Cards now render a subtle default hairline (a low-alpha mix of the border token) so a Card _without_ `data-with-border` is still visible. `data-with-border="true"` remains the stronger, fully-opaque explicit border. Dark mode already differentiates surface from body and is visually unchanged. **Consumer impact:** any previously-borderless light-mode Card now shows a faint edge — intended, but review if you relied on an edgeless card.
+
+  **F6 — new `checkbox` / `radio` / `select` components (new permanent public API).** `@civitai/components` gains `data-civitai-ui="select"` (native `<select>` on the shared `-control` field chrome), `data-civitai-ui="checkbox"` / `"radio"` (themed native inputs — `accent-color` tint + custom sizing/focus-ring/disabled, box+label in a `-choice` row), and `data-civitai-ui="radio-group"` (`role=radiogroup` layout). `@civitai/components-react` adds the matching `Select` / `Checkbox` / `Radio` / `RadioGroup` `forwardRef` bindings. See `MARKUP.md` for the full markup + ARIA contract.
+
+  **F7 — richer neutral token ramp.** `@civitai/theme` now exposes the full 10-step Mantine gray ramp as `--civitai-color-gray-0` … `--civitai-color-gray-9` (`colorGray0`…`colorGray9` in the typed export), generated through the token pipeline from the drift-guarded `gray` tuple. Additive — the existing semantic neutrals are unchanged.
+
+### Patch Changes
+
+- Updated dependencies [b896dd9]
+  - @civitai/theme@0.2.0
+
+## 0.1.2
+
+### Patch Changes
+
+- 5a210cb: Design-system 0.1.2 — two retrofit-dogfood fixes (civitai/civitai-app-starters#181).
+
+  - **Badge `data-color` (F2):** Badge now accepts an intent color mirroring
+    Alert's `data-color` contract (`info` / `success` / `warning` / `error`),
+    recoloring the `filled` / `light` / `outline` variants via the same
+    `color-mix()` token approach. `@civitai/components-react` `<Badge>` gains a
+    `color` prop mapped to `data-color`. Omitting it keeps the current primary
+    accent, so the change is non-breaking.
+  - **Dark `--civitai-color-primary-fg` (F8):** the generated
+    `[data-theme='dark']` token block now emits `--civitai-color-primary-fg`
+    (white) for symmetry with light. It is produced by the `@civitai/theme` token
+    pipeline (not hand-authored), so generation-parity holds; light is unchanged.
+
+- Updated dependencies [5a210cb]
+  - @civitai/theme@0.1.2
+
+## 0.1.1
+
+### Patch Changes
+
+- b61eb57: Fix design-system onboarding papercuts found by a blind dogfood (lockstep 0.1.1).
+
+  - **CDN styles.css now resolves on any CDN.** `@civitai/theme` and
+    `@civitai/components` ship a real package-root `styles.css` file (built from
+    `dist/`), so a literal path like
+    `cdn.jsdelivr.net/npm/@civitai/theme@0.1.1/styles.css` resolves — jsDelivr
+    ignores package.json `exports`, so the `./styles.css` export alias alone 404'd
+    there. The `exports` alias still works for bundler imports.
+  - **Docs CDN URLs fixed** — every README + `MARKUP.md` now uses pinned,
+    resolvable jsDelivr URLs.
+  - **Markup contract inlined** into the `@civitai/components` README (the
+    relative `MARKUP.md` link 404'd on npmjs.com); `MARKUP.md` stays canonical.
+  - **Servable `demo/index.html`** now ships in the `@civitai/components` tarball —
+    a complete copy-paste plain-HTML page (CDN links, one of every component, a
+    light/dark `data-theme` toggle, page theming via `--civitai-color-body`).
+  - **New `--civitai-color-body` token** in `@civitai/theme` (derived from
+    Mantine's `--mantine-color-body`: `#fefefe` light / `#1A1B1E` dark) — a
+    page-background token for plain-HTML apps.
+
+- Updated dependencies [b61eb57]
+  - @civitai/theme@0.1.1

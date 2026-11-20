@@ -1,14 +1,37 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
+  isValidAppWorkflowsResult,
+  isValidCancelAppWorkflowResult,
   isValidBlockInitPayload,
+  isValidBuzzBalanceResult,
+  isValidConsentUnavailable,
   isValidBuzzPurchaseResult,
+  isValidEstimateBatchResult,
+  isValidCheckpointPickerResult,
+  isValidImageUploadResult,
+  isValidImagePickerResult,
+  isValidMediaUploadBatchResult,
+  isValidMediaUploadResult,
+  isValidResourcePickerResult,
+  isValidCollectionFollowResult,
+  isValidCreatePostResult,
+  isValidSaveImageResult,
+  isValidRouteChanged,
+  isValidThemeChange,
   isValidTokenRefresh,
   isValidTokenRefreshResponse,
+  isValidUserCheckpointSetResult,
+  isValidViewerResult,
   isValidWorkflowReply,
   isValidWorkflowSnapshot,
   payloadValidatorFor,
-} from '../src/internal/validate.js';
+  projectInboundPayload,
+  projectWorkflowSnapshot,
+} from '../src/transport/validate.js';
 
 const validInit = {
   blockInstanceId: 'inst-1',
@@ -29,6 +52,71 @@ describe('isValidBlockInitPayload', () => {
 
   it('accepts a payload with viewer=null (anonymous viewer)', () => {
     expect(isValidBlockInitPayload({ ...validInit, viewer: null })).toBe(true);
+  });
+
+  it('accepts the #2670 domain/maxBrowsingLevel fields when present', () => {
+    expect(isValidBlockInitPayload({ ...validInit, domain: 'green', maxBrowsingLevel: 3 })).toBe(true);
+    expect(isValidBlockInitPayload({ ...validInit, domain: 'red', maxBrowsingLevel: 31 })).toBe(true);
+    expect(isValidBlockInitPayload({ ...validInit, domain: null })).toBe(true);
+  });
+
+  it('accepts a payload without the #2670 fields (host predating it)', () => {
+    expect(isValidBlockInitPayload(validInit)).toBe(true);
+  });
+
+  it.each([
+    ['domain unknown string', { ...validInit, domain: 'purple' }],
+    ['domain wrong type', { ...validInit, domain: 1 }],
+    ['maxBrowsingLevel non-finite', { ...validInit, maxBrowsingLevel: Infinity }],
+    ['maxBrowsingLevel NaN', { ...validInit, maxBrowsingLevel: NaN }],
+    ['maxBrowsingLevel wrong type', { ...validInit, maxBrowsingLevel: '4' }],
+    // `effectiveBrowsingLevel` — the domain ceiling ∩ the viewer's own level.
+    ['effectiveBrowsingLevel non-finite', { ...validInit, effectiveBrowsingLevel: Infinity }],
+    ['effectiveBrowsingLevel NaN', { ...validInit, effectiveBrowsingLevel: NaN }],
+    ['effectiveBrowsingLevel wrong type', { ...validInit, effectiveBrowsingLevel: '4' }],
+    ['effectiveBrowsingLevel null', { ...validInit, effectiveBrowsingLevel: null }],
+    // 🔴 NEGATIVE is rejected, not merely tolerated: this value is bit-ANDed
+    // with the domain ceiling downstream, and a two's-complement negative has
+    // every bit set, so `-1 & ceiling === ceiling` would resolve junk to the
+    // WIDEST possible viewer — the exact inversion of what the field means.
+    ['effectiveBrowsingLevel negative', { ...validInit, effectiveBrowsingLevel: -1 }],
+    ['effectiveBrowsingLevel large negative', { ...validInit, effectiveBrowsingLevel: -31 }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidBlockInitPayload(payload)).toBe(false);
+  });
+
+  it('accepts the per-viewer effectiveBrowsingLevel when present and well-formed', () => {
+    expect(
+      isValidBlockInitPayload({
+        ...validInit,
+        domain: 'red',
+        maxBrowsingLevel: 31,
+        effectiveBrowsingLevel: 3,
+      })
+    ).toBe(true);
+    // 0 is a legitimate value — "show this viewer nothing here" — and must not
+    // be rejected as falsy.
+    expect(isValidBlockInitPayload({ ...validInit, maxBrowsingLevel: 31, effectiveBrowsingLevel: 0 })).toBe(
+      true
+    );
+  });
+
+  it('accepts a payload WITHOUT effectiveBrowsingLevel (host predating the field)', () => {
+    // Additive + optional: an older host omits it and its blocks keep working.
+    expect(isValidBlockInitPayload({ ...validInit, domain: 'red', maxBrowsingLevel: 31 })).toBe(true);
+    expect(
+      isValidBlockInitPayload({ ...validInit, effectiveBrowsingLevel: undefined })
+    ).toBe(true);
+  });
+
+  it('accepts storageMode, and a value it does not know, without rejecting the init', () => {
+    // civitai-app-starters#710: the host adds `storageMode: 'local-preview'` for a
+    // dev-tunnel frame. This validator is compiled into deployed bundles, and a
+    // rejected BLOCK_INIT never becomes ready — so the field, and any future value
+    // of it, must pass through. Only `@civitai/sdk` acts on it.
+    expect(isValidBlockInitPayload({ ...validInit, storageMode: 'local-preview' })).toBe(true);
+    expect(isValidBlockInitPayload({ ...validInit, storageMode: 'some-later-mode' })).toBe(true);
+    expect(isValidBlockInitPayload({ ...validInit, storageMode: 7 })).toBe(true);
   });
 
   it.each([
@@ -66,6 +154,63 @@ describe('isValidWorkflowSnapshot', () => {
         imageUrls: ['https://x/a.png'],
       }),
     ).toBe(true);
+  });
+  it.each([
+    ['a fee', { total: 49, authorFee: 37 }],
+    ['zero (no fee applies)', { total: 12, authorFee: 0 }],
+    ['absent (an older host, or a total that is not itemised)', { total: 12 }],
+  ])('accepts cost.authorFee — %s', (_label, cost) => {
+    expect(isValidWorkflowSnapshot({ workflowId: 'wf_estimate', status: 'pending', cost })).toBe(
+      true,
+    );
+  });
+  it.each([
+    ['a string', '37'],
+    ['null', null],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['negative', -1],
+  ])('rejects a present but malformed cost.authorFee — %s', (_label, authorFee) => {
+    expect(
+      isValidWorkflowSnapshot({
+        workflowId: 'wf_estimate',
+        status: 'pending',
+        cost: { total: 49, authorFee },
+      }),
+    ).toBe(false);
+  });
+  it.each([
+    ['training-quote-rejected'],
+    ['training-quote-unavailable'],
+    ['training-quote-unpriced'],
+    ['workflow_quote_rejected'],
+    ['workflow_quote_unavailable'],
+    ['workflow_quote_unpriced'],
+    ['step_quote_rejected'],
+    ['step_quote_unavailable'],
+    ['step_quote_unpriced'],
+    // Open string: a code a later host adds must not drop the reply.
+    ['some-later-code'],
+  ])('accepts errorCode %s', (errorCode) => {
+    expect(
+      isValidWorkflowSnapshot({
+        workflowId: 'failed',
+        status: 'failed',
+        error: 'Training needs a price quote and none could be obtained; try again.',
+        errorCode,
+      }),
+    ).toBe(true);
+  });
+  it.each([
+    ['a number', 42],
+    ['null', null],
+    ['an object', { code: 'training-quote-rejected' }],
+    ['an array', ['training-quote-rejected']],
+    ['a boolean', true],
+  ])('rejects a present but non-string errorCode — %s', (_label, errorCode) => {
+    expect(
+      isValidWorkflowSnapshot({ workflowId: 'failed', status: 'failed', errorCode }),
+    ).toBe(false);
   });
   it('accepts a snapshot carrying a well-formed autoClaim (dailyBoost)', () => {
     expect(
@@ -107,6 +252,162 @@ describe('isValidWorkflowSnapshot', () => {
     ],
   ])('rejects %s', (_, payload) => {
     expect(isValidWorkflowSnapshot(payload)).toBe(false);
+  });
+
+  // ---- #524's five host fields + the training-publish pair ----
+  const base = { workflowId: 'w', status: 'succeeded' };
+  const wellFormed = {
+    modelSubstitutions: [{ requested: 11, applied: 22, reason: 'gated' }],
+    textOutputs: ['a', ''],
+    textOutputWithheld: { reason: 'withheld' },
+    toolCalls: [{ id: 'c1', type: 'function', function: { name: 'f_1', arguments: '{}' } }],
+    stepOutputs: [
+      { $type: 'blobArchive', output: { url: 'x', entryCount: 3 } },
+      { $type: 'echo', output: null },
+      { $type: 'noOutputKey' },
+    ],
+    trainedEpochs: [{ $type: 'imageResourceTraining', epochNumber: 0 }],
+    publishedModel: { modelId: 1, modelVersionId: 2, published: false },
+  };
+
+  it('accepts a snapshot carrying every new field well-formed', () => {
+    expect(isValidWorkflowSnapshot({ ...base, ...wellFormed })).toBe(true);
+  });
+
+  it.each(Object.entries(wellFormed))('accepts %s alone (all optional)', (key, value) => {
+    expect(isValidWorkflowSnapshot({ ...base, [key]: value })).toBe(true);
+  });
+
+  it.each([
+    ['empty arrays', { modelSubstitutions: [], textOutputs: [], toolCalls: [], stepOutputs: [], trainedEpochs: [] }],
+    // 🔴 FORWARD COMPATIBILITY. A rejected snapshot is a dropped poll reply, so
+    // pinning today's members of an open-ended string union would turn a host
+    // adding one into a hang in every shipped block. Checked as strings only.
+    ['a modelSubstitutions reason the SDK does not know yet', { modelSubstitutions: [{ requested: 1, applied: 2, reason: 'future-reason' }] }],
+    ['a trainedEpochs $type the SDK does not know yet', { trainedEpochs: [{ $type: 'futureTraining', epochNumber: 1 }] }],
+  ])('accepts %s', (_, extra) => {
+    expect(isValidWorkflowSnapshot({ ...base, ...extra })).toBe(true);
+  });
+
+  it.each([
+    ['modelSubstitutions not an array', { modelSubstitutions: { requested: 1, applied: 2, reason: 'gated' } }],
+    ['modelSubstitutions entry not an object', { modelSubstitutions: [7] }],
+    ['modelSubstitutions.requested not a number', { modelSubstitutions: [{ requested: '1', applied: 2, reason: 'gated' }] }],
+    ['modelSubstitutions.applied NaN', { modelSubstitutions: [{ requested: 1, applied: Number.NaN, reason: 'gated' }] }],
+    ['modelSubstitutions.reason missing', { modelSubstitutions: [{ requested: 1, applied: 2 }] }],
+    ['textOutputs a bare string', { textOutputs: 'hello' }],
+    ['textOutputs contains a non-string', { textOutputs: ['ok', 3] }],
+    ['textOutputWithheld a bare string', { textOutputWithheld: 'withheld' }],
+    ['textOutputWithheld.reason missing', { textOutputWithheld: {} }],
+    ['toolCalls not an array', { toolCalls: { id: 'c' } }],
+    ['toolCalls entry missing function', { toolCalls: [{ id: 'c', type: 'function' }] }],
+    ['toolCalls.function.arguments an object', { toolCalls: [{ id: 'c', type: 'function', function: { name: 'f', arguments: {} } }] }],
+    ['toolCalls.id not a string', { toolCalls: [{ id: 1, type: 'function', function: { name: 'f', arguments: '{}' } }] }],
+    ['stepOutputs not an array', { stepOutputs: { $type: 'x', output: 1 } }],
+    ['stepOutputs entry missing $type', { stepOutputs: [{ output: 1 }] }],
+    ['trainedEpochs not an array', { trainedEpochs: { $type: 'training', epochNumber: 1 } }],
+    ['trainedEpochs.epochNumber a string', { trainedEpochs: [{ $type: 'training', epochNumber: '1' }] }],
+    ['trainedEpochs.epochNumber fractional', { trainedEpochs: [{ $type: 'training', epochNumber: 1.5 }] }],
+    ['trainedEpochs.$type missing', { trainedEpochs: [{ epochNumber: 1 }] }],
+    ['publishedModel not an object', { publishedModel: 555 }],
+    ['publishedModel.published a string', { publishedModel: { modelId: 1, modelVersionId: 2, published: 'true' } }],
+    ['publishedModel.modelVersionId missing', { publishedModel: { modelId: 1, published: true } }],
+  ])('rejects %s', (_, extra) => {
+    expect(isValidWorkflowSnapshot({ ...base, ...extra })).toBe(false);
+  });
+
+  // ---- `steps`: the per-step view of a `kind: 'workflow'` run ----
+  const step = { name: 'draw', $type: 'imageGen', status: 'succeeded' };
+
+  it.each([
+    ['an empty list', []],
+    ['the minimal step', [step]],
+    ['every optional field', [{ ...step, imageUrls: ['https://x/a.png'], output: { any: 1 }, error: 'e' }]],
+    ['output of any shape', [{ ...step, output: null }, { ...step, output: 'text' }, { ...step, output: [1] }]],
+    ['each of the six statuses', ['pending', 'processing', 'succeeded', 'failed', 'expired', 'canceled'].map((status) => ({ ...step, status }))],
+    ['a $type the SDK has never heard of', [{ ...step, $type: 'someFutureStep' }]],
+  ])('accepts steps: %s', (_, steps) => {
+    expect(isValidWorkflowSnapshot({ ...base, steps })).toBe(true);
+  });
+
+  it('accepts a FAILED workflow that still carries cost, images and steps', () => {
+    expect(
+      isValidWorkflowSnapshot({
+        workflowId: 'w',
+        status: 'failed',
+        cost: { total: 12 },
+        imageUrls: ['https://x/a.png'],
+        steps: [
+          { ...step, imageUrls: ['https://x/a.png'] },
+          { name: 'cutout', $type: 'imageBackgroundRemoval', status: 'failed', error: 'boom' },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    ['steps not an array', { 0: step }],
+    ['steps a bare step', step],
+    ['an entry that is not an object', [step, 'draw']],
+    ['a null entry', [null]],
+    ['name missing', [{ $type: 'imageGen', status: 'succeeded' }]],
+    ['name not a string', [{ ...step, name: 0 }]],
+    ['$type missing', [{ name: 'draw', status: 'succeeded' }]],
+    ['$type not a string', [{ ...step, $type: 7 }]],
+    ['status missing', [{ name: 'draw', $type: 'imageGen' }]],
+    // The step status is a CLOSED union, held to the snapshot's own set.
+    ['a status outside the six', [{ ...step, status: 'unassigned' }]],
+    ['a status of the wrong case', [{ ...step, status: 'Succeeded' }]],
+    ['imageUrls a bare string', [{ ...step, imageUrls: 'https://x/a.png' }]],
+    ['imageUrls containing a non-string', [{ ...step, imageUrls: ['https://x/a.png', 3] }]],
+    ['error not a string', [{ ...step, error: { message: 'boom' } }]],
+    ['one malformed step after a good one', [step, { ...step, status: 'done' }]],
+  ])('rejects steps: %s', (_, steps) => {
+    expect(isValidWorkflowSnapshot({ ...base, steps })).toBe(false);
+  });
+});
+
+describe('isValidEstimateBatchResult', () => {
+  const cell = { workflowId: 'wf_estimate', status: 'pending', cost: { total: 12 } };
+  const aggregate = { total: 12, pricedCells: 1, cellCount: 1 };
+
+  it('accepts snapshots + aggregate', () => {
+    expect(isValidEstimateBatchResult({ requestId: 'r', snapshots: [cell], aggregate })).toBe(true);
+  });
+
+  it("accepts a bare `error` — the host's generic `unsupported on this host` reply must REACH the hook", () => {
+    expect(
+      isValidEstimateBatchResult({ requestId: 'r', error: 'unsupported on this host' }),
+    ).toBe(true);
+    // A non-string error is not an error reply.
+    expect(isValidEstimateBatchResult({ requestId: 'r', error: 7 })).toBe(false);
+  });
+
+  it('accepts a failed cell beside a priced one', () => {
+    const failed = { workflowId: 'failed', status: 'failed', error: 'x' };
+    expect(
+      isValidEstimateBatchResult({
+        requestId: 'r',
+        snapshots: [failed, cell],
+        aggregate: { total: 12, pricedCells: 1, cellCount: 2 },
+      }),
+    ).toBe(true);
+  });
+
+  it('rejects a reply with one malformed cell, a missing aggregate, or a non-numeric total', () => {
+    const empty = { workflowId: '', status: 'pending' };
+    expect(isValidEstimateBatchResult({ requestId: 'r', snapshots: [cell, empty], aggregate })).toBe(
+      false,
+    );
+    expect(isValidEstimateBatchResult({ requestId: 'r', snapshots: [cell] })).toBe(false);
+    expect(
+      isValidEstimateBatchResult({
+        requestId: 'r',
+        snapshots: [cell],
+        aggregate: { total: '12', pricedCells: 1, cellCount: 1 },
+      }),
+    ).toBe(false);
+    expect(isValidEstimateBatchResult({ requestId: 'r' })).toBe(false);
   });
 });
 
@@ -178,19 +479,1461 @@ describe('isValidBuzzPurchaseResult', () => {
   });
 });
 
+describe('isValidBuzzBalanceResult', () => {
+  it('accepts a success reply carrying the { blue, green, yellow } balance', () => {
+    expect(
+      isValidBuzzBalanceResult({ requestId: 'r', balance: { blue: 0, green: 12, yellow: 340 } }),
+    ).toBe(true);
+  });
+  it('accepts an error-only reply', () => {
+    expect(isValidBuzzBalanceResult({ requestId: 'r', error: 'RATE_LIMITED' })).toBe(true);
+  });
+  it.each([
+    ['neither balance nor error', { requestId: 'r' }],
+    ['balance missing a pool', { requestId: 'r', balance: { blue: 1, green: 2 } }],
+    ['balance pool not a number', { requestId: 'r', balance: { blue: 1, green: 2, yellow: '3' } }],
+    ['balance pool NaN', { requestId: 'r', balance: { blue: 1, green: 2, yellow: Number.NaN } }],
+    ['balance not an object', { requestId: 'r', balance: 5 }],
+    ['error not a string', { requestId: 'r', error: 500 }],
+    ['requestId not a string', { requestId: 5, balance: { blue: 1, green: 2, yellow: 3 } }],
+    ['null payload', null],
+    ['string payload', 'oops'],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidBuzzBalanceResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidViewerResult', () => {
+  it('accepts a success reply carrying the { id, username, status, buzzBudget } viewer', () => {
+    expect(
+      isValidViewerResult({
+        requestId: 'r',
+        viewer: { id: 7, username: 'v', status: 'active', buzzBudget: 200 },
+      }),
+    ).toBe(true);
+  });
+  // THE NULL-VS-UNDEFINED TRAP (host PR #3152): `username` and `buzzBudget` are
+  // present-but-NULLABLE. A too-strict guard that rejected `null` would drop a
+  // valid reply → hang the reading hook to its timeout (the exact bug that hung
+  // useBuzzTransactions on the null cursor). Both nulls MUST be accepted.
+  it('accepts a viewer with NULL username AND NULL buzzBudget', () => {
+    expect(
+      isValidViewerResult({
+        requestId: 'r',
+        viewer: { id: 7, username: null, status: 'muted', buzzBudget: null },
+      }),
+    ).toBe(true);
+  });
+  it('accepts a viewer with a null username but a numeric buzzBudget', () => {
+    expect(
+      isValidViewerResult({
+        requestId: 'r',
+        viewer: { id: 7, username: null, status: 'active', buzzBudget: 0 },
+      }),
+    ).toBe(true);
+  });
+  it('accepts an error-only reply', () => {
+    expect(isValidViewerResult({ requestId: 'r', error: 'not signed in' })).toBe(true);
+  });
+  it.each([
+    ['neither viewer nor error', { requestId: 'r' }],
+    ['viewer missing id', { requestId: 'r', viewer: { username: 'v', status: 'active', buzzBudget: 1 } }],
+    ['viewer id not a number', { requestId: 'r', viewer: { id: '7', username: 'v', status: 'active', buzzBudget: 1 } }],
+    ['viewer id NaN', { requestId: 'r', viewer: { id: Number.NaN, username: 'v', status: 'active', buzzBudget: 1 } }],
+    ['viewer username a number', { requestId: 'r', viewer: { id: 7, username: 5, status: 'active', buzzBudget: 1 } }],
+    ['viewer status unknown', { requestId: 'r', viewer: { id: 7, username: 'v', status: 'banned', buzzBudget: 1 } }],
+    ['viewer status missing', { requestId: 'r', viewer: { id: 7, username: 'v', buzzBudget: 1 } }],
+    ['buzzBudget missing (required present)', { requestId: 'r', viewer: { id: 7, username: 'v', status: 'active' } }],
+    ['buzzBudget not a number', { requestId: 'r', viewer: { id: 7, username: 'v', status: 'active', buzzBudget: 'x' } }],
+    ['buzzBudget NaN', { requestId: 'r', viewer: { id: 7, username: 'v', status: 'active', buzzBudget: Number.NaN } }],
+    ['viewer not an object', { requestId: 'r', viewer: 5 }],
+    ['error not a string', { requestId: 'r', error: 500 }],
+    ['requestId not a string', { requestId: 5, viewer: { id: 7, username: 'v', status: 'active', buzzBudget: 1 } }],
+    ['null payload', null],
+    ['string payload', 'oops'],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidViewerResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidImageUploadResult', () => {
+  const selected = {
+    imageId: 12345,
+    nsfwLevel: 1,
+    contentRating: 'pg',
+    url: 'https://image.civitai.com/x/original=true/a.jpeg',
+  };
+
+  it('accepts a successful upload (moderated image)', () => {
+    expect(isValidImageUploadResult({ requestId: 'r', selected })).toBe(true);
+  });
+  it('accepts a cancelled upload (no `selected`)', () => {
+    expect(isValidImageUploadResult({ requestId: 'r' })).toBe(true);
+    expect(isValidImageUploadResult({})).toBe(true);
+  });
+  // civitai/civitai#5639: a refused `bytes` upload replies `{ requestId, error }`.
+  // Dropping it would leave `useUploadImageBytes()` waiting out its timeout.
+  it('accepts a bytes-upload refusal (`error`, no `selected`), including an empty string', () => {
+    expect(isValidImageUploadResult({ requestId: 'r', error: 'busy' })).toBe(true);
+    expect(isValidImageUploadResult({ requestId: 'r', error: 'Too many image uploads — slow down.' })).toBe(true);
+    expect(isValidImageUploadResult({ requestId: 'r', error: '' })).toBe(true);
+  });
+
+  it('accepts a boolean `shared` echo and refuses any other type', () => {
+    expect(isValidImageUploadResult({ requestId: 'r', selected, shared: true })).toBe(true);
+    expect(isValidImageUploadResult({ requestId: 'r', selected, shared: false })).toBe(true);
+    expect(isValidImageUploadResult({ requestId: 'r', selected, shared: 'true' })).toBe(false);
+    expect(isValidImageUploadResult({ requestId: 'r', selected, shared: 1 })).toBe(false);
+  });
+  it.each([
+    ['error a number', { requestId: 'r', error: 42 }],
+    ['error an object', { requestId: 'r', error: { message: 'busy' } }],
+    ['error null', { requestId: 'r', error: null }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidImageUploadResult(payload)).toBe(false);
+  });
+  it('accepts every content-rating ladder value', () => {
+    for (const cr of ['g', 'pg', 'pg13', 'r', 'x']) {
+      expect(isValidImageUploadResult({ selected: { ...selected, contentRating: cr } })).toBe(true);
+    }
+  });
+
+  const source = {
+    url: 'https://image.civitai.com/x/original=true/source.jpeg',
+    width: 1024,
+    height: 768,
+  };
+  it("accepts the generationSource shape ({ url, width, height }, no imageId)", () => {
+    expect(isValidImageUploadResult({ requestId: 'r', selected: source })).toBe(true);
+  });
+  it.each([
+    ['source width missing', { selected: { url: source.url, height: 768 } }],
+    ['source height missing', { selected: { url: source.url, width: 1024 } }],
+    ['source width not a number', { selected: { ...source, width: '1024' } }],
+    ['source width non-positive', { selected: { ...source, width: 0 } }],
+    ['source height NaN', { selected: { ...source, height: Number.NaN } }],
+    ['source url empty', { selected: { ...source, url: '' } }],
+    ['neither moderated nor source (url only)', { selected: { url: source.url } }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidImageUploadResult(payload)).toBe(false);
+  });
+  it.each([
+    ['imageId not a number', { selected: { ...selected, imageId: '12' } }],
+    ['imageId non-integer', { selected: { ...selected, imageId: 1.5 } }],
+    ['imageId non-positive', { selected: { ...selected, imageId: 0 } }],
+    ['nsfwLevel not a number', { selected: { ...selected, nsfwLevel: 'sfw' } }],
+    ['nsfwLevel NaN', { selected: { ...selected, nsfwLevel: Number.NaN } }],
+    ['contentRating unknown', { selected: { ...selected, contentRating: 'xxx' } }],
+    ['contentRating wrong type', { selected: { ...selected, contentRating: 3 } }],
+    ['url empty', { selected: { ...selected, url: '' } }],
+    ['url wrong type', { selected: { ...selected, url: 42 } }],
+    ['selected not an object', { selected: 5 }],
+    ['requestId not a string', { requestId: 7, selected }],
+    ['null payload', null],
+    ['string payload', 'oops'],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidImageUploadResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidSaveImageResult (SAVE_IMAGE)', () => {
+  it('accepts ok true/false', () => {
+    expect(isValidSaveImageResult({ requestId: 'r', ok: true })).toBe(true);
+    expect(isValidSaveImageResult({ requestId: 'r', ok: false, error: 'image url is not allowed' })).toBe(true);
+  });
+  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
+    expect(isValidSaveImageResult({ requestId: 'r1', error: 'boom' })).toBe(true);
+  });
+  // Presence, not truthiness. The hook is what rejects an empty error string.
+  it('still ACCEPTS an empty-string error reply (early-accept keys on presence)', () => {
+    expect(isValidSaveImageResult({ requestId: 'r1', error: '' })).toBe(true);
+    expect(isValidSaveImageResult({ requestId: 'r1', ok: true, error: '' })).toBe(true);
+  });
+  it.each([
+    ['ok missing', { requestId: 'r' }],
+    ['ok not boolean', { requestId: 'r', ok: 1 }],
+    ['error not a string', { requestId: 'r', ok: false, error: {} }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidSaveImageResult(payload)).toBe(false);
+  });
+});
+
+// ============================================================
+// Picker + user-checkpoint reply validators
+// ============================================================
+
+describe('isValidCheckpointPickerResult', () => {
+  const selected = { versionId: 9001, modelId: 700, modelName: 'M', versionName: 'v2', baseModel: 'SDXL 1.0' };
+  it('accepts a full checkpoint pick', () => {
+    expect(isValidCheckpointPickerResult({ requestId: 'r', selected })).toBe(true);
+  });
+  it('accepts a dismiss (no `selected`)', () => {
+    expect(isValidCheckpointPickerResult({ requestId: 'r' })).toBe(true);
+    expect(isValidCheckpointPickerResult({})).toBe(true);
+  });
+  it('accepts an id-only projection (display fields optional)', () => {
+    expect(isValidCheckpointPickerResult({ requestId: 'r', selected: { versionId: 1, modelId: 2, baseModel: 'X' } })).toBe(true);
+  });
+  it.each([
+    ['versionId missing', { requestId: 'r', selected: { modelId: 2 } }],
+    ['versionId not a number', { requestId: 'r', selected: { ...selected, versionId: '9001' } }],
+    ['versionId non-integer', { requestId: 'r', selected: { ...selected, versionId: 1.5 } }],
+    ['versionId non-positive', { requestId: 'r', selected: { ...selected, versionId: 0 } }],
+    ['modelId non-positive', { requestId: 'r', selected: { ...selected, modelId: 0 } }],
+    ['modelName wrong type', { requestId: 'r', selected: { ...selected, modelName: 5 } }],
+    ['selected not an object', { requestId: 'r', selected: 5 }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidCheckpointPickerResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidImagePickerResult', () => {
+  const posted = {
+    source: 'posted',
+    url: 'https://image.civitai.com/x/original=true/posted.jpeg',
+    width: 832,
+    height: 1216,
+    nsfwLevel: 1,
+    imageId: 7001,
+  };
+  const generated = {
+    source: 'generated',
+    url: 'https://image.civitai.com/x/original=true/generated.jpeg',
+    width: 1024,
+    height: 768,
+    nsfwLevel: 2,
+  };
+
+  it('is the validator payloadValidatorFor routes IMAGE_PICKER_RESULT to', () => {
+    expect(payloadValidatorFor('IMAGE_PICKER_RESULT')).toBe(isValidImagePickerResult);
+  });
+  it('accepts a posted pick (with imageId)', () => {
+    expect(isValidImagePickerResult({ requestId: 'r', selected: posted })).toBe(true);
+  });
+  it('accepts a generated pick (no imageId)', () => {
+    expect(isValidImagePickerResult({ requestId: 'r', selected: generated })).toBe(true);
+  });
+  // The host never sends nsfwLevel 0 (an unrated image is not pickable), but
+  // that rule is the host's: here `nsfwLevel` only has to be a finite number.
+  it('accepts nsfwLevel 0 and fractional dimensions (finite is the rule)', () => {
+    expect(
+      isValidImagePickerResult({
+        requestId: 'r',
+        selected: { ...generated, nsfwLevel: 0, width: 511.5, height: 0.5 },
+      }),
+    ).toBe(true);
+  });
+  it('accepts a dismiss (no `selected`)', () => {
+    expect(isValidImagePickerResult({ requestId: 'r' })).toBe(true);
+  });
+  it('accepts a list of picks and an empty list', () => {
+    expect(isValidImagePickerResult({ requestId: 'r', selectedImages: [posted, generated] })).toBe(true);
+    expect(isValidImagePickerResult({ requestId: 'r', selectedImages: [] })).toBe(true);
+  });
+  it('accepts a refusal carrying only an error, including an empty one', () => {
+    expect(isValidImagePickerResult({ requestId: 'r', error: 'unsupported on this host' })).toBe(true);
+    expect(isValidImagePickerResult({ requestId: 'r', error: '' })).toBe(true);
+  });
+  it('accepts an error reply without checking the pick beside it (the hook throws first)', () => {
+    expect(isValidImagePickerResult({ requestId: 'r', error: 'no', selected: { source: 'x' } })).toBe(true);
+  });
+  it.each([
+    ['not an object', 'IMAGE_PICKER_RESULT'],
+    ['null', null],
+    ['requestId a number', { requestId: 7, selected: posted }],
+    ['error not a string', { requestId: 'r', error: 5 }],
+    ['error null', { requestId: 'r', error: null }],
+    ['selected null', { requestId: 'r', selected: null }],
+    ['selected not an object', { requestId: 'r', selected: 'posted' }],
+    ['source missing', { requestId: 'r', selected: { ...posted, source: undefined } }],
+    ['source unknown', { requestId: 'r', selected: { ...posted, source: 'uploaded' } }],
+    ['source wrong case', { requestId: 'r', selected: { ...posted, source: 'Posted' } }],
+    ['url empty', { requestId: 'r', selected: { ...posted, url: '' } }],
+    ['url not a string', { requestId: 'r', selected: { ...posted, url: 5 } }],
+    ['width missing', { requestId: 'r', selected: { ...posted, width: undefined } }],
+    ['width zero', { requestId: 'r', selected: { ...posted, width: 0 } }],
+    ['width negative', { requestId: 'r', selected: { ...posted, width: -832 } }],
+    ['width a string', { requestId: 'r', selected: { ...posted, width: '832' } }],
+    ['width Infinity', { requestId: 'r', selected: { ...posted, width: Number.POSITIVE_INFINITY } }],
+    ['height missing', { requestId: 'r', selected: { ...posted, height: undefined } }],
+    ['height zero', { requestId: 'r', selected: { ...posted, height: 0 } }],
+    ['height negative', { requestId: 'r', selected: { ...posted, height: -1216 } }],
+    ['height NaN', { requestId: 'r', selected: { ...posted, height: Number.NaN } }],
+    ['nsfwLevel missing', { requestId: 'r', selected: { ...posted, nsfwLevel: undefined } }],
+    ['nsfwLevel a string', { requestId: 'r', selected: { ...posted, nsfwLevel: '1' } }],
+    ['nsfwLevel NaN', { requestId: 'r', selected: { ...posted, nsfwLevel: Number.NaN } }],
+    ['imageId a string', { requestId: 'r', selected: { ...posted, imageId: '7001' } }],
+    ['imageId zero', { requestId: 'r', selected: { ...posted, imageId: 0 } }],
+    ['imageId negative', { requestId: 'r', selected: { ...posted, imageId: -7001 } }],
+    ['imageId fractional', { requestId: 'r', selected: { ...posted, imageId: 7001.5 } }],
+    ['imageId null', { requestId: 'r', selected: { ...posted, imageId: null } }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidImagePickerResult(payload)).toBe(false);
+  });
+  it.each([
+    ['selectedImages not an array', { requestId: 'r', selectedImages: posted }],
+    ['selectedImages null', { requestId: 'r', selectedImages: null }],
+    ['one entry not an object', { requestId: 'r', selectedImages: [posted, 7] }],
+    ['one entry with an unknown source', { requestId: 'r', selectedImages: [posted, { ...generated, source: 'video' }] }],
+    ['one entry with a zero width', { requestId: 'r', selectedImages: [posted, { ...generated, width: 0 }] }],
+    ['the LAST entry with a string imageId', { requestId: 'r', selectedImages: [generated, posted, { ...posted, imageId: '7001' }] }],
+  ])('rejects a list reply: %s', (_, payload) => {
+    expect(isValidImagePickerResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidMediaUploadResult', () => {
+  const image = {
+    url: 'https://media.example/generation-input/a.jpeg',
+    kind: 'image',
+    mimeType: 'image/jpeg',
+    sizeBytes: 182_311,
+    width: 1024,
+    height: 768,
+  };
+  const video = {
+    url: 'https://media.example/generation-input/b.mp4',
+    kind: 'video',
+    mimeType: 'video/mp4',
+    sizeBytes: 4_812_330,
+    width: 1280,
+    height: 720,
+    durationMs: 5_000,
+  };
+  const audio = {
+    url: 'https://media.example/generation-input/c.webm',
+    kind: 'audio',
+    mimeType: 'audio/webm',
+    sizeBytes: 0,
+    durationMs: 0,
+  };
+
+  it('is the validator payloadValidatorFor routes MEDIA_UPLOAD_RESULT to', () => {
+    expect(payloadValidatorFor('MEDIA_UPLOAD_RESULT')).toBe(isValidMediaUploadResult);
+  });
+  it.each([
+    ['an image', image],
+    ['a video', video],
+    ['a video with no duration', { ...video, durationMs: undefined }],
+    ['an audio file with no dimensions, size 0 and duration 0', audio],
+    ['an audio file with no duration (a MediaRecorder WebM)', { ...audio, durationMs: undefined }],
+    ['a fractional duration', { ...video, durationMs: 4999.5 }],
+  ])('accepts %s', (_n, selected) => {
+    expect(isValidMediaUploadResult({ requestId: 'r', selected })).toBe(true);
+  });
+  it('accepts a bare reply (dismissed / declined)', () => {
+    expect(isValidMediaUploadResult({ requestId: 'r' })).toBe(true);
+  });
+  it('accepts an error reply, including an empty one, without checking a selected beside it', () => {
+    expect(isValidMediaUploadResult({ requestId: 'r', error: 'busy' })).toBe(true);
+    expect(isValidMediaUploadResult({ requestId: 'r', error: '' })).toBe(true);
+    expect(isValidMediaUploadResult({ requestId: 'r', error: 'no', selected: { kind: 'x' } })).toBe(true);
+  });
+  it.each([
+    ['not an object', 'MEDIA_UPLOAD_RESULT'],
+    ['null', null],
+    ['requestId a number', { requestId: 7, selected: image }],
+    ['error not a string', { requestId: 'r', error: 5 }],
+    ['error null', { requestId: 'r', error: null }],
+    ['selected null', { requestId: 'r', selected: null }],
+    ['selected not an object', { requestId: 'r', selected: 'image' }],
+    ['url empty', { requestId: 'r', selected: { ...image, url: '' } }],
+    ['url missing', { requestId: 'r', selected: { ...image, url: undefined } }],
+    ['kind unknown', { requestId: 'r', selected: { ...image, kind: 'gif' } }],
+    ['kind wrong case', { requestId: 'r', selected: { ...image, kind: 'Image' } }],
+    ['mimeType missing', { requestId: 'r', selected: { ...image, mimeType: undefined } }],
+    ['mimeType not a string', { requestId: 'r', selected: { ...image, mimeType: 1 } }],
+    ['sizeBytes missing', { requestId: 'r', selected: { ...image, sizeBytes: undefined } }],
+    ['sizeBytes negative', { requestId: 'r', selected: { ...image, sizeBytes: -1 } }],
+    ['sizeBytes fractional', { requestId: 'r', selected: { ...image, sizeBytes: 1.5 } }],
+    ['sizeBytes infinite', { requestId: 'r', selected: { ...image, sizeBytes: Infinity } }],
+    ['image without width', { requestId: 'r', selected: { ...image, width: undefined } }],
+    ['image without height', { requestId: 'r', selected: { ...image, height: undefined } }],
+    ['video without width', { requestId: 'r', selected: { ...video, width: undefined } }],
+    ['video without height', { requestId: 'r', selected: { ...video, height: undefined } }],
+    ['video with zero width', { requestId: 'r', selected: { ...video, width: 0 } }],
+    ['video with fractional height', { requestId: 'r', selected: { ...video, height: 720.5 } }],
+    ['image with a string width', { requestId: 'r', selected: { ...image, width: '1024' } }],
+    ['audio with a width', { requestId: 'r', selected: { ...audio, width: 640 } }],
+    ['audio with a height', { requestId: 'r', selected: { ...audio, height: 480 } }],
+    ['durationMs negative', { requestId: 'r', selected: { ...video, durationMs: -1 } }],
+    ['durationMs NaN', { requestId: 'r', selected: { ...video, durationMs: NaN } }],
+    ['durationMs a string', { requestId: 'r', selected: { ...audio, durationMs: '5' } }],
+  ])('rejects %s', (_n, payload) => {
+    expect(isValidMediaUploadResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidMediaUploadBatchResult', () => {
+  const image = {
+    url: 'https://media.example/generation-input/a.jpeg',
+    kind: 'image',
+    mimeType: 'image/jpeg',
+    sizeBytes: 182_311,
+    width: 1024,
+    height: 768,
+  };
+  const audio = {
+    url: 'https://media.example/generation-input/c.wav',
+    kind: 'audio',
+    mimeType: 'audio/wav',
+    sizeBytes: 96_000,
+  };
+  const ran = (results: unknown[], extra: Record<string, unknown> = {}) => ({
+    requestId: 'r',
+    results,
+    expiresAt: '2026-11-18T00:00:00.000Z',
+    ...extra,
+  });
+
+  it('is the validator payloadValidatorFor routes MEDIA_UPLOAD_BATCH_RESULT to', () => {
+    expect(payloadValidatorFor('MEDIA_UPLOAD_BATCH_RESULT')).toBe(isValidMediaUploadBatchResult);
+  });
+  it.each([
+    ['uploads and per-item errors', ran([{ index: 0, selected: image }, { index: 1, error: 'busy' }, { index: 2, selected: audio }])],
+    ['an empty per-item error string', ran([{ index: 0, error: '' }])],
+    ['all items refused', ran([{ index: 0, error: 'images must be PNG, JPEG or WebP' }])],
+    ['results with no expiresAt', { requestId: 'r', results: [{ index: 0, selected: image }] }],
+    ['an empty results array (the hook checks the count)', ran([])],
+    ['indices out of order (the hook checks the order)', ran([{ index: 1, error: 'x' }, { index: 0, error: 'y' }])],
+  ])('accepts %s', (_n, payload) => {
+    expect(isValidMediaUploadBatchResult(payload)).toBe(true);
+  });
+  it('accepts a bare reply (declined)', () => {
+    expect(isValidMediaUploadBatchResult({ requestId: 'r' })).toBe(true);
+  });
+  it('accepts a whole-batch error, including an empty one, without checking results beside it', () => {
+    expect(isValidMediaUploadBatchResult({ requestId: 'r', error: 'busy' })).toBe(true);
+    expect(isValidMediaUploadBatchResult({ requestId: 'r', error: '' })).toBe(true);
+    expect(isValidMediaUploadBatchResult({ requestId: 'r', error: 'no', results: 'x', expiresAt: 5 })).toBe(true);
+  });
+  // The TOP-LEVEL shape: a reply this wrong is dropped whole. (An ABSENT
+  // requestId passes the shape check, as for every reply, and is dropped as
+  // unroutable by the transport; a reply with too few or too many results is
+  // rejected by the hook, which knows the items.)
+  it.each([
+    ['not an object', 'MEDIA_UPLOAD_BATCH_RESULT'],
+    ['null', null],
+    ['requestId a number', { requestId: 7 }],
+    ['error not a string', { requestId: 'r', error: 5 }],
+    ['error null', { requestId: 'r', error: null }],
+    ['results not an array', ran({} as never)],
+    ['results null', ran(null as never)],
+    ['results a string', ran('x' as never)],
+    ['expiresAt not a string', ran([{ index: 0, selected: image }], { expiresAt: 1_800_000_000_000 })],
+    ['expiresAt null', ran([{ index: 0, selected: image }], { expiresAt: null })],
+  ])('rejects %s', (_n, payload) => {
+    expect(isValidMediaUploadBatchResult(payload)).toBe(false);
+  });
+
+  // 🔴 A malformed ENTRY no longer drops the whole reply. By the time the host
+  // answers, the other files have uploaded; dropping the reply left
+  // `uploadBatch` waiting out its whole timeout and the app never learned any
+  // URL. The entry is answered as that item's error by `projectInboundPayload`
+  // (below), so the validator lets it through.
+  it.each([
+    ['an entry that is not an object', ran(['x'])],
+    ['an entry that is null', ran([null])],
+    ['an entry with neither selected nor error', ran([{ index: 0 }])],
+    ['an entry with both selected and error', ran([{ index: 0, selected: image, error: 'busy' }])],
+    ['an entry with no index', ran([{ selected: image }])],
+    ['a negative index', ran([{ index: -1, selected: image }])],
+    ['a fractional index', ran([{ index: 0.5, selected: image }])],
+    ['a string index', ran([{ index: '0', selected: image }])],
+    ['a NaN index', ran([{ index: NaN, selected: image }])],
+    ['an entry error that is not a string', ran([{ index: 0, error: 5 }])],
+    ['an entry error that is null', ran([{ index: 0, error: null }])],
+    ['a selected that is null', ran([{ index: 0, selected: null }])],
+    ['a selected with an empty url', ran([{ index: 0, selected: { ...image, url: '' } }])],
+    ['a selected image with no width', ran([{ index: 0, selected: { ...image, width: undefined } }])],
+    ['a selected audio with a width', ran([{ index: 0, selected: { ...audio, width: 640 } }])],
+    ['a selected with an unknown kind', ran([{ index: 0, selected: { ...image, kind: 'gif' } }])],
+    ['one bad entry among good ones', ran([{ index: 0, selected: image }, { index: 1, selected: { ...image, sizeBytes: -1 } }])],
+  ])('accepts %s (the entry is answered per item, not the reply dropped)', (_n, payload) => {
+    expect(isValidMediaUploadBatchResult(payload)).toBe(true);
+  });
+});
+
+describe('projectInboundPayload — MEDIA_UPLOAD_BATCH_RESULT', () => {
+  const image = {
+    url: 'https://media.example/generation-input/a.jpeg',
+    kind: 'image',
+    mimeType: 'image/jpeg',
+    sizeBytes: 182_311,
+    width: 1024,
+    height: 768,
+  };
+  const video = {
+    url: 'https://media.example/generation-input/b.mp4',
+    kind: 'video',
+    mimeType: 'video/mp4',
+    sizeBytes: 4_812_330,
+    width: 1280,
+    height: 720,
+    durationMs: 5_000,
+  };
+  const EXPIRES = '2026-12-14T00:00:00.000Z';
+  const project = (payload: unknown) => projectInboundPayload('MEDIA_UPLOAD_BATCH_RESULT', payload);
+
+  it.each([
+    ['not an object', 'x'],
+    ['null', null],
+    ['an entry with neither selected nor error', { index: 1 }],
+    ['an entry with both selected and error', { index: 1, selected: image, error: 'busy' }],
+    ['an entry with no index', { selected: image }],
+    ['an entry whose index is a string', { index: '1', selected: image }],
+    ['an entry whose index is negative', { index: -1, selected: image }],
+    ['an entry error that is not a string', { index: 1, error: 5 }],
+    ['a selected with a negative size', { index: 1, selected: { ...image, sizeBytes: -1 } }],
+    ['a selected with an unknown kind', { index: 1, selected: { ...image, kind: 'gif' } }],
+  ])('answers one malformed entry (%s) as THAT item’s error, at its position, and keeps the rest', (_n, bad) => {
+    const first = { index: 0, selected: image };
+    const last = { index: 2, selected: video };
+    const payload = { requestId: 'r', results: [first, bad, last], expiresAt: EXPIRES };
+    const out = project(payload) as { requestId: string; results: unknown[]; expiresAt: string };
+    expect(out).toEqual({
+      requestId: 'r',
+      results: [first, { index: 1, error: 'media upload failed' }, last],
+      expiresAt: EXPIRES,
+    });
+    // The good entries are passed through as sent, not rebuilt.
+    expect(out.results[0]).toBe(first);
+    expect(out.results[2]).toBe(last);
+    // The reply as sent is not mutated.
+    expect(payload.results[1]).toBe(bad);
+  });
+
+  it('never carries a malformed entry’s url across (an entry with both selected and error)', () => {
+    const out = project({ requestId: 'r', results: [{ index: 0, selected: image, error: 'busy' }] }) as {
+      results: Array<Record<string, unknown>>;
+    };
+    expect(out.results).toEqual([{ index: 0, error: 'media upload failed' }]);
+    expect(out.results[0]).not.toHaveProperty('selected');
+  });
+
+  it('passes a WELL-FORMED entry at the wrong position through as sent (the hook rejects the mismatch)', () => {
+    const payload = { requestId: 'r', results: [{ index: 1, selected: image }, { index: 0, selected: video }] };
+    expect(project(payload)).toBe(payload);
+  });
+
+  it('is identity when every entry is well formed (per-item errors included)', () => {
+    const payload = {
+      requestId: 'r',
+      results: [
+        { index: 0, selected: image },
+        { index: 1, error: '' },
+        { index: 2, error: 'videos must be MP4 or WebM' },
+      ],
+      expiresAt: EXPIRES,
+    };
+    expect(project(payload)).toBe(payload);
+  });
+
+  it.each([
+    ['a bare reply', { requestId: 'r' }],
+    ['a whole-batch error', { requestId: 'r', error: 'busy' }],
+    ['a whole-batch error beside a bad results', { requestId: 'r', error: 'busy', results: [null] }],
+    ['results not an array', { requestId: 'r', results: 'x' }],
+  ])('is identity for %s', (_n, payload) => {
+    expect(project(payload)).toBe(payload);
+  });
+
+  it('touches no other type', () => {
+    const payload = { requestId: 'r', results: [null] };
+    expect(projectInboundPayload('MEDIA_UPLOAD_RESULT', payload)).toBe(payload);
+  });
+});
+
+describe('isValidResourcePickerResult', () => {
+  const selected = {
+    versionId: 9001,
+    modelId: 700,
+    modelName: 'M',
+    versionName: 'v2',
+    baseModel: 'Flux.1 D',
+    modelType: 'Checkpoint',
+    strength: 1,
+    minStrength: -1,
+    maxStrength: 2,
+    trainedWords: ['a', 'b'],
+    clipSkip: null,
+  };
+  it('accepts a full resource pick (with recommended settings)', () => {
+    expect(isValidResourcePickerResult({ requestId: 'r', selected })).toBe(true);
+  });
+  it('accepts a clipSkip number', () => {
+    expect(isValidResourcePickerResult({ requestId: 'r', selected: { ...selected, clipSkip: 2 } })).toBe(true);
+  });
+  it('accepts an id-only projection', () => {
+    expect(isValidResourcePickerResult({ requestId: 'r', selected: { versionId: 42, modelId: 7, baseModel: 'X', modelType: 'LORA' } })).toBe(true);
+  });
+  it('accepts a dismiss (no `selected`)', () => {
+    expect(isValidResourcePickerResult({ requestId: 'r' })).toBe(true);
+  });
+  it.each([
+    ['versionId missing', { requestId: 'r', selected: { modelType: 'LORA' } }],
+    ['strength not a number', { requestId: 'r', selected: { ...selected, strength: 'x' } }],
+    ['trainedWords not an array', { requestId: 'r', selected: { ...selected, trainedWords: 'a' } }],
+    ['trainedWords contains non-string', { requestId: 'r', selected: { ...selected, trainedWords: [1] } }],
+    ['clipSkip wrong type (not number|null)', { requestId: 'r', selected: { ...selected, clipSkip: 'x' } }],
+    ['modelType wrong type', { requestId: 'r', selected: { ...selected, modelType: 5 } }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidResourcePickerResult(payload)).toBe(false);
+  });
+
+  // Multi-select reply (`selectedResources`).
+  it('accepts a list of picks', () => {
+    expect(
+      isValidResourcePickerResult({
+        requestId: 'r',
+        selectedResources: [selected, { versionId: 42, modelId: 7, baseModel: 'X', modelType: 'LORA' }],
+      }),
+    ).toBe(true);
+  });
+  it('accepts an empty list (multi-select dismiss)', () => {
+    expect(isValidResourcePickerResult({ requestId: 'r', selectedResources: [] })).toBe(true);
+  });
+  it('accepts a refusal carrying only an error', () => {
+    expect(isValidResourcePickerResult({ requestId: 'r', error: 'nope' })).toBe(true);
+  });
+  it.each([
+    ['selectedResources not an array', { requestId: 'r', selectedResources: selected }],
+    ['selectedResources null', { requestId: 'r', selectedResources: null }],
+    ['one entry missing versionId', { requestId: 'r', selectedResources: [selected, { modelType: 'LORA' }] }],
+    ['one entry with a string versionId', { requestId: 'r', selectedResources: [{ ...selected, versionId: '9001' }] }],
+    ['one entry not an object', { requestId: 'r', selectedResources: [selected, 7] }],
+    ['one entry with bad trainedWords', { requestId: 'r', selectedResources: [{ ...selected, trainedWords: [1] }] }],
+  ])('rejects a list reply: %s', (_, payload) => {
+    expect(isValidResourcePickerResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidUserCheckpointSetResult', () => {
+  it('accepts ok:true and ok:false+error', () => {
+    expect(isValidUserCheckpointSetResult({ requestId: 'r', ok: true })).toBe(true);
+    expect(isValidUserCheckpointSetResult({ requestId: 'r', ok: false, error: 'wrong-ecosystem' })).toBe(true);
+  });
+  it('accepts an error-only reply (uniform {ok,error} contract)', () => {
+    expect(isValidUserCheckpointSetResult({ requestId: 'r1', error: 'boom' })).toBe(true);
+  });
+  // Presence, not truthiness. The hook is what rejects an empty error string.
+  it('still ACCEPTS an empty-string error reply (early-accept keys on presence)', () => {
+    expect(isValidUserCheckpointSetResult({ requestId: 'r1', error: '' })).toBe(true);
+    expect(isValidUserCheckpointSetResult({ requestId: 'r1', ok: true, error: '' })).toBe(true);
+  });
+  it.each([
+    ['missing ok', { requestId: 'r' }],
+    ['ok not boolean', { requestId: 'r', ok: 'yes' }],
+    ['error not a string', { requestId: 'r', ok: false, error: 5 }],
+  ])('rejects %s', (_, payload) => {
+    expect(isValidUserCheckpointSetResult(payload)).toBe(false);
+  });
+});
+
+describe('isValidAppWorkflowsResult', () => {
+  const validWorkflow = {
+    workflowId: 'wf_1',
+    status: 'succeeded',
+    images: [
+      { url: 'https://image.civitai.com/x/a.jpeg', width: 1024, height: 1024, nsfwLevel: 1 },
+      // legitimate nullish dims/rating — must be accepted (the too-strict trap).
+      { url: 'https://image.civitai.com/x/b.jpeg', width: null, height: null, nsfwLevel: null },
+    ],
+    cost: 12,
+    createdAt: '2026-07-14T12:00:00.000Z',
+  };
+
+  it('accepts a success result with a page of workflows + a null cursor', () => {
+    expect(
+      isValidAppWorkflowsResult({
+        requestId: 'q',
+        result: { workflows: [validWorkflow], cursor: null },
+      }),
+    ).toBe(true);
+  });
+
+  it('accepts a string cursor (has a next page) + a pending workflow with null cost', () => {
+    expect(
+      isValidAppWorkflowsResult({
+        result: {
+          workflows: [
+            { workflowId: 'wf_2', status: 'processing', images: [], cost: null, createdAt: '2026-07-14T11:00:00.000Z' },
+          ],
+          cursor: 'next-page-abc',
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it('accepts an EMPTY workflows array (a fresh app with no gens)', () => {
+    expect(isValidAppWorkflowsResult({ result: { workflows: [], cursor: null } })).toBe(true);
+  });
+
+  it('accepts a row carrying a well-formed publishedModel (draft and published)', () => {
+    for (const published of [false, true]) {
+      expect(
+        isValidAppWorkflowsResult({
+          result: {
+            workflows: [{ ...validWorkflow, publishedModel: { modelId: 31, modelVersionId: 47, published } }],
+            cursor: null,
+          },
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it.each([
+    ['publishedModel null', null],
+    ['publishedModel.published missing', { modelId: 31, modelVersionId: 47 }],
+    ['publishedModel.modelId a string', { modelId: '31', modelVersionId: 47, published: true }],
+  ])('rejects a row whose %s', (_, publishedModel) => {
+    expect(
+      isValidAppWorkflowsResult({
+        result: { workflows: [{ ...validWorkflow, publishedModel }], cursor: null },
+      }),
+    ).toBe(false);
+    expect(isValidCancelAppWorkflowResult({ result: { workflow: { ...validWorkflow, publishedModel } } })).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    ['one epoch', [{ $type: 'training', epochNumber: 1 }]],
+    ['several epochs', [{ $type: 'imageResourceTraining', epochNumber: 2 }, { $type: 'imageResourceTraining', epochNumber: 5 }]],
+    // Forward compatibility, same as the snapshot guard: $type is checked as a string.
+    ['a $type the SDK does not know yet', [{ $type: 'futureTraining', epochNumber: 1 }]],
+    ['an empty array', []],
+  ])('accepts a row whose trainedEpochs is %s', (_, trainedEpochs) => {
+    expect(
+      isValidAppWorkflowsResult({
+        result: { workflows: [{ ...validWorkflow, trainedEpochs }], cursor: null },
+      }),
+    ).toBe(true);
+    expect(isValidCancelAppWorkflowResult({ result: { workflow: { ...validWorkflow, trainedEpochs } } })).toBe(true);
+  });
+
+  it.each([
+    ['trainedEpochs null', null],
+    ['trainedEpochs not an array', { $type: 'training', epochNumber: 1 }],
+    ['trainedEpochs entry not an object', [7]],
+    ['trainedEpochs.epochNumber a string', [{ $type: 'training', epochNumber: '1' }]],
+    ['trainedEpochs.epochNumber fractional', [{ $type: 'training', epochNumber: 1.5 }]],
+    ['trainedEpochs.$type missing', [{ epochNumber: 1 }]],
+  ])('rejects a row whose %s', (_, trainedEpochs) => {
+    expect(
+      isValidAppWorkflowsResult({
+        result: { workflows: [{ ...validWorkflow, trainedEpochs }], cursor: null },
+      }),
+    ).toBe(false);
+    expect(isValidCancelAppWorkflowResult({ result: { workflow: { ...validWorkflow, trainedEpochs } } })).toBe(
+      false,
+    );
+  });
+
+  it('accepts the free-text error variant', () => {
+    expect(isValidAppWorkflowsResult({ requestId: 'q', error: 'block lacks scope' })).toBe(true);
+  });
+
+  it('rejects a reply that resolves to NOTHING (no result, no error)', () => {
+    expect(isValidAppWorkflowsResult({ requestId: 'q' })).toBe(false);
+  });
+
+  it('rejects a malformed workflow (empty workflowId / bad status / non-string url / NaN cost)', () => {
+    expect(
+      isValidAppWorkflowsResult({ result: { workflows: [{ ...validWorkflow, workflowId: '' }], cursor: null } }),
+    ).toBe(false);
+    expect(
+      isValidAppWorkflowsResult({ result: { workflows: [{ ...validWorkflow, status: 'bogus' }], cursor: null } }),
+    ).toBe(false);
+    expect(
+      isValidAppWorkflowsResult({
+        result: { workflows: [{ ...validWorkflow, images: [{ url: 42, width: null, height: null, nsfwLevel: null }] }], cursor: null },
+      }),
+    ).toBe(false);
+    expect(
+      isValidAppWorkflowsResult({ result: { workflows: [{ ...validWorkflow, cost: 'free' }], cursor: null } }),
+    ).toBe(false);
+    // a non-string, non-null cursor is malformed.
+    expect(
+      isValidAppWorkflowsResult({ result: { workflows: [validWorkflow], cursor: 42 } }),
+    ).toBe(false);
+    // `workflows` must be an array.
+    expect(isValidAppWorkflowsResult({ result: { workflows: 'nope', cursor: null } })).toBe(false);
+  });
+});
+
+describe('isValidCancelAppWorkflowResult', () => {
+  const canceled = {
+    workflowId: 'wf_1',
+    status: 'canceled',
+    images: [],
+    cost: null,
+    createdAt: '2026-07-14T12:00:00.000Z',
+  };
+
+  it('accepts a success result carrying the terminal workflow', () => {
+    expect(isValidCancelAppWorkflowResult({ requestId: 'c', result: { workflow: canceled } })).toBe(true);
+  });
+
+  it('accepts the free-text error variant (FORBIDDEN / transport)', () => {
+    expect(
+      isValidCancelAppWorkflowResult({ requestId: 'c', error: 'workflow is not in this app subqueue' }),
+    ).toBe(true);
+  });
+
+  it('rejects a reply that resolves to NOTHING', () => {
+    expect(isValidCancelAppWorkflowResult({ requestId: 'c' })).toBe(false);
+  });
+
+  it('rejects a malformed workflow', () => {
+    expect(isValidCancelAppWorkflowResult({ result: { workflow: { ...canceled, workflowId: '' } } })).toBe(false);
+    expect(isValidCancelAppWorkflowResult({ result: {} })).toBe(false);
+  });
+});
+
+describe('isValidCreatePostResult', () => {
+  const ok = { requestId: 'r1', result: { postId: 42, url: 'https://civitai.com/posts/42', imageIds: [1, 2] } };
+
+  it('accepts a well-formed success reply', () => {
+    expect(isValidCreatePostResult(ok)).toBe(true);
+  });
+
+  it('accepts an empty imageIds array', () => {
+    expect(isValidCreatePostResult({ ...ok, result: { ...ok.result, imageIds: [] } })).toBe(true);
+  });
+
+  it('accepts an error reply, and does NOT constrain the error to the host codes', () => {
+    // 🔴 THE LOAD-BEARING ASSERTION IN THIS FILE FOR THIS BRIDGE. `error` is a
+    // union of the host's closed codes and any server message the host
+    // forwards. Membership-checking it would DROP every server failure at the
+    // transport, and a dropped reply on a REQUEST-style message does not
+    // reject — it hangs the block for the full ten-minute consent timeout. A
+    // future edit that narrows `error` to an enum turns these two cases red.
+    expect(isValidCreatePostResult({ requestId: 'r1', error: 'declined' })).toBe(true);
+    expect(
+      isValidCreatePostResult({
+        requestId: 'r1',
+        error: 'this app may not attach posts to its own publisher’s models',
+      }),
+    ).toBe(true);
+    // An empty-string error is a VALID reply — the hook maps it to a code with
+    // `||`, not `??`. If this ever returns false the hook's fallback is dead.
+    expect(isValidCreatePostResult({ requestId: 'r1', error: '' })).toBe(true);
+  });
+
+  it('rejects a reply with NEITHER result nor error (totality)', () => {
+    expect(isValidCreatePostResult({ requestId: 'r1' })).toBe(false);
+    expect(isValidCreatePostResult({})).toBe(false);
+  });
+
+  it('rejects a non-object payload', () => {
+    expect(isValidCreatePostResult(null)).toBe(false);
+    expect(isValidCreatePostResult('nope')).toBe(false);
+    expect(isValidCreatePostResult(7)).toBe(false);
+  });
+
+  it('rejects a non-string requestId / non-string error', () => {
+    expect(isValidCreatePostResult({ ...ok, requestId: 7 })).toBe(false);
+    expect(isValidCreatePostResult({ requestId: 'r1', error: 500 })).toBe(false);
+  });
+
+  it('rejects a malformed result', () => {
+    const bad = (result: unknown) => isValidCreatePostResult({ requestId: 'r1', result });
+    expect(bad('nope')).toBe(false);
+    expect(bad({ url: 'u', imageIds: [] })).toBe(false); // no postId
+    expect(bad({ postId: 0, url: 'u', imageIds: [] })).toBe(false); // not positive
+    expect(bad({ postId: -1, url: 'u', imageIds: [] })).toBe(false);
+    expect(bad({ postId: 1.5, url: 'u', imageIds: [] })).toBe(false); // not an integer
+    expect(bad({ postId: '42', url: 'u', imageIds: [] })).toBe(false);
+    expect(bad({ postId: 42, imageIds: [] })).toBe(false); // no url
+    expect(bad({ postId: 42, url: '', imageIds: [] })).toBe(false); // empty url
+    expect(bad({ postId: 42, url: 'u' })).toBe(false); // no imageIds
+    expect(bad({ postId: 42, url: 'u', imageIds: 'no' })).toBe(false);
+    expect(bad({ postId: 42, url: 'u', imageIds: [1, 'two'] })).toBe(false);
+    expect(bad({ postId: 42, url: 'u', imageIds: [1, NaN] })).toBe(false);
+  });
+});
+
+/**
+ * 🔴 WHAT THIS BLOCK DOES **NOT** COVER ANY MORE, AND WHY IT STILL EXISTS (#394).
+ *
+ * "Union member with no `case` in the switch" is now a COMPILE error — the
+ * `default:` arm binds the switch subject to `never`, so adding a type to
+ * `ParentToBlockMessage` without a validator entry fails `tsc`, not a test. The
+ * list below used to be the only thing catching that, and it was a hand-written
+ * list, which is to say it caught it only for the types somebody remembered.
+ *
+ * What the `never` bind does NOT catch, and what this block is now scoped to:
+ *   - a case that satisfies exhaustiveness by returning `null`
+ *     (`case 'NEW_TYPE': return null;` type-checks perfectly);
+ *   - a case wired to the WRONG validator.
+ * Hence: `toBeTypeOf('function')` for "has a validator at all", and identity
+ * (`toBe(...)`) for the few whose mis-wiring is worst.
+ *
+ * ⚠️ IT IS STILL A HAND-MAINTAINED LIST AND CANNOT BE MADE OTHERWISE HERE. The
+ * union is a TYPE — there is no runtime array of `ParentToBlockMessage` members
+ * to enumerate (the sibling `BLOCK_TO_PARENT_MESSAGE_TYPES` exists only for the
+ * other direction), and a compile-enforced array declared in THIS file would be
+ * inert: `tsconfig.json` excludes `test/`, so nothing type-checks it. The
+ * compile-time gate in `validate.ts` is what makes the omission case
+ * unforgettable; this list is the residual.
+ */
 describe('payloadValidatorFor', () => {
-  it('returns a validator for each documented inbound type', () => {
+  it('maps every payload-carrying type to a validator (not null, not the wrong one)', () => {
     expect(payloadValidatorFor('BLOCK_INIT')).toBeTypeOf('function');
     expect(payloadValidatorFor('TOKEN_REFRESH')).toBeTypeOf('function');
     expect(payloadValidatorFor('TOKEN_REFRESH_RESPONSE')).toBeTypeOf('function');
+    // 🔴 Identity, not presence: the `never` bind proves THEME_CHANGE is mapped,
+    // it does not prove it is mapped to the right guard. A THEME_CHANGE routed
+    // to someone else's validator reaches the snapshot effectively unchecked.
+    expect(payloadValidatorFor('THEME_CHANGE')).toBe(isValidThemeChange);
+    // 🔴 Identity, same reason: a ROUTE_CHANGED routed to someone else's
+    // validator reaches `context.subPath` — the value a page block routes on —
+    // effectively unchecked. The `never` bind only proves it is mapped.
+    expect(payloadValidatorFor('ROUTE_CHANGED')).toBe(isValidRouteChanged);
+    // Same reason: a mis-wired CONSENT_UNAVAILABLE reaches the block's push
+    // listener having been shape-checked against the wrong contract.
+    expect(payloadValidatorFor('CONSENT_UNAVAILABLE')).toBe(isValidConsentUnavailable);
     expect(payloadValidatorFor('ESTIMATE_RESULT')).toBeTypeOf('function');
     expect(payloadValidatorFor('WORKFLOW_SUBMITTED')).toBeTypeOf('function');
     expect(payloadValidatorFor('WORKFLOW_STATUS')).toBeTypeOf('function');
     expect(payloadValidatorFor('WORKFLOW_CANCELED')).toBeTypeOf('function');
     expect(payloadValidatorFor('BUZZ_PURCHASE_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('BUZZ_BALANCE_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('VIEWER_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('BUZZ_TRANSACTIONS_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('BUZZ_ACCOUNTS_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('DAILY_COMPENSATION_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('WILDCARD_PACK_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('RESOURCE_FILE_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('GENERATION_SOURCE_PERSISTED')).toBeTypeOf('function');
+    expect(payloadValidatorFor('SHARE_LINK_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('APP_WORKFLOWS_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('CANCEL_APP_WORKFLOW_RESULT')).toBeTypeOf('function');
+    expect(payloadValidatorFor('IMAGE_UPLOAD_RESULT')).toBeTypeOf('function');
+    // 🔴 Identity, not `toBeTypeOf`. This reply settles an ACCOUNT WRITE, so a
+    // mis-wired validator would resolve a follow toggle against a shape checked
+    // under a different contract. (Omission itself is now a build error.)
+    expect(payloadValidatorFor('COLLECTION_FOLLOW_RESULT')).toBe(isValidCollectionFollowResult);
+    // 🔴 Identity, and the highest-stakes entry in this list: this reply settles
+    // a PUBLIC POST. Omitting the case is a typecheck error as of #394; naming
+    // the wrong validator, or `return null`, still is not — that is this line's
+    // job. See `iframe-transport.test.ts` for the behavioural half (a
+    // well-formed reply RESOLVES, a malformed one is DROPPED).
+    expect(payloadValidatorFor('CREATE_POST_RESULT')).toBe(isValidCreatePostResult);
+    expect(payloadValidatorFor('ESTIMATE_BATCH_RESULT')).toBe(isValidEstimateBatchResult);
+    for (const t of [
+      'SAVE_IMAGE_RESULT',
+      'CHECKPOINT_PICKER_RESULT',
+      'RESOURCE_PICKER_RESULT',
+      'IMAGE_PICKER_RESULT',
+      'MEDIA_UPLOAD_RESULT',
+      'USER_CHECKPOINT_SET',
+    ]) {
+      expect(payloadValidatorFor(t)).toBeTypeOf('function');
+    }
   });
   it('returns null for payload-less lifecycle messages', () => {
     expect(payloadValidatorFor('SUSPEND')).toBeNull();
     expect(payloadValidatorFor('RESUME')).toBeNull();
+  });
+});
+
+describe('isValidThemeChange', () => {
+  it('accepts both theme values', () => {
+    expect(isValidThemeChange({ theme: 'light' })).toBe(true);
+    expect(isValidThemeChange({ theme: 'dark' })).toBe(true);
+  });
+
+  it('rejects a non-object payload', () => {
+    expect(isValidThemeChange(null)).toBe(false);
+    expect(isValidThemeChange(undefined)).toBe(false);
+    expect(isValidThemeChange('dark')).toBe(false);
+    expect(isValidThemeChange(1)).toBe(false);
+  });
+
+  it('rejects a missing / wrong-typed theme', () => {
+    expect(isValidThemeChange({})).toBe(false);
+    expect(isValidThemeChange({ theme: undefined })).toBe(false);
+    expect(isValidThemeChange({ theme: null })).toBe(false);
+    expect(isValidThemeChange({ theme: 1 })).toBe(false);
+  });
+
+  it('rejects an off-ladder theme string (the value lands on data-theme)', () => {
+    // A block puts this straight onto `data-theme`; an arbitrary string would
+    // silently match no themed selector. Mirrors the enum check
+    // `isValidBlockInitPayload` applies to the SAME field.
+    expect(isValidThemeChange({ theme: 'Dark' })).toBe(false);
+    expect(isValidThemeChange({ theme: 'system' })).toBe(false);
+    expect(isValidThemeChange({ theme: '' })).toBe(false);
+  });
+
+  it('ignores extra fields (a newer host may widen the payload)', () => {
+    expect(isValidThemeChange({ theme: 'dark', requestId: 'r-1' })).toBe(true);
+  });
+});
+
+describe('isValidRouteChanged', () => {
+  it('accepts a sub-path', () => {
+    expect(isValidRouteChanged({ subPath: 'compare/42' })).toBe(true);
+  });
+
+  it('ACCEPTS the empty sub-path — the app index is a route, not an absence', () => {
+    // 🔴 The deliberate looseness, and the one case a "non-empty string" rule
+    // would have broken: `''` is what the host sends on an app's own index, so
+    // rejecting it would drop every navigation back to the root and freeze the
+    // block on the sub-path it was last told about.
+    expect(isValidRouteChanged({ subPath: '' })).toBe(true);
+  });
+
+  it('rejects a non-object payload', () => {
+    expect(isValidRouteChanged(null)).toBe(false);
+    expect(isValidRouteChanged(undefined)).toBe(false);
+    expect(isValidRouteChanged('compare/42')).toBe(false);
+    expect(isValidRouteChanged(1)).toBe(false);
+  });
+
+  it('rejects a missing / wrong-typed subPath', () => {
+    expect(isValidRouteChanged({})).toBe(false);
+    expect(isValidRouteChanged({ subPath: undefined })).toBe(false);
+    expect(isValidRouteChanged({ subPath: null })).toBe(false);
+    expect(isValidRouteChanged({ subPath: 42 })).toBe(false);
+    expect(isValidRouteChanged({ subPath: ['a'] })).toBe(false);
+    // The field name is the contract; a near-miss is not a route.
+    expect(isValidRouteChanged({ path: 'compare/42' })).toBe(false);
+  });
+
+  it('ignores extra fields (a newer host may widen the payload)', () => {
+    expect(isValidRouteChanged({ subPath: 'x', requestId: 'r-1' })).toBe(true);
+  });
+});
+
+describe('isValidConsentUnavailable', () => {
+  it('accepts a refusal naming known scopes', () => {
+    expect(
+      isValidConsentUnavailable({ reason: 'ungrantable', scopes: ['ai:write:budgeted'] }),
+    ).toBe(true);
+  });
+
+  it('🔴 ACCEPTS an EMPTY scopes array — that is a real refusal, not a malformed one', () => {
+    // The single most important line in this file. The host refuses on its
+    // UNFILTERED un-grantable set but only puts KNOWN scope names on the wire,
+    // so a block asking for scopes outside the vocabulary gets `scopes: []`.
+    // Written the obvious way — "a NON-EMPTY array of strings" — this guard
+    // would DROP that message, silently, at the trust boundary, restoring the
+    // invisible dead end the whole message exists to remove.
+    expect(isValidConsentUnavailable({ reason: 'ungrantable', scopes: [] })).toBe(true);
+  });
+
+  it('rejects a non-object payload', () => {
+    expect(isValidConsentUnavailable(null)).toBe(false);
+    expect(isValidConsentUnavailable(undefined)).toBe(false);
+    expect(isValidConsentUnavailable('ungrantable')).toBe(false);
+    expect(isValidConsentUnavailable(1)).toBe(false);
+    expect(isValidConsentUnavailable([])).toBe(false);
+  });
+
+  it('rejects a missing / off-ladder reason (it is a discriminator a block switches on)', () => {
+    expect(isValidConsentUnavailable({ scopes: [] })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: undefined, scopes: [] })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 'denied', scopes: [] })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 'Ungrantable', scopes: [] })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 1, scopes: [] })).toBe(false);
+  });
+
+  it('rejects a missing / non-array scopes field', () => {
+    expect(isValidConsentUnavailable({ reason: 'ungrantable' })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 'ungrantable', scopes: null })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 'ungrantable', scopes: 'a' })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 'ungrantable', scopes: {} })).toBe(false);
+  });
+
+  it('rejects a scopes array carrying a non-string (block UI renders these)', () => {
+    expect(isValidConsentUnavailable({ reason: 'ungrantable', scopes: ['a', 1] })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 'ungrantable', scopes: [null] })).toBe(false);
+    expect(isValidConsentUnavailable({ reason: 'ungrantable', scopes: [{ scope: 'a' }] })).toBe(
+      false,
+    );
+  });
+
+  it('ignores extra fields (a newer host may widen the payload)', () => {
+    expect(
+      isValidConsentUnavailable({ reason: 'ungrantable', scopes: [], detail: 'clamped at mint' }),
+    ).toBe(true);
+  });
+});
+
+describe('isValidCollectionFollowResult', () => {
+  it('accepts a success echo', () => {
+    expect(
+      isValidCollectionFollowResult({ requestId: 'r', result: { collectionId: 7, followed: true } }),
+    ).toBe(true);
+    expect(
+      isValidCollectionFollowResult({ requestId: 'r', result: { collectionId: 7, followed: false } }),
+    ).toBe(true);
+  });
+
+  it('accepts a CODED host refusal', () => {
+    expect(isValidCollectionFollowResult({ requestId: 'r', error: 'declined' })).toBe(true);
+    expect(isValidCollectionFollowResult({ requestId: 'r', error: 'collection-unavailable' })).toBe(
+      true,
+    );
+  });
+
+  // 🔴 THE LOAD-BEARING ASYMMETRY vs `isValidWildcardPackResult`. The host's
+  // error channel is a UNION of closed codes and a free-text server message it
+  // forwards verbatim. Constraining it to the enum would DROP every server
+  // failure, and a dropped reply on a REQUEST-style message hangs the block to
+  // its 10-minute consent bound — turning "you may not follow that" into a
+  // wedged button. A membership check here would fail this case.
+  it('accepts a FREE-TEXT server error, and an EMPTY one', () => {
+    expect(
+      isValidCollectionFollowResult({
+        requestId: 'r',
+        error: 'You do not have permission to follow this collection',
+      }),
+    ).toBe(true);
+    expect(isValidCollectionFollowResult({ requestId: 'r', error: '' })).toBe(true);
+  });
+
+  it('rejects a reply carrying NEITHER result nor error', () => {
+    expect(isValidCollectionFollowResult({ requestId: 'r' })).toBe(false);
+  });
+
+  it('rejects a non-object payload', () => {
+    expect(isValidCollectionFollowResult(null)).toBe(false);
+    expect(isValidCollectionFollowResult('declined')).toBe(false);
+    expect(isValidCollectionFollowResult(undefined)).toBe(false);
+  });
+
+  it('rejects a non-string requestId and a non-string error', () => {
+    expect(isValidCollectionFollowResult({ requestId: 5, error: 'declined' })).toBe(false);
+    expect(isValidCollectionFollowResult({ requestId: 'r', error: 5 })).toBe(false);
+  });
+
+  it('rejects a malformed result — the id must be a POSITIVE INTEGER', () => {
+    const bad = [0, -1, 1.5, '7', null];
+    for (const collectionId of bad) {
+      expect(
+        isValidCollectionFollowResult({ requestId: 'r', result: { collectionId, followed: true } }),
+      ).toBe(false);
+    }
+  });
+
+  it('rejects a result whose `followed` is not a boolean', () => {
+    // Not merely shape hygiene: a truthy non-boolean here would be adopted by
+    // `FollowButton` as the host's echo and pin the control to a value the host
+    // never sent.
+    expect(
+      isValidCollectionFollowResult({ requestId: 'r', result: { collectionId: 7, followed: 'yes' } }),
+    ).toBe(false);
+    expect(
+      isValidCollectionFollowResult({ requestId: 'r', result: { collectionId: 7 } }),
+    ).toBe(false);
+  });
+
+  it('rejects a non-object result', () => {
+    expect(isValidCollectionFollowResult({ requestId: 'r', result: 'ok' })).toBe(false);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Queue position, ETA and progress (`eta`, and a step's `queue` / `progress` /
+// `startedAt` / `completedAt`). The contract is shared with the civitai host.
+//
+// 🔴 A MALFORMED ONE IS STRIPPED, NOT FATAL. `isValidWorkflowSnapshot` does not
+// look at these fields; `projectInboundPayload` removes a malformed one and
+// delivers the rest, so a bad estimate never drops status and outputs (and
+// stalls `watch`). Every expectation below is written out literally.
+// ──────────────────────────────────────────────────────────────────────────
+describe('workflow snapshot queue/ETA fields', () => {
+  const QUEUED = {
+    workflowId: 'wf_q',
+    status: 'processing',
+    imageUrls: ['https://x/earlier.png'],
+    steps: [
+      {
+        name: 'draw',
+        $type: 'imageGen',
+        status: 'pending',
+        queue: {
+          precedingJobs: 3,
+          estimatedStartAt: '2026-11-14T12:00:20.000Z',
+          estimatedCompleteAt: '2026-11-14T12:00:45.000Z',
+          support: 'available',
+        },
+        progress: null,
+        startedAt: null,
+        completedAt: null,
+      },
+    ],
+    eta: {
+      stepName: 'draw',
+      queuedAhead: 3,
+      startsAt: '2026-11-14T12:00:20.000Z',
+      completesAt: '2026-11-14T12:00:45.000Z',
+      progress: null,
+      support: 'available',
+    },
+  };
+  const PROCESSING = {
+    workflowId: 'wf_p',
+    status: 'processing',
+    steps: [
+      {
+        name: 'draw',
+        $type: 'imageGen',
+        status: 'processing',
+        queue: null,
+        progress: 0.42,
+        startedAt: '2026-11-14T12:00:21.000Z',
+        completedAt: null,
+      },
+    ],
+    eta: {
+      stepName: 'draw',
+      queuedAhead: null,
+      startsAt: null,
+      completesAt: null,
+      progress: 0.42,
+      support: null,
+    },
+  };
+  const reply = (snapshot: unknown) => ({ requestId: 'r1', snapshot });
+  const deliver = (snapshot: unknown) => {
+    const payload = reply(snapshot);
+    expect(isValidWorkflowReply(payload)).toBe(true);
+    return (projectInboundPayload('WORKFLOW_STATUS', payload) as { snapshot: unknown }).snapshot;
+  };
+
+  it('passes a well-formed QUEUED snapshot through unchanged, by identity', () => {
+    const payload = reply(QUEUED);
+    expect(isValidWorkflowReply(payload)).toBe(true);
+    const out = projectInboundPayload('WORKFLOW_STATUS', payload) as typeof payload;
+    expect(out).toBe(payload);
+    expect(out.snapshot.eta).toEqual({
+      stepName: 'draw',
+      queuedAhead: 3,
+      startsAt: '2026-11-14T12:00:20.000Z',
+      completesAt: '2026-11-14T12:00:45.000Z',
+      progress: null,
+      support: 'available',
+    });
+    expect(out.snapshot.steps[0]!.queue?.precedingJobs).toBe(3);
+  });
+
+  it('passes a well-formed PROCESSING snapshot through unchanged, by identity', () => {
+    const payload = reply(PROCESSING);
+    expect(isValidWorkflowReply(payload)).toBe(true);
+    const out = projectInboundPayload('WORKFLOW_STATUS', payload) as typeof payload;
+    expect(out).toBe(payload);
+    expect(out.snapshot.eta.progress).toBe(0.42);
+    expect(out.snapshot.steps[0]!.progress).toBe(0.42);
+    expect(out.snapshot.steps[0]!.startedAt).toBe('2026-11-14T12:00:21.000Z');
+  });
+
+  it('passes an old-host snapshot with none of the fields', () => {
+    const old = { workflowId: 'w', status: 'processing', steps: [{ name: 'draw', $type: 'imageGen', status: 'processing' }] };
+    expect(isValidWorkflowSnapshot(old)).toBe(true);
+    const payload = reply(old);
+    expect(projectInboundPayload('WORKFLOW_STATUS', payload)).toBe(payload);
+    expect(projectWorkflowSnapshot(old)).toBe(old);
+  });
+
+  // 🔴 ABSENT MEANS NULL. The host omits a field with nothing to report rather
+  // than sending null, so a NON-terminal snapshot can lack `eta` and every step
+  // field (nothing queued or running, or a poll the host did not read). It must
+  // cross untouched, with the keys still absent.
+  it.each([
+    ['a queued step with only its queue (host encoding)', {
+      workflowId: 'w', status: 'pending',
+      steps: [{ name: 'gen', $type: 'imageGen', status: 'pending', queue: QUEUED.steps[0]!.queue }],
+      eta: QUEUED.eta,
+    }],
+    ['a running step with no progress, queue or completedAt', {
+      workflowId: 'w', status: 'processing',
+      steps: [{ name: 'train', $type: 'training', status: 'processing', startedAt: '2026-11-14T12:00:21Z' }],
+      eta: { ...PROCESSING.eta, stepName: 'train', progress: null },
+    }],
+    ['no eta and no step fields at all', {
+      workflowId: 'w', status: 'processing',
+      steps: [{ name: 'gen', $type: 'imageGen', status: 'processing' }],
+    }],
+    ['the rate-limited placeholder', { workflowId: 'w', status: 'processing' }],
+  ])('passes a non-terminal snapshot with the eta fields absent: %s', (_, snapshot) => {
+    expect(isValidWorkflowSnapshot(snapshot)).toBe(true);
+    // By identity: nothing was added, so an absent key stays absent.
+    expect(deliver(snapshot)).toBe(snapshot);
+  });
+
+  it.each([
+    ['eta: null (terminal)', { ...PROCESSING, status: 'succeeded', eta: null }],
+    ['eta absent (terminal, host encoding)', { workflowId: 'w', status: 'succeeded' }],
+    ['progress 0 and 1, the inclusive bounds', { ...PROCESSING, eta: { ...PROCESSING.eta, progress: 1 }, steps: [{ ...PROCESSING.steps[0]!, progress: 0 }] }],
+    ['precedingJobs / queuedAhead 0', { ...QUEUED, eta: { ...QUEUED.eta, queuedAhead: 0 }, steps: [{ ...QUEUED.steps[0]!, queue: { ...QUEUED.steps[0]!.queue, precedingJobs: 0 } }] }],
+    ['a support value the SDK does not know yet', { ...QUEUED, eta: { ...QUEUED.eta, support: 'someFutureValue' }, steps: [{ ...QUEUED.steps[0]!, queue: { ...QUEUED.steps[0]!.queue, support: '' } }] }],
+    // Timestamps are not parsed: any string is kept.
+    ['timestamps that are not ISO dates', { ...QUEUED, eta: { ...QUEUED.eta, startsAt: 'soon', completesAt: '' }, steps: [{ ...QUEUED.steps[0]!, startedAt: 'x', completedAt: 'y' }] }],
+    ['every field null', { ...QUEUED, eta: { stepName: '', queuedAhead: null, startsAt: null, completesAt: null, progress: null, support: null }, steps: [{ ...QUEUED.steps[0]!, queue: { precedingJobs: null, estimatedStartAt: null, estimatedCompleteAt: null, support: 'unsupported' } }] }],
+  ])('keeps the lenient case: %s', (_, snapshot) => {
+    expect(deliver(snapshot)).toBe(snapshot);
+  });
+
+  // The whole known FIELD is removed; nothing else moves. `status`, `imageUrls`
+  // and the rest of the step survive.
+  const queuedWithoutEta = {
+    workflowId: 'wf_q',
+    status: 'processing',
+    imageUrls: ['https://x/earlier.png'],
+    steps: QUEUED.steps,
+  };
+  it.each([
+    ['eta.progress 1.5', { progress: 1.5 }],
+    ['eta.progress a string', { progress: '0.5' }],
+    ['eta.progress -0.1', { progress: -0.1 }],
+    ['eta.progress NaN', { progress: Number.NaN }],
+    ['eta.queuedAhead -1', { queuedAhead: -1 }],
+    ['eta.queuedAhead 2.5', { queuedAhead: 2.5 }],
+    ['eta.support a number', { support: 7 }],
+    ['eta.startsAt a number', { startsAt: 1_700_000_000_000 }],
+    ['eta.stepName missing', { stepName: undefined }],
+  ])('strips a malformed eta (%s) and keeps the rest', (_, patch) => {
+    const eta: Record<string, unknown> = { ...QUEUED.eta, ...patch };
+    if ('stepName' in patch) delete eta.stepName;
+    const out = deliver({ ...QUEUED, eta });
+    expect(out).toStrictEqual(queuedWithoutEta);
+  });
+
+  it.each([
+    ['a string', 'soon'],
+    ['an array', []],
+    ['a number', 3],
+  ])('strips an eta that is %s', (_, eta) => {
+    expect(deliver({ ...QUEUED, eta })).toStrictEqual(queuedWithoutEta);
+  });
+
+  const queuedStep = QUEUED.steps[0]!;
+  it.each([
+    ['queue.precedingJobs -1', { queue: { ...queuedStep.queue, precedingJobs: -1 } }, 'queue'],
+    ['queue.precedingJobs 2.5', { queue: { ...queuedStep.queue, precedingJobs: 2.5 } }, 'queue'],
+    ['queue.support a number', { queue: { ...queuedStep.queue, support: 1 } }, 'queue'],
+    ['queue.estimatedStartAt missing', { queue: { precedingJobs: 3, estimatedCompleteAt: null, support: 'available' } }, 'queue'],
+    ['queue a string', { queue: '3 ahead' }, 'queue'],
+    ['progress 1.5', { progress: 1.5 }, 'progress'],
+    ['progress a string', { progress: '42%' }, 'progress'],
+    ['startedAt a number', { startedAt: 5 }, 'startedAt'],
+    ['completedAt an object', { completedAt: {} }, 'completedAt'],
+  ])('strips a malformed step %s and keeps the rest', (_, patch, removed) => {
+    const out = deliver({ ...QUEUED, steps: [{ ...queuedStep, ...patch }] });
+    const expectedStep: Record<string, unknown> = { ...queuedStep };
+    delete expectedStep[removed];
+    expect(out).toStrictEqual({ ...QUEUED, steps: [expectedStep] });
+    expect(Object.keys((out as typeof QUEUED).steps[0]!)).not.toContain(removed);
+  });
+
+  it('strips per step: a bad second step does not touch the first or the eta', () => {
+    const second = { name: 'upscale', $type: 'imageUpscaler', status: 'pending', progress: 7 };
+    const out = deliver({ ...QUEUED, steps: [queuedStep, second] });
+    expect(out).toStrictEqual({
+      ...QUEUED,
+      steps: [queuedStep, { name: 'upscale', $type: 'imageUpscaler', status: 'pending' }],
+    });
+  });
+
+  it('still REJECTS a malformed field it always rejected, eta or no eta', () => {
+    expect(isValidWorkflowSnapshot({ ...QUEUED, steps: [{ ...queuedStep, status: 'queued' }] })).toBe(false);
+    expect(isValidWorkflowSnapshot({ ...QUEUED, imageUrls: 'x' })).toBe(false);
+  });
+
+  // 🔴 The SEAM: the projection is wired for every reply that carries a
+  // snapshot. A type missing from this list would deliver a malformed eta raw.
+  it.each([
+    'ESTIMATE_RESULT',
+    'WORKFLOW_SUBMITTED',
+    'WORKFLOW_STATUS',
+    'WORKFLOW_CANCELED',
+    'TRAINING_RESULT',
+    'CONFIRMED_STEP_RESULT',
+  ])('projects the snapshot of %s', (type) => {
+    const out = projectInboundPayload(type, reply({ ...QUEUED, eta: { ...QUEUED.eta, progress: 2 } }));
+    expect(out).toStrictEqual(reply(queuedWithoutEta));
+  });
+
+  it('projects each cell of ESTIMATE_BATCH_RESULT', () => {
+    const aggregate = { total: 0, pricedCells: 0, cellCount: 2 };
+    const bad = { ...QUEUED, eta: { ...QUEUED.eta, queuedAhead: -3 } };
+    const payload = { requestId: 'r', snapshots: [PROCESSING, bad], aggregate };
+    expect(isValidEstimateBatchResult(payload)).toBe(true);
+    expect(projectInboundPayload('ESTIMATE_BATCH_RESULT', payload)).toStrictEqual({
+      requestId: 'r',
+      snapshots: [PROCESSING, queuedWithoutEta],
+      aggregate,
+    });
+  });
+
+  // The throttled-poll marker (civitai/civitai#8980): a poll the host could not
+  // serve. Only the literal `true` is the marker; anything else is removed so it
+  // can never be mistaken for one, and the reply is delivered as a plain snapshot.
+  it('passes the throttled marker through, by identity', () => {
+    const placeholder = { workflowId: 'w', status: 'processing', throttled: true };
+    expect(isValidWorkflowSnapshot(placeholder)).toBe(true);
+    expect(deliver(placeholder)).toBe(placeholder);
+  });
+
+  it.each([
+    ['false', false],
+    ['a string', 'yes'],
+    ['1', 1],
+    ['null', null],
+  ])('strips a throttled value that is not true: %s', (_, throttled) => {
+    expect(deliver({ workflowId: 'w', status: 'processing', throttled })).toStrictEqual({
+      workflowId: 'w',
+      status: 'processing',
+    });
+  });
+
+  it('leaves every other type alone', () => {
+    const payload = reply({ ...QUEUED, eta: 'bad' });
+    expect(projectInboundPayload('PUBLISH_RESULT', payload)).toBe(payload);
+  });
+});
+
+// The host's own contract fixtures: a copy of the two whole-snapshot
+// expectations (`toStrictEqual`) pinned in civitai/civitai#8980's
+// `src/server/services/blocks/__tests__/workflow.service.test.ts`. Empty
+// fields are OMITTED there, as the host sends them.
+describe('host-workflow-snapshot.eta.json contract fixture', () => {
+  const path = join(__dirname, 'fixtures/host-workflow-snapshot.eta.json');
+
+  it('exists', () => {
+    expect(existsSync(path)).toBe(true);
+  });
+
+  it.each(['queued', 'processing'])('the %s snapshot validates and crosses unchanged', (key) => {
+    const fixture = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    const snapshot = fixture[key];
+    expect(snapshot).toBeDefined();
+    expect(isValidWorkflowSnapshot(snapshot)).toBe(true);
+    const payload = { requestId: 'r', snapshot };
+    expect(isValidWorkflowReply(payload)).toBe(true);
+    expect(projectInboundPayload('WORKFLOW_STATUS', payload)).toBe(payload);
+    expect((snapshot as { eta?: unknown }).eta).not.toBeUndefined();
+  });
+
+  it('is the host copy: its ids, step names and values', () => {
+    const fixture = JSON.parse(readFileSync(path, 'utf8')) as Record<string, Record<string, unknown>>;
+    expect(fixture.queued!.workflowId).toBe('wf_contract_queued');
+    expect(fixture.queued!.eta).toEqual({
+      stepName: 'gen',
+      queuedAhead: 7,
+      startsAt: '2026-11-14T12:00:07Z',
+      completesAt: '2026-11-14T12:01:13Z',
+      progress: null,
+      support: 'available',
+    });
+    expect(fixture.processing!.workflowId).toBe('wf_contract_processing');
+    expect(fixture.processing!.steps).toEqual([
+      { name: 'clip', $type: 'videoGen', status: 'processing', progress: 0.42, startedAt: '2026-11-14T12:00:21Z' },
+    ]);
   });
 });

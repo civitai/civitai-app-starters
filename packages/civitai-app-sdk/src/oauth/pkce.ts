@@ -10,7 +10,17 @@ export interface Pkce {
   method: 'S256';
 }
 
-/** Generate a PKCE code verifier and S256 challenge. */
+/**
+ * Generate a PKCE code verifier and S256 challenge.
+ *
+ * Persist `verifier` against the user's session (e.g. a sealed cookie) and
+ * send `challenge` to {@link buildAuthorizeUrl}; the `verifier` is replayed to
+ * {@link exchangeCode} on the callback.
+ *
+ * @example
+ * const { verifier, challenge } = generatePkce();
+ * const url = buildAuthorizeUrl({ clientId, redirectUri, scope, state, codeChallenge: challenge });
+ */
 export function generatePkce(): Pkce {
   const verifier = base64UrlEncode(randomBytes(32));
   const challenge = base64UrlEncode(createHash('sha256').update(verifier).digest());

@@ -1,0 +1,944 @@
+import { act, renderHook } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type {
+  BlockGenerationSourceImageInfo,
+  BlockImageScanResult,
+  BlockInitPayload,
+  BlockPendingImageInfo,
+  BlockSharedUploadImageInfo,
+  BlockUploadedImageInfo,
+} from '@civitai/app-sdk/blocks';
+
+import { useImageUpload } from '../src/hooks/useImageUpload.js';
+import {
+  HUMAN_INTERACTION_TIMEOUT_MS,
+  TRAINING_DATA_UPLOAD_TIMEOUT_MS,
+} from '../src/transport/requestTimeouts.js';
+import { RequestTimeoutError } from '../src/transport/transport.js';
+import { getTransport } from '../src/transport/singleton.js';
+import { resetTransport } from '../src/testing.js';
+
+/**
+ * Host-mediated image-upload hook. Mirrors the useResourcePicker scaffold: drive
+ * the iframe transport via window postMessage, assert the OUTBOUND
+ * OPEN_IMAGE_UPLOAD message + that the hook resolves on the matching
+ * IMAGE_UPLOAD_RESULT (by requestId), handles the cancelled (no `selected`) case,
+ * and does not reject at the default ~30s timeout (upload is human-interactive).
+ */
+
+const PARENT_ORIGIN = 'https://civitai.com';
+
+function buildInit(): BlockInitPayload {
+  return {
+    blockInstanceId: 'i',
+    blockId: 'b',
+    appId: 'app_test',
+    token: { raw: 'jwt', scopes: [], expiresAt: new Date(Date.now() + 60_000).toISOString() },
+    context: { slotId: 's' },
+    settings: { publisherSettings: {}, userSettings: {} },
+    viewer: null,
+    theme: 'light',
+    renderMode: 'iframe',
+  };
+}
+
+const MODERATED: BlockUploadedImageInfo = {
+  imageId: 987654,
+  nsfwLevel: 1,
+  contentRating: 'pg',
+  url: 'https://image.civitai.com/x/original=true/pic.jpeg',
+};
+
+const GENERATION_SOURCE: BlockGenerationSourceImageInfo = {
+  url: 'https://image.civitai.com/x/original=true/source.jpeg',
+  width: 768,
+  height: 1024,
+};
+
+describe('useImageUpload', () => {
+  let postMessageMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    postMessageMock = vi.fn();
+    Object.defineProperty(window, 'parent', {
+      value: { postMessage: postMessageMock },
+      configurable: true,
+      writable: true,
+    });
+    getTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'BLOCK_INIT', payload: buildInit() },
+        origin: PARENT_ORIGIN,
+      }),
+    );
+    postMessageMock.mockClear();
+  });
+
+  afterEach(() => {
+    resetTransport();
+  });
+
+  function lastSent() {
+    return postMessageMock.mock.calls[postMessageMock.mock.calls.length - 1]![0] as {
+      type: string;
+      payload: { requestId: string };
+    };
+  }
+
+  function replyResult(requestId: string, selected?: unknown) {
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'IMAGE_UPLOAD_RESULT', payload: { requestId, selected } },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+  }
+
+  it('open() sends OPEN_IMAGE_UPLOAD with a requestId and no extra payload', () => {
+    const { result } = renderHook(() => useImageUpload());
+    act(() => {
+      result.current.open().catch(() => {});
+    });
+    const sent = lastSent();
+    expect(sent.type).toBe('OPEN_IMAGE_UPLOAD');
+    expect(typeof sent.payload.requestId).toBe('string');
+    expect(Object.keys(sent.payload)).toEqual(['requestId']);
+  });
+
+  it("open() omits `purpose` for the default (display) mode — byte-compatible wire", () => {
+    const { result } = renderHook(() => useImageUpload({ purpose: 'display' }));
+    act(() => {
+      result.current.open().catch(() => {});
+    });
+    const sent = lastSent() as { payload: { requestId: string; purpose?: string } };
+    expect(sent.payload.purpose).toBeUndefined();
+    expect(Object.keys(sent.payload)).toEqual(['requestId']);
+  });
+
+  it("open() sends purpose:'generationSource' when requested", () => {
+    const { result } = renderHook(() => useImageUpload({ purpose: 'generationSource' }));
+    act(() => {
+      result.current.open().catch(() => {});
+    });
+    const sent = lastSent() as { payload: { requestId: string; purpose?: string } };
+    expect(sent.type).toBe('OPEN_IMAGE_UPLOAD');
+    expect(sent.payload.purpose).toBe('generationSource');
+    expect(typeof sent.payload.requestId).toBe('string');
+  });
+
+  it('generationSource: resolves with the { url, width, height } source shape', async () => {
+    const { result } = renderHook(() => useImageUpload({ purpose: 'generationSource' }));
+    let pick!: Promise<BlockGenerationSourceImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId, GENERATION_SOURCE);
+    await expect(pick).resolves.toEqual(GENERATION_SOURCE);
+  });
+
+  it('generationSource: resolves to null when the user dismissed', async () => {
+    const { result } = renderHook(() => useImageUpload({ purpose: 'generationSource' }));
+    let pick!: Promise<BlockGenerationSourceImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId); // cancelled — no `selected`
+    await expect(pick).resolves.toBeNull();
+  });
+
+  // ---- purpose: 'trainingData' (civitai/civitai#6461) — several images, one reply ----
+
+  it("trainingData: open() sends purpose:'trainingData' and nothing else", () => {
+    const { result } = renderHook(() => useImageUpload({ purpose: 'trainingData' }));
+    act(() => {
+      result.current.open().catch(() => {});
+    });
+    const sent = lastSent() as { type: string; payload: { requestId: string; purpose?: string } };
+    expect(sent.type).toBe('OPEN_IMAGE_UPLOAD');
+    expect(sent.payload.purpose).toBe('trainingData');
+    expect(Object.keys(sent.payload).sort()).toEqual(['purpose', 'requestId']);
+  });
+
+  it('trainingData: resolves with each image\'s air, in the order the host sent it, and no url', async () => {
+    // An older host still sends a url beside each air; the hook passes only the air on.
+    const images = [
+      { url: 'https://example.test/v2/consumer/blobs/k1.png', air: 'k1.png' },
+      { url: 'https://example.test/v2/consumer/blobs/k2.webp', air: 'k2.webp' },
+    ];
+    const { result } = renderHook(() => useImageUpload({ purpose: 'trainingData' }));
+    let pick!: Promise<unknown>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId, { images });
+    await expect(pick).resolves.toStrictEqual([{ air: 'k1.png' }, { air: 'k2.webp' }]);
+  });
+
+  it('trainingData: resolves to null when the viewer cancelled (no `selected`)', async () => {
+    const { result } = renderHook(() => useImageUpload({ purpose: 'trainingData' }));
+    let pick!: Promise<unknown>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId);
+    await expect(pick).resolves.toBeNull();
+  });
+
+  // 🔴 The host replies only when its modal CLOSES, after uploading every
+  // original (up to 50). Under the 10-minute human bound a slow upload made
+  // open() reject while the host was still working, the late reply was dropped,
+  // and the keys the host now remembers for RUN_TRAINING never reached the block.
+  it('trainingData: a reply arriving AFTER the 10-minute human bound still resolves the images', async () => {
+    vi.useFakeTimers();
+    try {
+      const images = [{ air: 'k1.png' }];
+      const { result } = renderHook(() => useImageUpload({ purpose: 'trainingData' }));
+      let pick!: Promise<unknown>;
+      act(() => {
+        pick = result.current.open();
+      });
+      const sent = lastSent();
+      let settled: 'resolved' | 'rejected' | null = null;
+      void pick.then(
+        () => {
+          settled = 'resolved';
+        },
+        () => {
+          settled = 'rejected';
+        },
+      );
+      // A minute past the human bound — the 10-minute literal, not the constant,
+      // so a mutant that shortens the constant cannot move the probe with it.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10 * 60_000 + 60_000);
+      });
+      expect(settled).toBeNull();
+      replyResult(sent.payload.requestId, { images });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await expect(pick).resolves.toEqual(images);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('trainingData: its own bound is pinned (one hour), longer than the human bound, and still finite', async () => {
+    expect(TRAINING_DATA_UPLOAD_TIMEOUT_MS).toBe(60 * 60_000);
+    expect(TRAINING_DATA_UPLOAD_TIMEOUT_MS).toBeGreaterThan(HUMAN_INTERACTION_TIMEOUT_MS);
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useImageUpload({ purpose: 'trainingData' }));
+      let pick!: Promise<unknown>;
+      act(() => {
+        pick = result.current.open();
+      });
+      const caught = pick.catch((e: unknown) => e);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60 * 60_000 + 1);
+      });
+      // A host that never answers still ends the wait — INVARIANT (the old
+      // 10-minute bound rejected here too).
+      expect(await caught).toBeInstanceOf(RequestTimeoutError);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('trainingData: a single-image shape (a host that ignored the purpose) resolves null, never a fake list', async () => {
+    // A host that predates the purpose normalises it to `display` and answers
+    // with ONE moderated image — no `air`, nothing a training item can name.
+    const { result } = renderHook(() => useImageUpload({ purpose: 'trainingData' }));
+    let pick!: Promise<unknown>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId, MODERATED);
+    await expect(pick).resolves.toBeNull();
+  });
+
+  it('resolves with the moderated image on the matching IMAGE_UPLOAD_RESULT', async () => {
+    const { result } = renderHook(() => useImageUpload());
+    let pick!: Promise<unknown>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId, MODERATED);
+    await expect(pick).resolves.toEqual(MODERATED);
+  });
+
+  it('resolves to null when the user dismissed (no `selected`)', async () => {
+    const { result } = renderHook(() => useImageUpload());
+    let pick!: Promise<unknown>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId); // cancelled — no `selected`
+    await expect(pick).resolves.toBeNull();
+  });
+
+  it('ignores an IMAGE_UPLOAD_RESULT with a mismatched requestId', async () => {
+    const { result } = renderHook(() => useImageUpload());
+    let pick!: Promise<unknown>;
+    act(() => {
+      pick = result.current.open();
+    });
+    const sent = lastSent();
+    replyResult('some-other-id', MODERATED);
+    let settled = false;
+    void pick.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    replyResult(sent.payload.requestId, MODERATED);
+    await expect(pick).resolves.toEqual(MODERATED);
+  });
+
+  it('does NOT reject at the default ~30s timeout (upload is human-interactive)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useImageUpload());
+      let pick!: Promise<unknown>;
+      act(() => {
+        pick = result.current.open();
+      });
+      const sent = lastSent();
+      let settled = false;
+      void pick.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(settled).toBe(false);
+      replyResult(sent.payload.requestId, MODERATED);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await expect(pick).resolves.toEqual(MODERATED);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('default (blocking) open() never sends asyncScan on the wire — byte-compat', () => {
+    const { result } = renderHook(() => useImageUpload());
+    act(() => {
+      result.current.open().catch(() => {});
+    });
+    const sent = lastSent() as { payload: { requestId: string; asyncScan?: boolean } };
+    expect(sent.payload.asyncScan).toBeUndefined();
+    expect(Object.keys(sent.payload)).toEqual(['requestId']);
+  });
+
+  // `share`: the per-upload opt-in that lets this app's other viewers see a scanned
+  // display upload. On the wire ONLY when asked for, and only for a display upload.
+  it('share: true sends share:true and nothing else on a display upload', () => {
+    const { result } = renderHook(() => useImageUpload({ share: true }));
+    act(() => {
+      result.current.open().catch(() => {});
+    });
+    const sent = lastSent() as { payload: Record<string, unknown> };
+    expect(sent.payload.share).toBe(true);
+    expect(Object.keys(sent.payload).sort()).toEqual(['requestId', 'share']);
+  });
+
+  it("share: true with purpose 'display' still sends share:true and no purpose", () => {
+    const { result } = renderHook(() => useImageUpload({ purpose: 'display', share: true }));
+    act(() => {
+      result.current.open().catch(() => {});
+    });
+    const sent = lastSent() as { payload: Record<string, unknown> };
+    expect(Object.keys(sent.payload).sort()).toEqual(['requestId', 'share']);
+  });
+
+  it('share: false, or a non-boolean truthy value, sends no share field', () => {
+    for (const share of [false, 'yes' as unknown as boolean, 1 as unknown as boolean]) {
+      const { result } = renderHook(() => useImageUpload({ share }));
+      act(() => {
+        result.current.open().catch(() => {});
+      });
+      expect(Object.keys((lastSent() as { payload: Record<string, unknown> }).payload)).toEqual(['requestId']);
+    }
+  });
+
+  it('share is never sent for a generationSource or trainingData upload', () => {
+    const source = renderHook(() =>
+      useImageUpload({ purpose: 'generationSource', share: true } as unknown as { purpose: 'generationSource' }),
+    );
+    act(() => {
+      source.result.current.open().catch(() => {});
+    });
+    expect(Object.keys((lastSent() as { payload: Record<string, unknown> }).payload).sort()).toEqual([
+      'purpose',
+      'requestId',
+    ]);
+    const training = renderHook(() =>
+      useImageUpload({ purpose: 'trainingData', share: true } as unknown as { purpose: 'trainingData' }),
+    );
+    act(() => {
+      training.result.current.open().catch(() => {});
+    });
+    expect(Object.keys((lastSent() as { payload: Record<string, unknown> }).payload).sort()).toEqual([
+      'purpose',
+      'requestId',
+    ]);
+  });
+
+  function replyError(requestId: string, error: string, extra: Record<string, unknown> = {}) {
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'IMAGE_UPLOAD_RESULT', payload: { requestId, error, ...extra } },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+  }
+
+  it('share: true REJECTS with the host error when the host refuses the shared upload', async () => {
+    const { result } = renderHook(() => useImageUpload({ share: true }));
+    let pick!: Promise<BlockUploadedImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    // The host's exact no-token reply to a share request: `{ requestId, error, shared: false }`.
+    replyError(lastSent().payload.requestId, 'no block token', { shared: false });
+    await expect(pick).rejects.toThrow('no block token');
+  });
+
+  it("share: true resolves null on the host's share-dismiss reply { requestId, shared: false }", async () => {
+    const { result } = renderHook(() => useImageUpload({ share: true }));
+    let pick!: Promise<BlockSharedUploadImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'IMAGE_UPLOAD_RESULT', payload: { requestId: lastSent().payload.requestId, shared: false } },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+    await expect(pick).resolves.toBeNull();
+  });
+
+  it('without share, an error reply still resolves null (unchanged)', async () => {
+    const { result } = renderHook(() => useImageUpload());
+    let pick!: Promise<BlockUploadedImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyError(lastSent().payload.requestId, 'no block token');
+    await expect(pick).resolves.toBeNull();
+  });
+
+  function replyShared(requestId: string, selected: unknown, shared?: unknown) {
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'IMAGE_UPLOAD_RESULT',
+            payload: shared === undefined ? { requestId, selected } : { requestId, selected, shared },
+          },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+  }
+
+  it('share: true resolves with the moderated image and shared: true when the host recorded the share', async () => {
+    const { result } = renderHook(() => useImageUpload({ share: true }));
+    let pick!: Promise<BlockSharedUploadImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyShared(lastSent().payload.requestId, MODERATED, true);
+    await expect(pick).resolves.toEqual({ ...MODERATED, shared: true });
+  });
+
+  it('share: true reads shared: false when the host says it did not record the share', async () => {
+    const { result } = renderHook(() => useImageUpload({ share: true }));
+    let pick!: Promise<BlockSharedUploadImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyShared(lastSent().payload.requestId, MODERATED, false);
+    await expect(pick).resolves.toEqual({ ...MODERATED, shared: false });
+  });
+
+  it('share: true on an OLD host (no echo) reads shared: false, never true', async () => {
+    const { result } = renderHook(() => useImageUpload({ share: true }));
+    let pick!: Promise<BlockSharedUploadImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyShared(lastSent().payload.requestId, MODERATED);
+    await expect(pick).resolves.toEqual({ ...MODERATED, shared: false });
+  });
+
+  it('an unshared upload carries no shared field, even if the host sends one', async () => {
+    const { result } = renderHook(() => useImageUpload());
+    let pick!: Promise<BlockUploadedImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyShared(lastSent().payload.requestId, MODERATED, true);
+    await expect(pick).resolves.toEqual(MODERATED);
+  });
+});
+
+/**
+ * Non-blocking (asyncScan) display flow: open() early-resolves with a PENDING
+ * handle on IMAGE_UPLOAD_RESULT, then scanStatus(handle) resolves the async
+ * verdict streamed on the host→block IMAGE_SCAN_RESOLVED push (correlated by the
+ * generated requestId + imageId). Drives the REAL IframeTransport via window
+ * postMessage, mirroring the blocking suite above.
+ */
+describe('useImageUpload — asyncScan (non-blocking display)', () => {
+  let postMessageMock: ReturnType<typeof vi.fn>;
+
+  const PENDING = { status: 'pending', imageId: 4242, url: MODERATED.url } as const;
+
+  beforeEach(() => {
+    postMessageMock = vi.fn();
+    Object.defineProperty(window, 'parent', {
+      value: { postMessage: postMessageMock },
+      configurable: true,
+      writable: true,
+    });
+    getTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'BLOCK_INIT', payload: buildInit() },
+        origin: PARENT_ORIGIN,
+      }),
+    );
+    postMessageMock.mockClear();
+  });
+
+  afterEach(() => {
+    resetTransport();
+  });
+
+  function lastSent() {
+    return postMessageMock.mock.calls[postMessageMock.mock.calls.length - 1]![0] as {
+      type: string;
+      payload: { requestId: string; asyncScan?: boolean; purpose?: string };
+    };
+  }
+
+  function replyResult(requestId: string, selected?: unknown) {
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'IMAGE_UPLOAD_RESULT', payload: { requestId, selected } },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+  }
+
+  function dispatchScan(requestId: string, imageId: number, result: BlockImageScanResult) {
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'IMAGE_SCAN_RESOLVED', payload: { requestId, imageId, result } },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+  }
+
+  it("open() sends OPEN_IMAGE_UPLOAD {asyncScan:true} with no `purpose` (display byte-compat)", () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    act(() => {
+      result.current.open().catch(() => {});
+    });
+    const sent = lastSent();
+    expect(sent.type).toBe('OPEN_IMAGE_UPLOAD');
+    expect(sent.payload.asyncScan).toBe(true);
+    expect(sent.payload.purpose).toBeUndefined();
+    expect(Object.keys(sent.payload).sort()).toEqual(['asyncScan', 'requestId']);
+  });
+
+  it('share: true with asyncScan REJECTS with the host error on a refused shared upload', async () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true, share: true }));
+    let pick!: Promise<unknown>;
+    act(() => {
+      pick = result.current.open();
+    });
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'IMAGE_UPLOAD_RESULT',
+            payload: { requestId: lastSent().payload.requestId, error: 'no block token', shared: false },
+          },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+    await expect(pick).rejects.toThrow('no block token');
+  });
+
+  it('share: true with asyncScan: the pending handle carries the shared echo', async () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true, share: true }));
+    let pick!: Promise<unknown>;
+    act(() => {
+      pick = result.current.open();
+    });
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'IMAGE_UPLOAD_RESULT',
+            payload: {
+              requestId: lastSent().payload.requestId,
+              selected: { status: 'pending', imageId: 4242, url: 'https://image.civitai.com/x/p.jpeg' },
+              shared: true,
+            },
+          },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+    await expect(pick).resolves.toEqual({
+      status: 'pending',
+      imageId: 4242,
+      url: 'https://image.civitai.com/x/p.jpeg',
+      shared: true,
+    });
+  });
+
+  it('share: true rides along with asyncScan', () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true, share: true }));
+    act(() => {
+      result.current.open().catch(() => {});
+    });
+    const sent = lastSent() as { payload: Record<string, unknown> };
+    expect(sent.payload.share).toBe(true);
+    expect(Object.keys(sent.payload).sort()).toEqual(['asyncScan', 'requestId', 'share']);
+  });
+
+  it('open() early-resolves with the pending handle', async () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    let pick!: Promise<BlockPendingImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId, PENDING);
+    await expect(pick).resolves.toEqual(PENDING);
+  });
+
+  it('scanStatus() resolves scanned when the verdict arrives AFTER the call', async () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    let pick!: Promise<BlockPendingImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    const requestId = lastSent().payload.requestId;
+    replyResult(requestId, PENDING);
+    const handle = (await pick)!;
+
+    let verdict!: Promise<BlockImageScanResult>;
+    act(() => {
+      verdict = result.current.scanStatus!(handle);
+    });
+    // verdict streamed on a later tick
+    dispatchScan(requestId, handle.imageId, { status: 'scanned', image: MODERATED });
+    await expect(verdict).resolves.toEqual({ status: 'scanned', image: MODERATED });
+  });
+
+  it('scanStatus() resolves from the BUFFER when the verdict arrived BEFORE the call', async () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    let pick!: Promise<BlockPendingImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    const requestId = lastSent().payload.requestId;
+    replyResult(requestId, PENDING);
+    const handle = (await pick)!;
+
+    // verdict lands before scanStatus is ever called → buffered by the hook
+    dispatchScan(requestId, handle.imageId, { status: 'scanned', image: MODERATED });
+    await expect(result.current.scanStatus!(handle)).resolves.toEqual({
+      status: 'scanned',
+      image: MODERATED,
+    });
+  });
+
+  it('scanStatus() surfaces a blocked (terminal) verdict — no usable image', async () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    let pick!: Promise<BlockPendingImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    const requestId = lastSent().payload.requestId;
+    replyResult(requestId, PENDING);
+    const handle = (await pick)!;
+
+    dispatchScan(requestId, handle.imageId, { status: 'blocked', reason: 'over the SFW ceiling' });
+    const verdict = await result.current.scanStatus!(handle);
+    expect(verdict).toEqual({ status: 'blocked', reason: 'over the SFW ceiling' });
+    expect('image' in verdict).toBe(false);
+  });
+
+  it('scanStatus() surfaces a retryable error verdict', async () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    let pick!: Promise<BlockPendingImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    const requestId = lastSent().payload.requestId;
+    replyResult(requestId, PENDING);
+    const handle = (await pick)!;
+
+    dispatchScan(requestId, handle.imageId, { status: 'error', message: 'poll timed out' });
+    await expect(result.current.scanStatus!(handle)).resolves.toEqual({
+      status: 'error',
+      message: 'poll timed out',
+    });
+  });
+
+  it('EVICTS a terminal verdict once consumed (bounded memory: L1)', async () => {
+    // A long-lived block doing many uploads must not grow the internal scan map
+    // unbounded. Once a TERMINAL verdict (scanned/blocked) has been handed to a
+    // caller, its entry is dropped — a subsequent scanStatus() on the same handle
+    // no longer finds it (the block never re-polls a terminal verdict anyway).
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    let pick!: Promise<BlockPendingImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    const requestId = lastSent().payload.requestId;
+    replyResult(requestId, PENDING);
+    const handle = (await pick)!;
+
+    dispatchScan(requestId, handle.imageId, { status: 'scanned', image: MODERATED });
+    // First read gets the verdict…
+    await expect(result.current.scanStatus!(handle)).resolves.toEqual({
+      status: 'scanned',
+      image: MODERATED,
+    });
+    // …and consuming it evicted the entry, so a second read no longer finds it.
+    const again = await result.current.scanStatus!(handle);
+    expect(again.status).toBe('error');
+  });
+
+  it('KEEPS a non-terminal (error) verdict entry — retry still works', async () => {
+    // Contrast with eviction: a host-pushed `error` is retryable, so the entry is
+    // NOT evicted and a re-call returns the (buffered) error rather than an
+    // unknown-handle miss.
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    let pick!: Promise<BlockPendingImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    const requestId = lastSent().payload.requestId;
+    replyResult(requestId, PENDING);
+    const handle = (await pick)!;
+
+    dispatchScan(requestId, handle.imageId, { status: 'error', message: 'transient' });
+    await expect(result.current.scanStatus!(handle)).resolves.toEqual({
+      status: 'error',
+      message: 'transient',
+    });
+    // Entry retained: a re-call still resolves to the same buffered error.
+    await expect(result.current.scanStatus!(handle)).resolves.toEqual({
+      status: 'error',
+      message: 'transient',
+    });
+  });
+
+  it('scanStatus() is re-callable: a late verdict after an error/timeout is picked up on retry', async () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+      let pick!: Promise<BlockPendingImageInfo | null>;
+      act(() => {
+        pick = result.current.open();
+      });
+      const requestId = lastSent().payload.requestId;
+      replyResult(requestId, PENDING);
+      const handle = (await pick)!;
+
+      // First call: no verdict yet → the generous hook backstop resolves 'error'.
+      let first!: Promise<BlockImageScanResult>;
+      act(() => {
+        first = result.current.scanStatus!(handle);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(11 * 60_000); // past SCAN_STATUS_TIMEOUT_MS (10m)
+      });
+      await expect(first).resolves.toEqual({ status: 'error', message: 'scan status timed out' });
+
+      // The real verdict arrives late; a retry returns it from the buffer.
+      dispatchScan(requestId, handle.imageId, { status: 'scanned', image: MODERATED });
+      await expect(result.current.scanStatus!(handle)).resolves.toEqual({
+        status: 'scanned',
+        image: MODERATED,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a forged/mismatched-requestId IMAGE_SCAN_RESOLVED (correlation guard)', async () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    let pick!: Promise<BlockPendingImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    const requestId = lastSent().payload.requestId;
+    replyResult(requestId, PENDING);
+    const handle = (await pick)!;
+
+    let verdict!: Promise<BlockImageScanResult>;
+    act(() => {
+      verdict = result.current.scanStatus!(handle);
+    });
+    // Wrong requestId (right imageId): must be ignored — verdict stays pending.
+    dispatchScan('forged-id', handle.imageId, { status: 'scanned', image: MODERATED });
+    let settled = false;
+    void verdict.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    // The genuine verdict (matching requestId) resolves it.
+    dispatchScan(requestId, handle.imageId, { status: 'blocked', reason: 'nope' });
+    await expect(verdict).resolves.toEqual({ status: 'blocked', reason: 'nope' });
+  });
+
+  it('open() returns null when the user dismissed (no `selected`)', async () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    let pick!: Promise<BlockPendingImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId); // dismissed
+    await expect(pick).resolves.toBeNull();
+  });
+
+  it('compat: an OLD host that ignored asyncScan (returns a MODERATED image) → immediately-scanned', async () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    let pick!: Promise<BlockPendingImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    // Old host blocking-resolves the moderated image (no status:'pending').
+    replyResult(lastSent().payload.requestId, MODERATED);
+    const handle = (await pick)!;
+    // The hook wrapped it in a pending-shaped handle carrying the same imageId/url…
+    expect(handle).toEqual({ status: 'pending', imageId: MODERATED.imageId, url: MODERATED.url });
+    // …and pre-buffered a scanned verdict, so scanStatus resolves with NO push.
+    await expect(result.current.scanStatus!(handle)).resolves.toEqual({
+      status: 'scanned',
+      image: MODERATED,
+    });
+  });
+
+  it('scanStatus() on an unknown/foreign handle resolves a retryable error (no hang)', async () => {
+    const { result } = renderHook(() => useImageUpload({ asyncScan: true }));
+    const stray: BlockPendingImageInfo = { status: 'pending', imageId: 999, url: 'https://x/y.jpg' };
+    await expect(result.current.scanStatus!(stray)).resolves.toEqual({
+      status: 'error',
+      message: 'unknown or expired upload handle',
+    });
+  });
+
+  /**
+   * #393 — UNMOUNT MUST SETTLE PENDING `scanStatus()` CALLERS.
+   *
+   * The unmount cleanup used to `clearTimeout` every waiter's backstop and then
+   * walk away, which REMOVED the only future settle path: an `await
+   * scanStatus(handle)` in flight when the block unmounted hung for the life of
+   * the page. A caller awaiting a verdict needs a SETTLED promise more than it
+   * needs a correct one, so unmount resolves every waiter with the RETRYABLE
+   * `'error'` shape the hook already uses for a timeout / an unknown handle —
+   * never a rejection, so no caller needs a new `try`/`catch`.
+   */
+  it('UNMOUNT settles every pending scanStatus() promise (#393)', async () => {
+    const { result, unmount } = renderHook(() => useImageUpload({ asyncScan: true }));
+    let pick!: Promise<BlockPendingImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    const requestId = lastSent().payload.requestId;
+    replyResult(requestId, PENDING);
+    const handle = (await pick)!;
+
+    let verdict!: Promise<BlockImageScanResult>;
+    let second!: Promise<BlockImageScanResult>;
+    act(() => {
+      verdict = result.current.scanStatus!(handle);
+      second = result.current.scanStatus!(handle);
+    });
+
+    // Positive control on the harness: BOTH are genuinely pending beforehand, so
+    // a later settle cannot be an artifact of the promise never having waited.
+    let settledEarly = false;
+    void verdict.then(() => {
+      settledEarly = true;
+    });
+    await Promise.resolve();
+    expect(settledEarly).toBe(false);
+
+    act(() => {
+      unmount();
+    });
+
+    const UNMOUNTED = {
+      status: 'error',
+      message: 'scan status unavailable (the upload hook unmounted)',
+    };
+    await expect(settleWithin(verdict, 50)).resolves.toEqual(UNMOUNTED);
+    await expect(settleWithin(second, 50)).resolves.toEqual(UNMOUNTED);
+  });
+
+  it('scanStatus() AFTER unmount resolves immediately rather than arming a 10-minute wait (#393)', async () => {
+    const { result, unmount } = renderHook(() => useImageUpload({ asyncScan: true }));
+    let pick!: Promise<BlockPendingImageInfo | null>;
+    act(() => {
+      pick = result.current.open();
+    });
+    replyResult(lastSent().payload.requestId, PENDING);
+    const handle = (await pick)!;
+
+    act(() => {
+      unmount();
+    });
+
+    // The tracking map is dropped on unmount, so a post-unmount call takes the
+    // existing unknown-handle path (retryable, immediate) instead of registering
+    // a waiter nothing will ever resolve.
+    await expect(settleWithin(result.current.scanStatus!(handle), 50)).resolves.toEqual({
+      status: 'error',
+      message: 'unknown or expired upload handle',
+    });
+  });
+});
+
+/**
+ * Resolve to `STILL_PENDING` if `p` has not settled within `ms`. Makes "the
+ * promise hangs" a readable assertion failure instead of a suite-level timeout.
+ */
+const STILL_PENDING = { __stillPending: true } as const;
+function settleWithin<T>(p: Promise<T>, ms: number): Promise<T | typeof STILL_PENDING> {
+  return Promise.race([
+    p,
+    new Promise<typeof STILL_PENDING>((resolve) => setTimeout(() => resolve(STILL_PENDING), ms)),
+  ]);
+}

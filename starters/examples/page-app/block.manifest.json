@@ -1,0 +1,43 @@
+{
+  "$schema": "https://civitai.com/schemas/app-block/v1.json",
+  "blockId": "favourites-board",
+  "version": "0.1.0",
+  "name": "Favourites Board",
+  "tagline": "Pin the Civitai models you keep coming back to, with a note on why.",
+  "category": "utility",
+  "type": "block",
+  "page": {
+    "path": "/",
+    "title": "Favourites Board"
+  },
+  "scopes": ["user:read:self"],
+  "scopeJustifications": {
+    "user:read:self": "Shows the signed-in viewer's own username at the top of their board. Asked for only when the viewer clicks \"Show my name\"; the board works without it."
+  },
+  "bootSkeleton": true,
+  "iframe": {
+    "minHeight": 400,
+    "maxHeight": null,
+    "resizable": true,
+    "sandbox": "allow-scripts allow-forms"
+  },
+  "analytics": {
+    "events": {
+      "pin_added": { "description": "Viewer pinned a model to their board" },
+      "pin_removed": { "description": "Viewer removed a pin" },
+      "pin_opened": { "description": "Viewer opened a pin's detail page" },
+      "sign_in_clicked": { "description": "Anonymous viewer pressed Sign in" },
+      "name_consent_requested": { "description": "Viewer asked to show their name" },
+      "open_on_civitai": {
+        "description": "Viewer opened a pinned model on civitai.com",
+        "properties": {
+          "target": { "type": "enum", "values": ["current", "new_tab"] }
+        }
+      }
+    }
+  },
+  "contentRating": "g",
+  "minApiVersion": "1.0",
+  "buildCommand": "npm run build",
+  "outputDir": "dist"
+}

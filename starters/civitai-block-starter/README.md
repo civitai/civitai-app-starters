@@ -1,11 +1,20 @@
-# Civitai App Block — Vite + React starter
+# Civitai App starter — web components
 
-Scaffold for an [App Block](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-app-sdk/src/blocks) — an iframe-embedded UI that renders on civitai.com pages and authenticates via short-lived block-scoped JWTs.
+Scaffold for a [Civitai App](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-app-sdk/src/blocks) — an iframe-embedded UI that renders on civitai.com pages — built with **web components and no UI framework**:
 
-> This is **not** the same as the `react-pwa` starter. That one builds a full
-> third-party app with OAuth and a BFF. A *block* is much smaller: a single
-> SPA the host iframes into a slot on civitai.com, with the token + context
-> handed in via `postMessage`.
+- **[`@civitai/sdk`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-sdk)** for the host bridge — `initialize()` waits for the host and hands you the slot context, viewer, theme and `app.host`.
+- **[`@civitai/components`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-components)** `<civitai-*>` custom elements for the UI, themed by **[`@civitai/theme`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-theme)**'s `--civitai-*` tokens.
+- Vite + TypeScript, nothing else.
+
+Prefer React? Scaffold with the Go [`civitai` CLI](https://github.com/civitai/cli)
+— `civitai app create <name>`, whose default `page-money` template is
+Vite + React + TS — or start from one of the React examples in
+[`starters/examples/`](https://github.com/civitai/civitai-app-starters/tree/main/starters/examples), which use the `@civitai/blocks-react` hooks.
+
+> This is **not** the same as the OAuth-app starters (`next-app`, `react-pwa`, …).
+> Those build a full third-party app with OAuth and a BFF. A *block* is much
+> smaller: a single static SPA the host iframes into a slot on civitai.com, with
+> the token + context handed in via `postMessage`.
 
 ## Quick start
 
@@ -14,91 +23,161 @@ npx tiged civitai/civitai-app-starters/starters/civitai-block-starter my-block
 cd my-block
 cp .env.example .env
 
-pnpm install
-pnpm dev:harness
+npm install
+npm run dev:harness
 ```
 
-`pnpm dev:harness` runs Vite at `http://localhost:5173` with a local dev
-harness mounted around your block. The harness simulates the host page —
-posts a fake `BLOCK_INIT`, intercepts your outbound messages, and echoes
-token refreshes so the UI iterates without civitai.com embedding your block.
-
-## What you ship
-
-- **`block.manifest.json`** — registered with civitai.com (server team for now). Declares the slot you target, the scopes you request, and the sandboxed iframe URL.
-- **The Vite build output** (`pnpm build` → `dist/`) — deployed somewhere reachable from civitai.com, served at the URL declared in `iframe.src`. A static host (Cloudflare Pages / Vercel / Netlify) is plenty.
+`npm run dev:harness` runs Vite at `http://localhost:5173` with a local dev
+harness around your block. The harness simulates the host page — posts a fake
+`BLOCK_INIT`, logs your outbound messages, and echoes token refreshes so the UI
+iterates without civitai.com embedding your block.
 
 ## What runs in the iframe
 
-The block hooks read everything from the host via `BLOCK_INIT`:
+```ts
+import '@civitai/components/register'; // the generic <civitai-*> kit (see below for the rest)
+import { initialize } from '@civitai/sdk';
 
-```tsx
-import { useBlockContext, useBlockResize } from '@civitai/blocks-react';
-
-export function App() {
-  const { ready, context, viewer, theme } = useBlockContext();
-  const rootRef = useRef<HTMLDivElement>(null);
-  useBlockResize(rootRef);   // host iframe shrinks/grows to fit content
-
-  if (!ready) return <div>Loading…</div>;
-  return <div ref={rootRef} data-theme={theme}>…</div>;
-}
+const app = await initialize();               // resolves on the host's BLOCK_INIT
+document.documentElement.dataset.theme = app.theme;
+app.onChange(() => { /* theme, context, … changed — re-render */ });
+app.host.autoResize(document.getElementById('root')!); // iframe follows content height
 ```
 
-Other hooks ship with `@civitai/blocks-react`:
+```html
+<civitai-stack gap="sm">
+  <civitai-text as="h2" size="md" weight="bold">Hello</civitai-text>
+  <civitai-badge variant="light">signed in</civitai-badge>
+</civitai-stack>
+```
 
-- `useBlockToken()` — current JWT + auto-refresh + `refresh()` for 401 retries
-- `useBuzzWorkflow()` — `estimate` / `submit` / `poll` against orchestrator workflows
-- `useBlockSettings()` — publisher + per-viewer settings (per-viewer is Phase 2)
+The whole demo is [`src/block.ts`](./src/block.ts). From the same `app` you also get
+`app.site` (the `/api/v1` REST API as the viewer), `app.workflows`
+(generation: `estimate`, `submit`, `wait`, `watch`, `cancel`, `list`), `app.storage` /
+`app.sharedStorage` (per-viewer and cross-viewer app storage),
+`app.requestGrants(scopes)`, and the host's own UI via `app.host` — `navigate`,
+`openResourcePicker`, `openBuzzPurchase`, `openImageUpload`,
+`publishGenerationOutputs`, `requestSignIn`, `download`, `reportError`. The
+[`@civitai/sdk` README](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-sdk#readme)
+documents each.
 
-`useBuzzPurchase`, `useCivitaiNavigate`, and `useBlockAnalytics` are exported
-but the host-side handlers ship in Phase 2 of civitai.com's App Blocks
-substrate — calls will reject on the per-request timeout until then.
+🔴 **Running a generation from a block:** use `app.workflows`, not
+`app.orchestration`. It goes through the host's `/api/v1/blocks/workflows/*`
+routes, which carry the per-call Buzz budget, daily caps and attribution that a
+direct orchestrator call skips. It needs the block token this starter is handed
+and the `ai:write:budgeted` scope, which is consent-gated: declare it in
+`block.manifest.json` and ask with `app.requestGrants` before the first call.
+
+A `submit` that **rejects** has not told you the
+run does not exist: keep the key and retry with it, or look for the run with
+`app.workflows.list()`, and never tell the viewer nothing was charged.
+[`AGENTS.md`](./AGENTS.md) has the full handler (consent, every outcome of
+`submit`, the unconfirmed case); the `@civitai/sdk` README's "Multi-step
+workflows" section is the reference.
+
+The UI is the custom elements from [`@civitai/components`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-components)
+— `<civitai-button>`, `<civitai-text-input>`, `<civitai-select>`,
+`<civitai-modal>`, `<civitai-image>`, … `civitai app elements <tag>` prints every
+attribute (inherited ones included), event and slot of one element from the
+`@civitai/components` installed here; with no tag it lists them all (no
+`civitai` on PATH? `npx -y @civitai/cli@latest app elements <tag>`). Which
+import defines which:
+
+| Import | Defines |
+|---|---|
+| `@civitai/components/register` (what `src/block.ts` uses) | the generic kit — every element except the seven below |
+| `@civitai/components/register-site` | the generic kit **plus** the civitai.com vocabulary: `<civitai-avatar>`, `<civitai-media-card>`, `<civitai-rating-badge>`, `<civitai-reaction>`, `<civitai-tag>` |
+| `@civitai/components/civitai-sign-in-button/define`, `…/civitai-workflow-button/define` | the two SDK-backed elements, one import each — no register entry includes them |
+
+An element nothing defines renders as an unstyled, inert tag with no error;
+`test/block.test.ts` fails if the starter uses one.
+
+## Direct loads
+
+Opened top-level at its own `<slug>.civit.ai` URL (a shared link, a social
+unfurl), no host ever sends `BLOCK_INIT`. After 2 s the block shows an "Open on
+Civitai" card linking to `https://civitai.com/apps/run/<slug>` instead of a
+skeleton that never resolves ([`src/directLoad.ts`](./src/directLoad.ts)). An
+embedded block never shows it, however slow its host.
+
+## Boot skeleton
+
+`block.manifest.json` sets `"bootSkeleton": true` and `index.html` paints a
+matching skeleton inside `#root`, styled by an inline `<style>` so it appears
+before any script runs. **Ship them together.** The key makes the full-page run
+host stand down its own loading UI; declared over an empty `#root` it is *worse*
+than not opting in — a blank iframe for the whole load.
+
+The skeleton is also this block's loading state: it stays until `BLOCK_INIT`
+lands, and the first render's `root.replaceChildren(…)` removes it. Nothing else
+does, so keep the skeleton *inside* `#root`.
+
+The boot theme is the **host's**, not the OS's. Civitai apps default to dark and
+never consult the browser preference: light engages only when the host says the
+viewer chose it — via the `#civitai-block=v1&theme=…` URL fragment (an inline
+script applies it before first paint), then `BLOCK_INIT`, then live
+`THEME_CHANGE` pushes (synced onto `<html>` by `src/block.ts`).
+
+This starter targets `model.sidebar_top` and declares no `page` surface, so the
+key is inert until the app gains one. It is the scaffolded default so the markup
+and the declaration are never introduced separately.
 
 ## Environment
 
 | Variable | When | Purpose |
 |---|---|---|
-| `VITE_BLOCK_ALLOWED_PARENT_ORIGINS` | always (build + dev) | Comma-separated list of allowed parent-frame origins. The `IframeTransport` drops every `postMessage` whose `event.origin` isn't in this list. **Required** — without it the transport refuses to mount. |
-| `VITE_DEV_HARNESS` | dev only | Set to `"true"` to wrap the block in the local simulator. `pnpm dev:harness` flips this on for you. Strip from production builds. |
+| `VITE_BLOCK_ALLOWED_PARENT_ORIGINS` | dev | Comma-separated parent origins the bridge accepts messages from. **In production the platform injects it at build time**, so the committed value only matters locally — point it at your dev-server origin for the harness. Unset, `@civitai/sdk` falls back to the canonical civitai.com origins. |
+| `VITE_DEV_HARNESS` | dev only | `"true"` installs the local host simulator. `npm run dev:harness` sets it for you; production builds leave it unset, and the harness is then dropped from the bundle. |
 
 ## Scripts
 
 | Command | What it does |
 |---|---|
-| `pnpm dev` | Vite at `http://localhost:5173`, no harness — for iterating against a real host page that iframes your dev URL. |
-| `pnpm dev:harness` | Same, with the local dev harness mounted. **Use this for offline iteration.** |
-| `pnpm build` | Production bundle in `dist/`. |
-| `pnpm typecheck` | TypeScript strict check. |
-| `pnpm preview` | Serve the production bundle locally. |
+| `npm run dev` | Vite at `http://localhost:5173`, no harness — for iterating against a real host page that iframes your dev URL. |
+| `npm run dev:harness` | Same, with the local dev harness. **Use this for offline iteration.** |
+| `npm run build` | Production bundle in `dist/`. Also validates `block.manifest.json`. |
+| `npm run typecheck` | TypeScript strict check. |
+| `npm test` | Drives the block through the real bridge in happy-dom ([`test/block.test.ts`](./test/block.test.ts)). `vitest.config.ts` loads `@civitai/components/testing/happy-dom`, which gives happy-dom the `ElementInternals` that `<civitai-button>` and the form controls need. |
+| `npm run preview` | Serve the production bundle locally. |
+
+There is no `dev:live` (run local code against the real backend) here yet: the
+live-backend host is exported only from `@civitai/blocks-react/live`, which
+requires React. Iterate with `dev:harness`, and test against the real backend by
+submitting.
 
 ## Project layout
 
 ```
 .
 ├── block.manifest.json    # what you register with civitai.com
-├── civitai.app.json       # CLI config (used by @civitai/blocks-cli for deploy)
-├── index.html
-├── vite.config.ts
+├── index.html             # boot skeleton + pre-paint theme script
+├── vite.config.ts         # blockManifestPlugin — validates the manifest on dev + build
 ├── src/
-│   ├── App.tsx            # your block UI
-│   ├── main.tsx           # mounts <App/> (wraps in <Harness/> when VITE_DEV_HARNESS=true)
+│   ├── main.ts            # entry: safe-storage, theme CSS, harness (dev), mountBlock
+│   ├── block.ts           # your block: initialize → render → resize
+│   ├── directLoad.ts      # the "Open on Civitai" fallback for top-level loads
 │   ├── index.css
 │   └── dev/
-│       └── Harness.tsx    # the local simulator
+│       └── harness.ts     # the local host simulator
+├── test/
+│   └── block.test.ts      # the bridge test
 └── .env.example
 ```
 
 ## Registering the block
 
-Until per-app OAuth ships for the `POST /api/v1/developer/block-manifests`
-endpoint, manifest registration is `JOB_TOKEN`-gated and handled by the
-civitai/civitai server team. Coordinate by handing over `block.manifest.json`
-plus the OauthClient ID for your app. The CLI's `deploy` command will become
-self-service once that gate lifts.
+Submit with the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)).
+(No global `civitai`? Prefix each command with `npx -y @civitai/cli@latest`
+instead.) After a one-time `civitai login`, run `civitai app validate` then
+`civitai app submit` — the latter validates, packages the project, and uploads it
+for review; a moderator reviews and approves it. Before submitting, self-run the
+[first-review checklist](https://developer.civitai.com/apps/guide/first-review.md). The platform owns the build +
+serve recipe (you don't ship a `Dockerfile` or `nginx.conf`, or set
+`iframe.src`) and serves your `dist/` at `https://<blockId>.civit.ai/`.
 
 ## See also
 
-- [`@civitai/app-sdk/blocks`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-app-sdk/src/blocks) — the framework-agnostic contract (manifest types, scopes, postMessage protocol, JSON schema).
-- [`@civitai/blocks-react`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-blocks-react) — the React hooks + iframe transport this starter consumes.
+- [`@civitai/sdk`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-sdk) — the bridge and API client this starter uses.
+- [`@civitai/components`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-components) — the `<civitai-*>` elements.
+- [`@civitai/app-sdk/blocks`](https://github.com/civitai/civitai-app-starters/tree/main/packages/civitai-app-sdk/src/blocks) — the manifest types, scopes and the `isSignedIn` / `isModelSlotContext` predicates.
 - [`AGENTS.md`](./AGENTS.md) — guidance for AI coding agents working inside this starter.

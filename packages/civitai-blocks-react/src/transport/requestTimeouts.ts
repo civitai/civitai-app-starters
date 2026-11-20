@@ -1,0 +1,366 @@
+import type { BlockToParentMessageType } from '@civitai/app-sdk/blocks';
+
+import type { OutboundRequest } from './transport.js';
+
+/**
+ * How long `IframeTransport.sendRequest` waits for a reply when the caller does
+ * not say otherwise. Sized for a FAST PROTOCOL ROUND-TRIP — the host receives
+ * the message, does its server-side work, and answers. Nothing on that path
+ * waits for a person.
+ */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * The timeout for a request whose reply is gated on a HUMAN ACTION — browsing a
+ * catalog and picking, choosing a file to upload, confirming a publish, walking
+ * a purchase flow. The host still resolves the moment the person acts (pick /
+ * dismiss / confirm / close), so this is a ceiling on abandonment, not a delay
+ * anyone waits out.
+ *
+ * 🔴 THE DEFAULT IS THE WRONG BOUND FOR THESE AND THE FAILURE IS EXPENSIVE.
+ * 30 seconds is how long a person has to notice a modal, read it and click —
+ * which is not long enough. `PUBLISH_GENERATION_OUTPUTS` shipped without this
+ * opt-out and rejected mid-dialog (civitai/civitai#4158): the generation had
+ * already been billed, the publish bridge died at 30s, the outputs reached
+ * nothing, and there is no refund path for a dead bridge, so the viewer simply
+ * paid for nothing.
+ *
+ * Formerly `PICKER_REQUEST_TIMEOUT_MS`, in `hooks/useCheckpointPicker.ts`. That
+ * name described the first caller rather than the property that selects it, so
+ * a consent confirm did not read as "a picker" to the author who omitted it.
+ * It was never re-exported from `src/index.ts` and the package `exports` map has
+ * no deep hook paths, so the rename touches no reachable API.
+ */
+export const HUMAN_INTERACTION_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * The bound for `OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }` (civitai/civitai#6461),
+ * which is longer than {@link HUMAN_INTERACTION_TIMEOUT_MS} on purpose.
+ *
+ * The host replies ONCE, when its modal closes — after the viewer picked up to 50
+ * images AND the host uploaded every original. That second half is network work
+ * the viewer does not control, so ten minutes from `open()` can expire while the
+ * host is still uploading. The block would then reject, drop the late reply, and
+ * never learn the keys the host now remembers for `RUN_TRAINING`. The host always
+ * answers on close (images, or a bare cancel), so the bound only has to end a wait
+ * on a host that will never answer; an hour does that without cutting off a slow
+ * upload.
+ *
+ * Still in the `'human'` bucket of {@link REQUEST_TIMEOUT_CLASS}: it is at least
+ * the human bound, which is what that bucket guarantees.
+ */
+export const TRAINING_DATA_UPLOAD_TIMEOUT_MS = 60 * 60_000;
+
+/**
+ * What `useMediaUpload().uploadBatch` adds to {@link HUMAN_INTERACTION_TIMEOUT_MS}
+ * for EACH item, by default: 60 s. The host replies once, after the viewer
+ * confirmed AND every item was uploaded (at most 3 at a time), so the bound
+ * grows with the batch: 10 minutes for the viewer, plus a minute per file,
+ * plus {@link MEDIA_UPLOAD_BATCH_PER_MIB_TIMEOUT_MS} per MiB, at most
+ * {@link MEDIA_UPLOAD_BATCH_MAX_TIMEOUT_MS}. A caller can replace the whole
+ * bound with `uploadBatch(items, { timeoutMs })`.
+ *
+ * Still in the `'human'` bucket of {@link REQUEST_TIMEOUT_CLASS}: the default
+ * is always at least the human bound.
+ */
+export const MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS = 60_000;
+
+/**
+ * What the `uploadBatch` default adds per MiB of the items' raw bytes (rounded
+ * up): 1 s, i.e. it allows for an upload as slow as about 1 MiB/s (8 Mbit/s)
+ * on top of the per-item allowance, so a batch of large videos is not cut off
+ * by a bound sized for small images.
+ */
+export const MEDIA_UPLOAD_BATCH_PER_MIB_TIMEOUT_MS = 1_000;
+
+/**
+ * The most the `uploadBatch` DEFAULT ever waits: 6 h 10 min. The host keeps a
+ * batch open for 6 hours from when it starts (after the viewer confirmed);
+ * past that it can no longer upload the remaining items, so waiting longer
+ * cannot get a better answer. The 10 minutes on top are
+ * {@link HUMAN_INTERACTION_TIMEOUT_MS}, the time the viewer has to confirm
+ * before the 6 hours begin.
+ *
+ * 🔴 A TIMEOUT ENDS ONLY THE BLOCK'S WAIT. It does not cancel the host's batch
+ * and does not refund the viewer's daily quota, which the host charged in full
+ * when the batch started. Retrying at once may get `busy` (the batch is still
+ * running) and then the daily quota refusal.
+ */
+export const MEDIA_UPLOAD_BATCH_MAX_TIMEOUT_MS = 6 * 60 * 60_000 + HUMAN_INTERACTION_TIMEOUT_MS;
+
+/**
+ * The `uploadBatch` default bound for `itemCount` items holding `totalBytes`
+ * raw bytes: {@link HUMAN_INTERACTION_TIMEOUT_MS} + 60 s per item + 1 s per
+ * MiB (rounded up), at most {@link MEDIA_UPLOAD_BATCH_MAX_TIMEOUT_MS}.
+ */
+export function mediaUploadBatchDefaultTimeoutMs(itemCount: number, totalBytes: number): number {
+  const mib = Math.ceil(totalBytes / (1024 * 1024));
+  return Math.min(
+    HUMAN_INTERACTION_TIMEOUT_MS +
+      MEDIA_UPLOAD_BATCH_PER_ITEM_TIMEOUT_MS * itemCount +
+      MEDIA_UPLOAD_BATCH_PER_MIB_TIMEOUT_MS * mib,
+    MEDIA_UPLOAD_BATCH_MAX_TIMEOUT_MS,
+  );
+}
+
+/**
+ * The bound for a `'protocol'` request whose SERVER WORK is itself slow — the
+ * host forwards it to the orchestrator and replies only once that answers. No
+ * person is in the loop, so it stays in the `'protocol'` bucket below; it just
+ * needs more than {@link DEFAULT_REQUEST_TIMEOUT_MS}.
+ *
+ * Callers: the workflow trio in `hooks/useBuzzWorkflow.ts` (a submit is a whatif
+ * preflight plus the real submit plus a prompt audit),
+ * `ESTIMATE_WORKFLOW_BATCH` in `hooks/useBatchEstimate.ts`, and
+ * `PERSIST_GENERATION_SOURCE` in `hooks/usePersistGenerationSource.ts` (the host
+ * fetches the output, stores it and waits up to ~30 s for its scan, polled every
+ * 1.5 s, all under one server deadline, so it can answer after ~32 s plus
+ * network; civitai/civitai#8987).
+ *
+ * Was a module-local constant in `useBuzzWorkflow.ts`; moved here so every
+ * caller shares the number instead of re-typing it.
+ */
+export const WORKFLOW_REQUEST_TIMEOUT_MS = 120_000;
+
+/**
+ * The bound for `GET_RESOURCE_FILE` (`hooks/useResourceFile.ts`), a `'protocol'`
+ * request whose HOST work is slow: a session-authed resolve, a fetch of the
+ * signed URL (up to 32 MB), then an unzip and parse of up to 16 MB in the
+ * viewer's tab. The host bounds all three with ONE 110 s deadline
+ * (civitai/civitai#6818 `RESOURCE_FILE_DEADLINE_MS`), after which it replies
+ * `parse-failed`. At {@link DEFAULT_REQUEST_TIMEOUT_MS} a large file on a slow
+ * connection would time out on the block while the host was still working, and
+ * the host's valid reply would be dropped as unroutable. 120 s leaves the host's
+ * 110 s deadline room to answer first. Same number as
+ * {@link WORKFLOW_REQUEST_TIMEOUT_MS}.
+ */
+export const RESOURCE_FILE_REQUEST_TIMEOUT_MS = 120_000;
+
+/** Which bound a block→parent message is answered under. */
+export type RequestTimeoutClass =
+  /** Reply waits on a PERSON — must pass {@link HUMAN_INTERACTION_TIMEOUT_MS}. */
+  | 'human'
+  /** Reply is a server/host round-trip — {@link DEFAULT_REQUEST_TIMEOUT_MS} is right. */
+  | 'protocol'
+  /** Fire-and-forget `sendMessage`: no `requestId`, no pending promise, no timeout. */
+  | 'no-reply';
+
+/**
+ * 🔴 THE TOTALITY GATE — every block→parent message type, bucketed.
+ *
+ * `satisfies Record<BlockToParentMessageType, …>` makes this record TOTAL: add a
+ * message type to the SDK union and `pnpm --filter @civitai/blocks-react
+ * typecheck` FAILS here until somebody decides which bound it answers under. A
+ * new capability is almost always a new message type, so this is the check that
+ * reaches the shape of civitai/civitai#4158 — a hook that never appears in any
+ * ledger because nobody thought to add it.
+ *
+ * 🔴 IT FORCES A DECISION, NOT A CORRECT ONE. Nothing here can stop an author
+ * bucketing a consent confirm as `'protocol'`; what it removes is the case where
+ * the question is never asked. Weigh the bucket against the one question that
+ * decides it: DOES THE REPLY WAIT FOR A PERSON TO ACT? If yes it is `'human'`,
+ * however fast that person usually is.
+ *
+ * The runtime ledger below is DERIVED from this record, so the two cannot drift.
+ */
+const REQUEST_TIMEOUT_CLASS = {
+  // ── Gated on a human ────────────────────────────────────────────────────
+  OPEN_BUZZ_PURCHASE: 'human', //          viewer walks a purchase flow
+  // The host's unlock dialog: the viewer reads the price and confirms, follows the
+  // link to civitai.red, or closes it. At the 30s default a slow confirm would
+  // reject while the viewer is still deciding, and an unlock they then paid for
+  // would read to the block as a failure.
+  REQUEST_OUTPUT_UNLOCK: 'human',
+  OPEN_CHECKPOINT_PICKER: 'human', //      viewer browses + picks
+  OPEN_IMAGE_PICKER: 'human', //           viewer browses their images + picks
+  OPEN_IMAGE_UPLOAD: 'human', //           viewer chooses a file
+  OPEN_MEDIA_UPLOAD: 'human', //           viewer picks a file, or a 64 MB upload + host retries
+  // Viewer answers the host's confirm, then the host uploads up to 1200 files
+  // (3 at a time). `uploadBatch` waits the human bound PLUS 60 s per item
+  // and 1 s per MiB, at most MEDIA_UPLOAD_BATCH_MAX_TIMEOUT_MS (6 h 10 min).
+  OPEN_MEDIA_UPLOAD_BATCH: 'human',
+  OPEN_RESOURCE_PICKER: 'human', //        viewer browses + picks
+  PUBLISH_GENERATION_OUTPUTS: 'human', //  viewer answers a consent confirm (#4158)
+  // 🔴 `'human'` for the SAME reason as PUBLISH_GENERATION_OUTPUTS, and the
+  // wrong bucket here is not merely slow: the host opens a chrome confirm and
+  // replies only on the viewer's click or dismiss. At the 30s default the
+  // request would reject WHILE THE DIALOG IS STILL OPEN, so a viewer who then
+  // clicked Follow would get a followed collection and a block showing a
+  // failure — the two disagreeing about an account write, with nothing to
+  // reconcile them. See `SET_COLLECTION_FOLLOW` in the SDK message union.
+  SET_COLLECTION_FOLLOW: 'human',
+  // 🔴 `'human'` and the consequence of getting it wrong is the worst in this
+  // ledger. The host opens a consent confirm that names the copy, the resolved
+  // tags, the thumbnails and the destination, and replies only on the viewer's
+  // click or dismiss. At the 30s default the request would reject WHILE THE
+  // DIALOG IS STILL OPEN — and the viewer who then clicked Publish would get a
+  // real, public post under their own byline while the block reported a
+  // failure, with nothing to reconcile the two. Unlike the publish bridge there
+  // is no "outputs were lost" framing available here: the post exists.
+  CREATE_POST_FROM_APP: 'human',
+  // 🔴 `'human'`: the host opens a training CONSENT dialog (price, base model,
+  // length, dataset size) and replies only on the viewer's click or dismiss. At
+  // the 30s default the request would reject with the dialog still open, and a
+  // viewer who then clicked Train would start a CHARGED run the block had
+  // already reported as failed.
+  RUN_TRAINING: 'human',
+  // 🔴 `'human'`, same reason as RUN_TRAINING directly above: the host shows the
+  // viewer the job's price in its own confirm and replies only on their click or
+  // dismiss. At the 30s default the request would reject with the dialog still
+  // open, and a viewer who then confirmed would start a CHARGED job the block
+  // had already reported as failed.
+  RUN_CONFIRMED_STEP: 'human',
+  // 🔴 `'human'`: on a phone the host opens the native share sheet, which replies
+  // only when the viewer picks a target or dismisses it. A copy on desktop answers
+  // at once; the bound is for the sheet.
+  SHARE_LINK: 'human',
+
+  // ── Fire-and-forget: no requestId, so no pending promise to time out ────
+  BLOCK_ERROR: 'no-reply',
+  BLOCK_HELLO: 'no-reply',
+  // Reports a drop that has ALREADY happened, so there is nothing to answer and
+  // nothing to bound. Deliberately `'no-reply'` and not merely "unhandled": if a
+  // host ever did reply to it, that reply would itself run the validator this
+  // message exists to report on — a rejection loop with NOTHING braking it. (The
+  // emitter carries no cap; an earlier revision did, and this comment used to name
+  // it as the brake.) The loop is unreachable today because the payload carries no
+  // `requestId`, so neither host NACKs it — but that is a property of the hosts,
+  // not of this bucket, which is why the bucket is the one that must stay.
+  BLOCK_MESSAGE_REJECTED: 'no-reply',
+  BLOCK_READY: 'no-reply',
+  NAVIGATE: 'no-reply',
+  // Human-gated in SPIRIT, but the host never replies — a grant arrives later as
+  // an unsolicited TOKEN_REFRESH push, so there is nothing here to bound.
+  REQUEST_CONSENT: 'no-reply',
+  REQUEST_SIGN_IN: 'no-reply',
+  RESIZE_IFRAME: 'no-reply',
+  TRACK_EVENT: 'no-reply',
+
+  // ── Protocol round-trips: the host answers, no person in the loop ───────
+  CANCEL_APP_WORKFLOW: 'protocol',
+  CANCEL_WORKFLOW: 'protocol',
+  // The workflow trio is server-bound, not person-bound. It carries its OWN
+  // longer bound (`WORKFLOW_REQUEST_TIMEOUT_MS` in `hooks/useBuzzWorkflow.ts`)
+  // for orchestrator latency — a different reason for a different number.
+  ESTIMATE_WORKFLOW: 'protocol',
+  // The batch twin of ESTIMATE_WORKFLOW: no person in the loop, up to 16 cost
+  // quotes behind one reply. Sent under the same `WORKFLOW_REQUEST_TIMEOUT_MS`.
+  ESTIMATE_WORKFLOW_BATCH: 'protocol',
+  POLL_WORKFLOW: 'protocol',
+  SUBMIT_WORKFLOW: 'protocol',
+  GET_BUZZ_ACCOUNTS: 'protocol',
+  GET_BUZZ_BALANCE: 'protocol',
+  GET_BUZZ_TRANSACTIONS: 'protocol',
+  GET_DAILY_COMPENSATION: 'protocol',
+  GET_IMAGES_BY_IDS: 'protocol',
+  GET_VIEWER: 'protocol',
+  GET_WILDCARD_PACK: 'protocol',
+  // No person in the loop, so `'protocol'` — but sent under its own longer
+  // `RESOURCE_FILE_REQUEST_TIMEOUT_MS`: the host's resolve + fetch + unzip run
+  // under a 110 s deadline, which the 30 s default would cut short.
+  GET_RESOURCE_FILE: 'protocol',
+  // No confirm, so `'protocol'` — but sent under `WORKFLOW_REQUEST_TIMEOUT_MS`
+  // (120 s): the host fetches, stores and then waits up to ~30 s for the scan
+  // under one server deadline, which the 30 s default would cut short.
+  PERSIST_GENERATION_SOURCE: 'protocol',
+  QUERY_APP_WORKFLOWS: 'protocol',
+  REQUEST_TOKEN: 'protocol',
+  // The host fetches the blob and triggers the browser's own download; it replies
+  // when the download STARTS, not when a person picks a destination. NOTE: that
+  // host-side fetch is of an arbitrarily large image and could itself exceed 30s
+  // — a pre-existing question about the right protocol bound, independent of
+  // whether a human is involved. Not reclassified here.
+  SAVE_IMAGE: 'protocol',
+  SET_USER_CHECKPOINT: 'protocol',
+  // App reactions. `'protocol'`, NOT `'human'`, and that is a decision rather
+  // than an omission: unlike SET_COLLECTION_FOLLOW there is no host confirm to
+  // wait on. The consent is the `social:react:self` grant, made beforehand; a
+  // host without it refuses `needs-consent` at once.
+  SET_ENTITY_REACTION: 'protocol',
+  GET_ENTITY_REACTIONS: 'protocol',
+} satisfies Record<BlockToParentMessageType, RequestTimeoutClass>;
+
+/** The keys of {@link REQUEST_TIMEOUT_CLASS} bucketed as `C`, at the type level. */
+type KeysBucketed<C extends RequestTimeoutClass> = {
+  [K in keyof typeof REQUEST_TIMEOUT_CLASS]: (typeof REQUEST_TIMEOUT_CLASS)[K] extends C
+    ? K
+    : never;
+}[keyof typeof REQUEST_TIMEOUT_CLASS];
+
+type HumanGatedRequestType = KeysBucketed<'human'>;
+type NoReplyMessageType = KeysBucketed<'no-reply'>;
+
+/** `true` when `T` is `never` — used to reject a VACUOUSLY-satisfied assertion below. */
+type IsNever<T> = [T] extends [never] ? true : false;
+
+/**
+ * 🔴 THE BUCKETING IS CHECKED IN BOTH DIRECTIONS, AND ONE DIRECTION ALONE IS NOT
+ * ENOUGH. `OutboundRequest['type']` is exactly the set of message types carrying
+ * a `requestId` — i.e. the ones with a timeout to set — so:
+ *
+ *  (a) every `'human'` key MUST be in it. Bucketing a fire-and-forget message as
+ *      `'human'` would put an entry in the ledger that the guard test cannot
+ *      drive, and this fails `tsc` instead.
+ *
+ *  (b) NO `'no-reply'` key may be in it — the converse, and the one whose absence
+ *      left this bug's own shape reachable one level down. Without (b), a FUTURE
+ *      request type (one that does carry a `requestId`) bucketed `'no-reply'`
+ *      compiles clean, is excluded from the derived ledger, never gets a
+ *      `timeoutMs`, and silently inherits the 30s default — civitai/civitai#4158
+ *      all over again, arriving through the hole next to the one that was closed.
+ *      Zero instances today; this keeps it that way.
+ *
+ * Both are `undefined as unknown as …` assignments: erased at build, checked by
+ * `tsc`, no runtime cost.
+ */
+const _humanGatedAreRequests: OutboundRequest['type'] =
+  undefined as unknown as HumanGatedRequestType;
+void _humanGatedAreRequests;
+
+const _noReplyAreNotRequests: never = undefined as unknown as Extract<
+  NoReplyMessageType,
+  OutboundRequest['type']
+>;
+void _noReplyAreNotRequests;
+
+/**
+ * 🔴 NON-VACUITY GUARDS — without these, BOTH assertions above pass in the one
+ * state that matters. `never` is assignable to everything, so if every `'human'`
+ * bucket were removed `HumanGatedRequestType` degenerates to `never` and (a)
+ * succeeds while asserting nothing; the same is true of (b) for `'no-reply'`.
+ * A check that goes green precisely when its subject has been deleted is not
+ * load-bearing, so pin both buckets non-empty.
+ */
+const _humanBucketIsNonEmpty: false = undefined as unknown as IsNever<HumanGatedRequestType>;
+void _humanBucketIsNonEmpty;
+
+const _noReplyBucketIsNonEmpty: false = undefined as unknown as IsNever<NoReplyMessageType>;
+void _noReplyBucketIsNonEmpty;
+
+/**
+ * THE RUNTIME LEDGER: every request whose reply waits on a human action, and
+ * therefore every request that must pass {@link HUMAN_INTERACTION_TIMEOUT_MS}
+ * rather than inherit {@link DEFAULT_REQUEST_TIMEOUT_MS}.
+ *
+ * DERIVED from {@link REQUEST_TIMEOUT_CLASS}, never hand-maintained — the
+ * totality gate above is what makes a NEW type impossible to omit, and this
+ * projection is what makes an EXISTING one impossible to leave unwired.
+ *
+ * 🔴 WHAT EACH HALF ACTUALLY CATCHES — the two are not interchangeable, and an
+ * earlier revision of this file overclaimed by conflating them:
+ *
+ *  - `test/humanGatedRequestTimeouts.test.tsx` pins this derived set exactly and
+ *    behaviourally drives every member past the default window. That catches a
+ *    REGRESSION on an already-bucketed type: dropping its `timeoutMs`, or
+ *    quietly deleting it from the ledger. It CANNOT catch a type that was never
+ *    bucketed `'human'` — a test enumerating the ledger is green when the ledger
+ *    is wrong in that direction, which is precisely how #4158 shipped.
+ *  - The `satisfies` totality gate is the half that reaches the unlisted case,
+ *    and it does so at `tsc` time, not in this suite. A new message type is a
+ *    TYPE ERROR here until bucketed.
+ */
+export const HUMAN_GATED_REQUEST_TYPES: readonly BlockToParentMessageType[] = (
+  Object.keys(REQUEST_TIMEOUT_CLASS) as (keyof typeof REQUEST_TIMEOUT_CLASS)[]
+)
+  .filter((t) => REQUEST_TIMEOUT_CLASS[t] === 'human')
+  .sort();

@@ -9,15 +9,18 @@ import {
   DEFAULT_ORCHESTRATOR_BASE_URL,
   estimateWorkflow,
   extractImageUrls,
+  DEFAULT_POLL_WAIT_SECONDS,
   getWorkflow,
   IMAGE_GEN_ENGINES,
   isTerminal,
   OrchestratorError,
+  pollWorkflow,
   submitWorkflow,
   TERMINAL_STATUSES,
   WORKFLOW_STEP_TYPES,
   type WorkflowSnapshot,
 } from '../src/orchestrator/index.js';
+import specCatalogs from './fixtures/orchestrator-spec-catalogs.json' with { type: 'json' };
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -408,25 +411,80 @@ describe('buildImageGenBody (forward-compat)', () => {
   });
 });
 
+// ── Catalog wire-parity pins ────────────────────────────────────────────────
+//
+// 🔴 THE EXPECTED LISTS ARE TRANSCRIBED FROM THE ORCHESTRATOR SPEC, NOT FROM
+// `src/orchestrator/index.ts`. That is the point: a test whose expectation is
+// copied from the implementation it tests can only ever confirm that the file
+// equals itself. They live in `fixtures/orchestrator-spec-catalogs.json` so the
+// LIVE-spec drift script (`pnpm check:catalogs`) can pin the same lists from the
+// other side — see that file's `$comment` for the two-leg argument.
+//
+// This replaced `expect(keys).toContain('textToImage')`-style assertions over 7
+// of the then-34 names. That guard could not fail on either half of a drift, and
+// did not: the catalog shipped a phantom `audioMix` (0 occurrences in the spec,
+// i.e. a guaranteed 400) while missing 10 real step types. An exact-set
+// comparison catches BOTH directions — a name the orchestrator does not accept,
+// and one it does.
+const SPEC_WORKFLOW_STEP_TYPES: readonly string[] = specCatalogs.workflowStepTypes;
+const SPEC_IMAGE_GEN_ENGINES: readonly string[] = specCatalogs.imageGenEngines;
+
 describe('WORKFLOW_STEP_TYPES + IMAGE_GEN_ENGINES catalogs', () => {
-  it('includes the major step types', () => {
-    const keys = Object.keys(WORKFLOW_STEP_TYPES);
-    expect(keys).toContain('textToImage');
-    expect(keys).toContain('imageGen');
-    expect(keys).toContain('videoGen');
-    expect(keys).toContain('comfy');
-    expect(keys).toContain('textToSpeech');
-    expect(keys).toContain('aceStepAudio');
-    expect(keys).toContain('transcription');
+  it('lists EXACTLY the step types the orchestrator spec accepts', () => {
+    // `toEqual` on sorted arrays, not two `toContain` sweeps: an extra key and a
+    // missing key are different defects and this must report either one.
+    expect([...Object.keys(WORKFLOW_STEP_TYPES)].sort()).toEqual([...SPEC_WORKFLOW_STEP_TYPES].sort());
   });
 
-  it('exposes the closed-source image gen engines for imageGen', () => {
-    const engines = Object.keys(IMAGE_GEN_ENGINES);
-    expect(engines).toContain('google');
-    expect(engines).toContain('gemini');
-    expect(engines).toContain('openai');
-    expect(engines).toContain('flux1-kontext');
-    expect(engines).toContain('flux2');
+  it('names no step type the orchestrator does not accept', () => {
+    // The half a `toContain` guard structurally cannot express. Spelled out
+    // separately so a failure names WHICH phantom rather than dumping a 44-line
+    // array diff — this is the assertion `audioMix` would have tripped.
+    const phantom = Object.keys(WORKFLOW_STEP_TYPES).filter(
+      (k) => !SPEC_WORKFLOW_STEP_TYPES.includes(k),
+    );
+    expect(phantom).toEqual([]);
+  });
+
+  it('omits no step type the orchestrator does accept', () => {
+    const missing = SPEC_WORKFLOW_STEP_TYPES.filter(
+      (k) => !Object.prototype.hasOwnProperty.call(WORKFLOW_STEP_TYPES, k),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it('gives every step type a non-empty one-line description', () => {
+    // A key with a blank description reads as documented in the catalog and is
+    // not — the description is the catalog's whole job.
+    const blank = Object.entries(WORKFLOW_STEP_TYPES)
+      .filter(([, v]) => typeof v !== 'string' || v.trim().length === 0)
+      .map(([k]) => k);
+    expect(blank).toEqual([]);
+  });
+
+  it('lists EXACTLY the imageGen engines the orchestrator spec accepts', () => {
+    expect([...Object.keys(IMAGE_GEN_ENGINES)].sort()).toEqual([...SPEC_IMAGE_GEN_ENGINES].sort());
+  });
+
+  it('reads a NON-EMPTY expectation from the spec fixture', () => {
+    // Positive control for the four assertions above. Every one of them is an
+    // "expect(...).toEqual([])"-shaped or set-equality check, and all of them
+    // pass VACUOUSLY if the fixture arrives empty (a bad path, a renamed key, a
+    // JSON import that silently yields {}). A green run must therefore also
+    // prove the expectation had content — and the counts are pinned, not merely
+    // asserted non-zero, so a truncated fixture is a failure and not a smaller
+    // vacuous pass.
+    // 🔴 These literals are meant to be bumped BY HAND when the orchestrator
+    // genuinely gains a step type — that is the point, not friction. 44 -> 45 on
+    // 2026-08-14 for `miniMaxMusic3`; engines 12 -> 13 on 2026-08-28 for `krea`;
+    // 45 -> 47 on 2026-09-01 for `webScrape` + `webSearch`.
+    // If you are here because this failed, confirm the new entry is in the LIVE
+    // spec first (`node scripts/check-orchestrator-catalogs.mjs`), then bump;
+    // never bump to whatever the fixture happens to hold, which would make this
+    // assert nothing.
+    expect(SPEC_WORKFLOW_STEP_TYPES).toHaveLength(58);
+    expect(SPEC_IMAGE_GEN_ENGINES).toHaveLength(15);
+    expect(new Set(SPEC_WORKFLOW_STEP_TYPES).size).toBe(SPEC_WORKFLOW_STEP_TYPES.length);
   });
 });
 
@@ -511,5 +569,210 @@ describe('extractImageUrls', () => {
     expect(extractImageUrls(undefined)).toEqual([]);
     expect(extractImageUrls({ id: 'wf', status: 'succeeded' })).toEqual([]);
     expect(extractImageUrls({ id: 'wf', status: 'succeeded', steps: [] })).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Long polling (`?wait=`). The orchestrator holds the request open until the
+// workflow reaches a terminal status, answering with 202 + the current snapshot
+// when the hold elapses first. Before 0.31.0 `pollWorkflow` was a client-side
+// timer loop DOCUMENTED as a long poll; these pin the real behaviour.
+//
+// Fixture ids/statuses/costs are pairwise DISTINCT so an implementation that
+// returns the wrong attempt's snapshot fails rather than coincidentally passing.
+// ---------------------------------------------------------------------------
+describe('getWorkflow long-poll (?wait=)', () => {
+  const client = createOrchestratorClient({ accessToken: 'tok', baseUrl: 'https://orch.test' });
+
+  it('omits ?wait entirely when no options are passed (pre-0.31 call shape)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'wf_bare', status: 'processing' }));
+    await getWorkflow(client, 'wf_bare');
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://orch.test/v2/consumer/workflows/wf_bare');
+  });
+
+  it('sends ?wait=<seconds> when waitSeconds is given', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'wf_hold', status: 'succeeded' }));
+    const snap = await getWorkflow(client, 'wf_hold', { waitSeconds: 13 });
+    expect(snap.id).toBe('wf_hold');
+    expect(fetchMock.mock.calls[0]![0]).toBe(
+      'https://orch.test/v2/consumer/workflows/wf_hold?wait=13',
+    );
+  });
+
+  it('floors a fractional waitSeconds and drops 0 / negative / non-finite', async () => {
+    const cases: Array<[number, string]> = [
+      [2.9, '?wait=2'],
+      [0, ''],
+      [-5, ''],
+      [Number.NaN, ''],
+      [Number.POSITIVE_INFINITY, ''],
+    ];
+    for (const [waitSeconds, expectedQs] of cases) {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'wf_q', status: 'processing' }));
+      await getWorkflow(client, 'wf_q', { waitSeconds });
+      const url = fetchMock.mock.calls.at(-1)![0];
+      expect(url, `waitSeconds=${String(waitSeconds)}`).toBe(
+        `https://orch.test/v2/consumer/workflows/wf_q${expectedQs}`,
+      );
+    }
+  });
+
+  it('forwards the caller signal to fetch so a hold is genuinely cancellable', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'wf_sig', status: 'processing' }));
+    const ctl = new AbortController();
+    await getWorkflow(client, 'wf_sig', { waitSeconds: 4, signal: ctl.signal });
+    expect((fetchMock.mock.calls[0]![1] as RequestInit).signal).toBe(ctl.signal);
+  });
+});
+
+describe('pollWorkflow', () => {
+  const client = createOrchestratorClient({ accessToken: 'tok', baseUrl: 'https://orch.test' });
+
+  /** The `?wait=` value on each fetch the loop made, in order. */
+  function waitParams(): Array<string | null> {
+    return fetchMock.mock.calls.map(([url]) =>
+      new URL(url as string).searchParams.get('wait'),
+    );
+  }
+
+  it('completes inside the wait window: ONE request, terminal snapshot', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ id: 'wf_fast', status: 'succeeded', cost: { total: 11 } }),
+    );
+    const snap = await pollWorkflow(client, 'wf_fast', { timeoutMs: 30_000, intervalMs: 1 });
+    expect(snap.id).toBe('wf_fast');
+    expect(isTerminal(snap)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(waitParams()).toEqual([String(DEFAULT_POLL_WAIT_SECONDS)]);
+  });
+
+  it('202 (hold elapsed, still running) RE-ARMS and returns the later snapshot', async () => {
+    // A 202 is a 2xx, so it arrives as an ordinary non-terminal snapshot.
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ id: 'wf_rearm', status: 'processing', cost: { total: 22 } }, 202),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ id: 'wf_rearm', status: 'succeeded', cost: { total: 33 } }),
+      );
+    const snap = await pollWorkflow(client, 'wf_rearm', {
+      timeoutMs: 30_000,
+      intervalMs: 1,
+      waitSeconds: 5,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Distinct costs: returning attempt #1's snapshot would read 22, not 33.
+    expect(snap.cost?.total).toBe(33);
+    expect(snap.status).toBe('succeeded');
+    expect(waitParams()).toEqual(['5', '5']);
+  });
+
+  it('a terminal FAILURE stops the loop immediately and is returned, not thrown', async () => {
+    // `mockImplementation`, not `mockResolvedValue`: a Response body can only be
+    // read once, so a single shared instance makes attempt #2 throw
+    // "Body is unusable" and the assertion would pass for the wrong reason.
+    fetchMock.mockImplementation(() => jsonResponse({ id: 'wf_fail', status: 'failed' }));
+    const snap = await pollWorkflow(client, 'wf_fail', {
+      timeoutMs: 30_000,
+      intervalMs: 1,
+      waitSeconds: 7,
+    });
+    expect(snap.status).toBe('failed');
+    expect(isTerminal(snap)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('CANCELLATION: aborts the in-flight request and returns the last snapshot', async () => {
+    const ctl = new AbortController();
+    let inFlightSignal: AbortSignal | undefined;
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ id: 'wf_cancel', status: 'processing' }))
+      .mockImplementationOnce((_url: string, init: RequestInit) => {
+        inFlightSignal = init.signal ?? undefined;
+        // Hangs until aborted — a real long hold.
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            const e = new Error('The operation was aborted.');
+            e.name = 'AbortError';
+            reject(e);
+          });
+        });
+      });
+
+    const promise = pollWorkflow(client, 'wf_cancel', {
+      timeoutMs: 30_000,
+      intervalMs: 1,
+      waitSeconds: 9,
+      signal: ctl.signal,
+    });
+    // Let attempt #2 start, then cancel.
+    await new Promise((r) => setTimeout(r, 20));
+    ctl.abort();
+
+    const snap = await promise;
+    // The caller's abort must reach the SOCKET, not just stop the loop.
+    expect(inFlightSignal?.aborted).toBe(true);
+    // …and must not destroy the snapshot we already had.
+    expect(snap.id).toBe('wf_cancel');
+    expect(snap.status).toBe('processing');
+  });
+
+  it('clamps the hold down to the time left on timeoutMs', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'wf_clamp', status: 'succeeded' }));
+    await pollWorkflow(client, 'wf_clamp', {
+      timeoutMs: 4_000,
+      intervalMs: 1,
+      waitSeconds: 20,
+    });
+    const asked = Number(waitParams()[0]);
+    expect(asked).toBeLessThanOrEqual(4);
+    expect(asked).toBeGreaterThan(0);
+  });
+
+  it('waitSeconds: 0 restores the pure-timer behaviour (no ?wait, repeated reads)', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ id: 'wf_timer', status: 'processing' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'wf_timer', status: 'succeeded' }));
+    const snap = await pollWorkflow(client, 'wf_timer', {
+      timeoutMs: 30_000,
+      intervalMs: 1,
+      waitSeconds: 0,
+    });
+    expect(snap.status).toBe('succeeded');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(waitParams()).toEqual([null, null]);
+  });
+
+  it('a NON-abort error on a later attempt still propagates', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ id: 'wf_err', status: 'processing' }))
+      .mockResolvedValueOnce(jsonResponse({ detail: 'boom' }, 500));
+    await expect(
+      pollWorkflow(client, 'wf_err', { timeoutMs: 30_000, intervalMs: 1, waitSeconds: 3 }),
+    ).rejects.toBeInstanceOf(OrchestratorError);
+  });
+
+  it('an error on the FIRST attempt propagates (no snapshot to fall back to)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: 'nope' }, 404));
+    await expect(
+      pollWorkflow(client, 'wf_first', { timeoutMs: 30_000, intervalMs: 1 }),
+    ).rejects.toBeInstanceOf(OrchestratorError);
+  });
+
+  it('still spaces attempts by intervalMs if the orchestrator ignores ?wait', async () => {
+    // The hot-loop guard: an instantly-returning non-terminal response must not
+    // be re-fetched at fetch speed.
+    fetchMock.mockImplementation(() => jsonResponse({ id: 'wf_hot', status: 'processing' }));
+    await pollWorkflow(client, 'wf_hot', {
+      timeoutMs: 1_000,
+      intervalMs: 100,
+      waitSeconds: 20,
+    });
+    // We DID ask for a hold — the mock just ignored it, which is the scenario.
+    expect(waitParams()[0]).toBe('1');
+    // ~9 gaps of 100ms inside a 1s budget. A zero-gap re-arm would issue
+    // thousands of requests in the same window.
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(15);
   });
 });

@@ -1,11 +1,14 @@
 {
   "name": "@civitai/blocks-react",
-  "version": "0.5.0",
-  "description": "React hooks and iframe transport for Civitai App Blocks. Pairs with @civitai/app-sdk/blocks.",
+  "version": "0.85.0",
+  "description": "React hooks and iframe transport for Civitai Apps. Pairs with @civitai/app-sdk/blocks.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "sideEffects": [
+    "./dist/index.js"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -18,23 +21,36 @@
     "./testing": {
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js"
+    },
+    "./live": {
+      "types": "./dist/live.d.ts",
+      "import": "./dist/live.js"
     }
   },
+  "comment-packaging": "@civitai/* deps use workspace:^ not workspace:* (#374); `!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs.",
   "files": [
     "dist",
+    "!dist/**/*.map",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "generate": "node ../../scripts/gen-version.mjs",
+    "build": "node ../../scripts/gen-version.mjs && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --project unit",
+    "test:browser": "vitest run --project browser",
     "test:watch": "vitest"
   },
   "engines": {
     "node": ">=20"
   },
+  "dependencies": {
+    "@civitai/components": "workspace:^",
+    "@civitai/theme": "workspace:^"
+  },
+  "comment-peerDependencies": "This floor is DERIVED, not chosen — the lowest published app-sdk that exports every symbol this package imports. Do not edit it without reading ./PEER_FLOOR.md (in-repo, unpublished) and tests/guards/blocks-react-peer-floor.test.mjs.",
   "peerDependencies": {
-    "@civitai/app-sdk": "^0.7.0",
+    "@civitai/app-sdk": ">=0.57.0 <1.0.0",
     "react": "^18.0.0 || ^19.0.0"
   },
   "devDependencies": {
@@ -42,11 +58,15 @@
     "@testing-library/react": "^16.0.0",
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
+    "@vitest/browser": "4.1.11",
+    "@vitest/browser-playwright": "4.1.11",
     "happy-dom": "^20.9.0",
+    "playwright": "^1.57.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.9.2",
-    "vitest": "^4.1.7"
+    "vite": "^8.0.14",
+    "vitest": "^4.1.11"
   },
   "publishConfig": {
     "access": "public"

@@ -80,7 +80,7 @@ src/
 
 1. Logged out → `<form action="/api/auth/login">` posts → `POST /api/auth/login` → PKCE + state seal + 303 to Civitai.
 2. Civitai redirects back with `code` + `state` → `GET /api/auth/callback/civitai` exchanges → session sealed → 303 home.
-3. Logged in → `+page.server.ts` calls `getMe()` and passes balance/scopes to `+page.svelte`.
+3. Logged in → `+page.server.ts` calls `getMe()` (username) **and** `getBuzzBalance()` (a separate endpoint — `buzz.getUserAccount`, needs `BuzzRead`, `null` without it; 🔴 the balance is NOT on `/api/v1/me`) and passes both plus scopes to `+page.svelte`.
 4. Submit prompt → client `POST /api/generate/estimate` → display Buzz cost.
 5. Confirm → client `POST /api/generate` → returns workflowId → client polls `GET /api/workflow/[id]` every 2s.
 6. On terminal status → display image blobs from `steps[0].output.blobs`.

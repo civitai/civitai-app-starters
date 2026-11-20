@@ -27,12 +27,40 @@ import {
 } from '@civitai/app-sdk/orchestrator';
 import {
   estimateGenerationCost,
+  getBuzzBalance,
   getMe,
   submitGeneration,
   type GenerateInput,
 } from './civitai.js';
 
-const production = process.env.NODE_ENV === 'production';
+/**
+ * 🔴 DERIVED FROM `APP_URL`, NOT `NODE_ENV`.
+ *
+ * This flag decides two things that only matter in production and are invisible
+ * when they are wrong: whether session cookies carry `Secure`, and whether the
+ * response carries HSTS.
+ *
+ * `NODE_ENV === 'production'` was the wrong signal because NOTHING SETS IT.
+ * The documented production start is
+ *
+ *     node --env-file=.env dist-server/index.js
+ *
+ * which leaves `NODE_ENV` undefined — so a correctly deployed, HTTPS-served app
+ * took the DEV branch: `civ_session` and `civ_oauth_state` without `Secure`, and
+ * no `Strict-Transport-Security`. The app works perfectly either way over
+ * HTTPS, which is exactly why nobody notices; the cost is that one plaintext
+ * request to the same host hands over the sealed session cookie, and the
+ * browser was never told not to make one.
+ *
+ * `APP_URL` is the right signal: it is REQUIRED, it is validated as a URL, and
+ * it states the scheme the app is actually served over. A deployment cannot be
+ * configured for HTTPS and still get the dev branch.
+ *
+ * The `?? ''` is for `SKIP_ENV_VALIDATION=1` builds, where `env.APP_URL` may be
+ * undefined; it fails CLOSED, to the non-secure branch, because that path is
+ * only ever a local build and a crash at import would be worse.
+ */
+const production = (env.APP_URL ?? '').startsWith('https://');
 
 export const app = new Hono();
 
@@ -51,9 +79,9 @@ const CIVITAI_HOSTS_BASE = [
   'https://image.civitai.com',
 ];
 
-/** Fold the configured CIVITAI_BASE_URL / ORCHESTRATOR_URL origins into the
- * CSP allow-list so a self-hosted Civitai dev (e.g. https://civitai-dev.blue)
- * works without users hand-editing CSP. */
+/** Fold the configured CIVITAI_AUTH_URL / CIVITAI_BASE_URL / ORCHESTRATOR_URL
+ * origins into the CSP allow-list so a self-hosted Civitai dev (e.g.
+ * https://civitai-dev.blue) works without users hand-editing CSP. */
 function originOrNull(url: string): string | null {
   try { return new URL(url).origin; } catch { return null; }
 }
@@ -62,6 +90,7 @@ const CIVITAI_HOSTS = Array.from(
   new Set(
     [
       ...CIVITAI_HOSTS_BASE,
+      originOrNull(env.CIVITAI_AUTH_URL),
       originOrNull(env.CIVITAI_BASE_URL),
       originOrNull(env.ORCHESTRATOR_URL),
     ].filter((host): host is string => Boolean(host)),
@@ -150,7 +179,7 @@ app.post('/api/auth/login', (c) => {
   writeOAuthState(c, { state, verifier: pkce.verifier, scope: REQUESTED_SCOPES }, production);
 
   const authorizeUrl = buildAuthorizeUrl({
-    baseUrl: env.CIVITAI_BASE_URL,
+    baseUrl: env.CIVITAI_AUTH_URL,
     clientId: env.CIVITAI_CLIENT_ID,
     redirectUri: REDIRECT_URI,
     scope: REQUESTED_SCOPES,
@@ -174,12 +203,15 @@ app.get('/api/auth/callback/civitai', async (c) => {
 
   try {
     const tokens = await exchangeCode({
-      baseUrl: env.CIVITAI_BASE_URL,
+      baseUrl: env.CIVITAI_AUTH_URL,
       clientId: env.CIVITAI_CLIENT_ID,
       clientSecret: env.CIVITAI_CLIENT_SECRET,
       redirectUri: REDIRECT_URI,
       code,
       codeVerifier: expected.verifier,
+      // RFC 6749 §5.1 lets the server omit `scope` when the grant matches the
+      // request. Without this the session would record "no permissions".
+      fallbackScope: expected.scope,
     });
     writeSession(c, { tokens }, production);
   } catch (err) {
@@ -201,7 +233,7 @@ app.post('/api/auth/revoke', async (c) => {
     const revokeOne = async (token: string) => {
       try {
         await revokeToken({
-          baseUrl: env.CIVITAI_BASE_URL,
+          baseUrl: env.CIVITAI_AUTH_URL,
           clientId: env.CIVITAI_CLIENT_ID,
           clientSecret: env.CIVITAI_CLIENT_SECRET,
           token,
@@ -223,10 +255,16 @@ app.get('/api/me', async (c) => {
   if ('response' in auth) return c.json({ authenticated: false }, 401);
   try {
     const me = await getMe(auth.session);
+    // 🔴 SEPARATE CALL, SEPARATE FAILURE MODE. Buzz balance is NOT part of
+    // `/api/v1/me`; it needs the `BuzzRead` scope on a different endpoint, and
+    // a client that was not granted it gets a 403. `getBuzzBalance` turns that
+    // into `null`, which the SPA renders as NO balance row — never a dash, and
+    // never a 502 that would take the whole profile card down with it.
+    const balance = await getBuzzBalance(auth.session);
     return c.json({
       authenticated: true,
       username: me.username,
-      balance: me.balance,
+      balance,
       grantedScopes: scopesFromBitmask(auth.session.tokens.scope),
     });
   } catch (err) {

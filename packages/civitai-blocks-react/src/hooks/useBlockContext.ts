@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from 'react';
 
-import { getTransport } from '../internal/singleton.js';
-import type { BlockSnapshot } from '../internal/transport.js';
+import { getTransport } from '../transport/singleton.js';
+import type { BlockSnapshot } from '../transport/transport.js';
+import { useTransportConnection } from './useTransportConnection.js';
 
 /**
  * Subscribe a hook to the singleton transport. All hooks build on this —
@@ -19,14 +20,16 @@ function useTransportSnapshot(): BlockSnapshot {
 }
 
 /**
- * Primary hook for a block app. Returns the full per-instance context
- * delivered by the host plus a `ready` gate the UI should respect — fields
- * other than `ready` are sentinel-empty before `BLOCK_INIT` lands.
+ * What {@link useBlockContext} returns — the projection of {@link BlockSnapshot}
+ * the hook exposes.
  *
- * The transport detection (iframe vs inline) happens on first call and is
- * cached process-wide; block apps don't branch on render mode.
+ * 🔴 DERIVED FROM `BlockSnapshot`, NOT RETYPED. A hand-written copy of these ten
+ * fields would drift silently the first time the snapshot's shape moved; the
+ * `Pick` re-resolves against the transport's own type on every build. Before
+ * #380 this expression was written inline on the hook's return annotation, so
+ * a consumer wrapping `useBlockContext()` had nothing to name.
  */
-export function useBlockContext(): Pick<
+export type UseBlockContext = Pick<
   BlockSnapshot,
   | 'ready'
   | 'renderMode'
@@ -38,7 +41,40 @@ export function useBlockContext(): Pick<
   | 'blockId'
   | 'blockInstanceId'
   | 'appId'
-> {
+>;
+
+/**
+ * Primary hook for a block app. Returns the full per-instance context
+ * delivered by the host plus a `ready` gate the UI should respect — fields
+ * other than `ready` are sentinel-empty before `BLOCK_INIT` lands.
+ *
+ * The transport detection (iframe vs inline) happens on first call and is
+ * cached process-wide; block apps don't branch on render mode.
+ *
+ * @returns The per-instance block context: `ready` gate plus `renderMode`,
+ * `context` (narrow to `ModelSlotContext` on model-page slots), `token`,
+ * `settings`, `viewer` (`null` = anonymous), `theme` (`'light' | 'dark'` —
+ * set `data-theme={theme}` on your root, gotcha #60), `blockId`,
+ * `blockInstanceId`, and `appId`.
+ *
+ * `theme` is LIVE: it starts at the `BLOCK_INIT` (or URL-fragment) value and
+ * then tracks the host's `THEME_CHANGE` push when the viewer toggles light/dark
+ * mid-session. Reading it here is enough — {@link useBlockTheme} is the same
+ * value, narrower. Against a host that never pushes it, the value simply never
+ * moves (today's behaviour).
+ *
+ * @example
+ * import { isSignedIn } from '@civitai/app-sdk/blocks';
+ * const { ready, context, viewer, theme, settings } = useBlockContext();
+ * if (!ready) return <div>Loading…</div>;
+ * // Set data-theme on YOUR root — the host can't reach into the iframe (gotcha #60).
+ * // Sign-in gate: call `isSignedIn`. NOT `viewer?.username` — an identity read
+ * // standing in for a presence check, on a field that is `@deprecated` and
+ * // scheduled for removal. This snippet used to do exactly that.
+ * return <div data-theme={theme}>{isSignedIn(viewer) ? 'Hi there' : 'Hi anon'}</div>;
+ */
+export function useBlockContext(): UseBlockContext {
+  useTransportConnection();
   const snap = useTransportSnapshot();
   return {
     ready: snap.ready,

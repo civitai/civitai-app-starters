@@ -1,0 +1,285 @@
+import { describe, expect, it } from 'vitest';
+
+import type { ModelMessage } from 'ai';
+
+import { chatConfig, configureChat, contextBudget } from '../config.js';
+import type { Turn } from '../types.js';
+import { buildModelMessages, estimateTokens, PINNED_SHARE, RESULT_LEFT_OUT } from './history.js';
+
+function toolTurn(seq: number, content: string, toolName: string, result: string): Turn {
+  const id = `c${seq}`;
+  return {
+    seq,
+    createdAt: '2026-09-23T00:00:00Z',
+    user: { content, attachments: [] },
+    assistant: {
+      status: 'done',
+      messages: [
+        { role: 'assistant', content: [{ type: 'tool-call', toolCallId: id, toolName, input: { path: `src/part${seq}.ts` } }] },
+        { role: 'tool', content: [{ type: 'tool-result', toolCallId: id, toolName, output: { type: 'text', value: result } }] },
+        { role: 'assistant', content: `read ${seq}` },
+      ],
+    },
+  };
+}
+
+/** A turn ending on `ask_choice`; `result` is what the tool returned (shown, or rejected). */
+function choiceTurn(seq: number, content: string, result: Record<string, unknown> = { shown: true }): Turn {
+  const id = `ask${seq}`;
+  return {
+    seq,
+    createdAt: '2026-09-23T00:00:00Z',
+    user: { content, attachments: [] },
+    assistant: {
+      status: 'done',
+      messages: [
+        { role: 'assistant', content: [{ type: 'tool-call', toolCallId: id, toolName: 'ask_choice', input: { question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] } }] },
+        { role: 'tool', content: [{ type: 'tool-result', toolCallId: id, toolName: 'ask_choice', output: { type: 'json', value: result as never } }] },
+      ],
+    },
+  };
+}
+
+/** Each tool result in order: the left-out note, or how long the kept text is. */
+function results(messages: ModelMessage[]): (string | number)[] {
+  return messages.flatMap((m) =>
+    m.role === 'tool' ? m.content.flatMap((p) => (p.type === 'tool-result' && p.output.type === 'text' ? [p.output.value === RESULT_LEFT_OUT ? RESULT_LEFT_OUT : p.output.value.length] : [])) : [],
+  );
+}
+
+function turn(seq: number, content: string, extra: Partial<Turn['assistant']> = {}): Turn {
+  return { seq, createdAt: '2026-09-23T00:00:00Z', user: { content, attachments: [] }, assistant: { messages: [{ role: 'assistant', content: `reply ${seq}` }], status: 'done', ...extra } };
+}
+
+describe('buildModelMessages', () => {
+  it('tells the model which files came with a message', () => {
+    const t = turn(1, 'make it a watercolor');
+    t.user.attachments = [{ id: 'up1-1', kind: 'image', source: { type: 'upload', blobId: 'b' } }];
+    expect(buildModelMessages([t], () => undefined)[0]).toEqual({ role: 'user', content: 'make it a watercolor\n\n[Attached: up1-1 (image)]' });
+  });
+
+  it('names the earlier results the user pointed at', () => {
+    const t = turn(2, 'animate this');
+    t.user.refs = ['gen1-1-1'];
+    expect(buildModelMessages([t], () => undefined)[0]).toEqual({ role: 'user', content: 'animate this\n\n[About: gen1-1-1]' });
+  });
+
+  it("replaces a generation's tool result with the job's current state", () => {
+    const t = turn(1, 'a bike', {
+      messages: [
+        { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'generate_image', input: { prompt: 'bike' } }] },
+        { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'generate_image', output: { type: 'json', value: { job: 'gen1-1', status: 'running' } } }] },
+      ],
+    });
+    const live = { summary: () => ({ job: 'gen1-1', status: 'succeeded' as const, results: [{ id: 'gen1-1-1', kind: 'image' }], note: 'done' }) };
+    const messages = buildModelMessages([t], (id) => (id === 'gen1-1' ? live : undefined));
+    expect(messages[2]).toMatchObject({ role: 'tool', content: [{ output: { type: 'json', value: { status: 'succeeded', results: [{ id: 'gen1-1-1' }] } } }] });
+  });
+
+  it("replaces a post's tool result with how the post ended", () => {
+    const t = turn(1, 'post it', {
+      messages: [
+        { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'p1', toolName: 'post_to_civitai', input: { files: ['gen1-1-1'] } }] },
+        { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'p1', toolName: 'post_to_civitai', output: { type: 'json', value: { status: 'awaiting_user' } } }] },
+      ],
+    });
+    const live = { summary: () => ({ status: 'posted' as const, url: 'https://civitai.com/posts/1', note: 'live' }) };
+    const messages = buildModelMessages([t], (key) => (key === 'p1' ? live : undefined));
+    expect(messages[2]).toMatchObject({ role: 'tool', content: [{ output: { type: 'json', value: { status: 'posted', url: 'https://civitai.com/posts/1' } } }] });
+  });
+
+  it('drops the oldest whole turns to stay within budget, never the latest, and says how many', () => {
+    const turns = [turn(1, 'first'), turn(2, 'x'.repeat(4_000)), turn(3, 'second'), turn(4, 'third')];
+    expect(buildModelMessages(turns, () => undefined, { budget: 200 }).map((m) => m.content)).toEqual(['first', '(2 earlier turns omitted)', 'second', 'reply 3', 'third', 'reply 4']);
+    // Too small to keep even the task: only the latest turn and the note are left.
+    expect(buildModelMessages(turns, () => undefined, { budget: 1 }).map((m) => m.content)).toEqual(['(3 earlier turns omitted)', 'third', 'reply 4']);
+  });
+
+  it('keeps the task and drops the oldest long tool results before any words (the pomodoro chat)', () => {
+    const task = 'Build a pomodoro timer: 25 minutes of work, 5 minute breaks, a long break every 4';
+    const reads = [2, 3, 4, 5, 6, 7].map((seq) => toolTurn(seq, `read part ${seq}`, 'sandbox__read_file', 'r'.repeat(40_000)));
+    const messages = buildModelMessages([turn(1, task), ...reads, turn(8, 'continue')], () => undefined);
+    expect(messages[0]).toEqual({ role: 'user', content: task });
+    expect(messages.filter((m) => m.role === 'user').map((m) => m.content)).toEqual([task, 'read part 2', 'read part 3', 'read part 4', 'read part 5', 'read part 6', 'read part 7', 'continue']);
+    // Every call is still there, so each result still has its call; the four oldest results gave way.
+    expect(results(messages)).toEqual([RESULT_LEFT_OUT, RESULT_LEFT_OUT, RESULT_LEFT_OUT, RESULT_LEFT_OUT, 40_000, 40_000]);
+    expect(messages.some((m) => typeof m.content === 'string' && /omitted/.test(m.content))).toBe(false);
+  });
+
+  it('keeps the task and every answer to a choice when whole turns must go', () => {
+    const big = 'w'.repeat(20_000);
+    const turns = [
+      turn(1, 'make me a poster for a jazz night'),
+      turn(2, big),
+      choiceTurn(3, 'pick a style'),
+      turn(4, 'Art deco'),
+      turn(5, big),
+      choiceTurn(6, 'pick a palette'),
+      turn(7, 'Gold and black'),
+      turn(8, big),
+      turn(9, 'now make it'),
+    ];
+    const messages = buildModelMessages(turns, () => undefined, { budget: 2_000 });
+    expect(messages.map((m) => (typeof m.content === 'string' ? m.content : m.role))).toEqual([
+      'make me a poster for a jazz night',
+      'Art deco',
+      'Gold and black',
+      '(8 earlier turns omitted)',
+      'now make it',
+      'reply 9',
+    ]);
+  });
+
+  it('pins only an answer to an ask_choice whose result reports shown: true, never one the card rejected', () => {
+    const big = 'w'.repeat(20_000);
+    const rejected = { error: 'options must be an array of 2 to 4 objects, each with a "label" string.', note: 'Nothing was shown. Call ask_choice again with options as an array.' };
+    const shown = { shown: true, awaitsUser: true, note: 'The options are on screen. Stop and wait for the user to choose; do not list them again.' };
+    const turns = [
+      turn(1, 'make me a poster for a jazz night'),
+      turn(2, big),
+      choiceTurn(3, 'pick a style', shown),
+      turn(4, 'Art deco'),
+      turn(5, big),
+      choiceTurn(6, 'pick a palette', rejected),
+      turn(7, 'what happened?'),
+      turn(8, big),
+      turn(9, 'now make it'),
+    ];
+    const messages = buildModelMessages(turns, () => undefined, { budget: 2_000 });
+    expect(messages.map((m) => (typeof m.content === 'string' ? m.content : m.role))).toEqual([
+      'make me a poster for a jazz night',
+      'Art deco',
+      '(8 earlier turns omitted)',
+      'now make it',
+      'reply 9',
+    ]);
+  });
+
+  it('keeps the results of tools that did something, and leaves out a long read', () => {
+    const turns = [
+      turn(1, 'make a bike'),
+      toolTurn(2, 'generate it', 'run_step', 'j'.repeat(1_000)),
+      toolTurn(3, 'open a panel', 'open_panel', 'p'.repeat(1_000)),
+      toolTurn(4, 'change it', 'update_panel', 'u'.repeat(1_000)),
+      toolTurn(5, 'post it', 'post_to_civitai', 'o'.repeat(1_000)),
+      toolTurn(6, 'ask me', 'ask_choice', 'a'.repeat(1_000)),
+      toolTurn(7, 'run a workflow', 'run_workflow', 'w'.repeat(1_000)),
+      toolTurn(8, 'read the file', 'sandbox__read_file', 'r'.repeat(40_000)),
+      turn(9, 'go'),
+    ];
+    const messages = buildModelMessages(turns, () => undefined, { budget: 5_000 });
+    expect(results(messages)).toEqual([1_000, 1_000, 1_000, 1_000, 1_000, 1_000, RESULT_LEFT_OUT]);
+  });
+
+  it('never leaves out a result in the latest turn, however far over budget', () => {
+    const messages = buildModelMessages([turn(1, 'task'), toolTurn(2, 'read it', 'sandbox__read_file', 'r'.repeat(40_000))], () => undefined, { budget: 100 });
+    expect(results(messages)).toEqual([40_000]);
+  });
+
+  it('cuts a task to fit its share of the budget, even one the JSON estimate escapes', () => {
+    const budget = 2_000;
+    const room = Math.floor(budget * PINNED_SHARE);
+    for (const task of ['plain words '.repeat(500), '"\\'.repeat(2_500), 'line\n'.repeat(1_500)]) {
+      const messages = buildModelMessages([turn(1, task), turn(2, 'w'.repeat(20_000)), turn(3, 'go')], () => undefined, { budget });
+      const pin = messages[0]!;
+      expect(pin.role).toBe('user');
+      expect(typeof pin.content === 'string' && pin.content.endsWith('…(cut)')).toBe(true);
+      expect(typeof pin.content === 'string' && task.startsWith(pin.content.slice(0, -'…(cut)'.length))).toBe(true);
+      expect(estimateTokens([pin])).toBeLessThanOrEqual(room);
+    }
+  });
+
+  it('pins the latest answers first, and none past its share of the budget', () => {
+    const big = 'w'.repeat(20_000);
+    const [a, b] = ['A'.repeat(1_000), 'B'.repeat(1_000)];
+    const turns = [turn(1, 'task'), choiceTurn(2, 'pick one'), turn(3, a), turn(4, big), choiceTurn(5, 'pick another'), turn(6, b), turn(7, big), turn(8, 'go')];
+    const budget = 2_000;
+    const messages = buildModelMessages(turns, () => undefined, { budget });
+    const marker = messages.findIndex((m) => typeof m.content === 'string' && /earlier turns omitted/.test(m.content));
+    const pinned = messages.slice(0, marker);
+    expect(pinned.map((m) => m.content)).toEqual(['task', b]);
+    expect(estimateTokens(pinned)).toBeLessThanOrEqual(Math.floor(budget * PINNED_SHARE));
+  });
+
+  it('counts the task against the share, so a large task leaves room for fewer answers', () => {
+    const big = 'w'.repeat(20_000);
+    const task = 'T'.repeat(1_500);
+    const [a, b] = ['A'.repeat(150), 'B'.repeat(150)];
+    const turns = [turn(1, task), choiceTurn(2, 'pick one'), turn(3, a), turn(4, big), choiceTurn(5, 'pick another'), turn(6, b), turn(7, big), turn(8, 'go')];
+    const budget = 2_000;
+    const messages = buildModelMessages(turns, () => undefined, { budget });
+    const marker = messages.findIndex((m) => typeof m.content === 'string' && /earlier turns omitted/.test(m.content));
+    const pinned = messages.slice(0, marker);
+    expect(pinned.map((m) => m.content)).toEqual([task, b]);
+    expect(estimateTokens(pinned)).toBeLessThanOrEqual(Math.floor(budget * PINNED_SHARE));
+  });
+
+  it("reads the shown flag from the last ask_choice's own result, not an earlier call's", () => {
+    const big = 'w'.repeat(20_000);
+    const twoAsks: Turn = {
+      seq: 3,
+      createdAt: '2026-09-23T00:00:00Z',
+      user: { content: 'pick a style', attachments: [] },
+      assistant: {
+        status: 'done',
+        messages: [
+          { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'first', toolName: 'ask_choice', input: {} }] },
+          { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'first', toolName: 'ask_choice', output: { type: 'json', value: { shown: true } } }] },
+          { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'second', toolName: 'ask_choice', input: {} }] },
+          { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'second', toolName: 'ask_choice', output: { type: 'json', value: { error: 'bad options' } } }] },
+        ],
+      },
+    };
+    const turns = [turn(1, 'task'), turn(2, big), twoAsks, turn(4, 'what happened?'), turn(5, big), turn(6, 'go')];
+    const messages = buildModelMessages(turns, () => undefined, { budget: 2_000 });
+    expect(messages.map((m) => (typeof m.content === 'string' ? m.content : m.role))).toEqual(['task', '(5 earlier turns omitted)', 'go', 'reply 6']);
+  });
+
+  it('follows configureChat({ contextBudgetTokens }), and the default again when it is unset', () => {
+    const turns = [turn(1, 'first'), turn(2, 'y'.repeat(100_000)), turn(3, 'last')];
+    try {
+      expect(buildModelMessages(turns, () => undefined).map((m) => m.content)).toEqual(['first', '(2 earlier turns omitted)', 'last', 'reply 3']);
+      configureChat({ contextBudgetTokens: 40_000 });
+      expect(buildModelMessages(turns, () => undefined).map((m) => (typeof m.content === 'string' ? m.content.length : 0))).toEqual([5, 7, 100_000, 7, 4, 7]);
+      configureChat({ contextBudgetTokens: -5 });
+      expect(contextBudget()).toBe(24_000);
+    } finally {
+      delete chatConfig.contextBudgetTokens;
+    }
+    expect(contextBudget()).toBe(24_000);
+  });
+
+  it('puts the context on the latest message only, so earlier messages read the same every reply', () => {
+    const messages = buildModelMessages([turn(1, 'first'), turn(2, 'second', { messages: [], status: 'streaming' })], () => undefined, { context: '<context>files</context>' });
+    expect(messages.map((m) => m.content)).toEqual(['first', 'reply 1', '<context>files</context>\n\nsecond']);
+  });
+
+  it('marks a reply the user stopped', () => {
+    const messages = buildModelMessages([turn(1, 'hi', { status: 'aborted' })], () => undefined);
+    expect(messages.at(-1)).toEqual({ role: 'assistant', content: '(The user stopped this reply.)' });
+  });
+
+  it('keeps an earlier subagent result over budget as its conclusion without the activity log, never the note that invites calling it again', () => {
+    const activity = Array.from({ length: 50 }, (_, i) => ({ tool: 'sandbox__read_file', arg: `src/${'deep/'.repeat(10)}file${i}.ts` }));
+    const value = { kind: 'subagent', status: 'done', summary: 'Auth lives in src/auth.', steps: 9, toolCalls: 50, activity };
+    const dispatched: Turn = {
+      seq: 1,
+      createdAt: '2026-09-23T00:00:00Z',
+      user: { content: 'where is auth?', attachments: [] },
+      assistant: {
+        status: 'done',
+        messages: [
+          { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'd1', toolName: 'dispatch_agent', input: { task: 'find auth', mode: 'read' } }] },
+          { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'd1', toolName: 'dispatch_agent', output: { type: 'json', value: value as never } }] },
+          { role: 'assistant', content: 'In src/auth.' },
+        ],
+      },
+    };
+    const later = toolTurn(2, 'now this', 'sandbox__read_file', 'x'.repeat(40_000));
+    const messages = buildModelMessages([dispatched, later], () => undefined, { budget: 12_000 });
+    const sent = JSON.stringify(messages);
+    expect(sent).not.toContain(RESULT_LEFT_OUT.slice(0, 20));
+    const result = messages.flatMap((m) => (m.role === 'tool' ? m.content : [])).find((part) => part.type === 'tool-result' && part.toolCallId === 'd1');
+    expect((result as { output: unknown }).output).toEqual({ type: 'json', value: { kind: 'subagent', status: 'done', summary: 'Auth lives in src/auth.', steps: 9, toolCalls: 50 } });
+  });
+});

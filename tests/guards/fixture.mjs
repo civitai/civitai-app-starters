@@ -1,0 +1,374 @@
+/**
+ * Fixture harness for the release-guard scripts in `scripts/`.
+ *
+ * Both guards derive their repo root from their OWN location
+ * (`join(dirname(fileURLToPath(import.meta.url)), '..')`), so a test drives
+ * them by COPYING the real script into a synthetic tree and running it there.
+ * Nothing in the scripts is made test-only: the file under test is byte-for-byte
+ * the file CI runs.
+ *
+ * The synthetic tree mirrors the real repo's shape:
+ *
+ *   <tmp>/package.json                     root, with `pnpm.overrides`
+ *   <tmp>/scripts/<guard>.mjs              copied verbatim
+ *   <tmp>/packages/<dir>/package.json      first-party workspace packages
+ *   <tmp>/starters/<name>/package.json     tiged-consumed starters
+ *   <tmp>/starters/examples/<name>/pkg     examples (copied out like starters)
+ */
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { createServer } from 'node:http';
+
+const execFileAsync = promisify(execFile);
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+export const REPO_ROOT = join(HERE, '..', '..');
+const REAL_SCRIPTS = join(REPO_ROOT, 'scripts');
+
+/**
+ * The real repo's starter pin ledger as it stood before `civitai-block-starter`
+ * was converted to web components: 5 tiged-consumed starters declaring 14
+ * published-range `@civitai/*` pins between them. (15 until
+ * components-react@0.9.0 — `next-app` then dropped `@civitai/components`, which
+ * it no longer renders any markup from.)
+ *
+ * 🔴 NO LONGER AN EXACT MIRROR, deliberately. The converted block starter pins
+ * four packages (`@civitai/app-sdk`, `@civitai/components`, `@civitai/sdk`,
+ * `@civitai/theme`) instead of these two, so the real tree now carries 16 + 12
+ * = 28 covered pins. This fixture stays at 26 because the guard tests built on
+ * it need a tree sitting EXACTLY on the coverage floor (26) — their "+1 / -1, at
+ * the floor" arithmetic is the point. The real tree is checked by running the
+ * guard itself (CI's Starter job), not through this fixture.
+ */
+export const DEFAULT_STARTERS = {
+  'next-app': {
+    '@civitai/app-sdk': '^0.31.0',
+    '@civitai/components-react': '^0.3.0',
+    '@civitai/theme': '^0.2.0',
+  },
+  'react-pwa': {
+    '@civitai/app-sdk': '^0.31.0',
+    '@civitai/components-react': '^0.3.0',
+    '@civitai/theme': '^0.2.0',
+  },
+  'svelte-pwa': {
+    '@civitai/app-sdk': '^0.31.0',
+    '@civitai/components': '^0.3.0',
+    '@civitai/theme': '^0.2.0',
+  },
+  'sveltekit-app': {
+    '@civitai/app-sdk': '^0.31.0',
+    '@civitai/components': '^0.3.0',
+    '@civitai/theme': '^0.2.0',
+  },
+  'civitai-block-starter': {
+    '@civitai/app-sdk': '^0.31.0',
+    '@civitai/blocks-react': '^0.39.0',
+  },
+};
+
+/**
+ * The real repo's six examples, mirrored exactly: each pins the two published
+ * carets `@civitai/app-sdk` and `@civitai/blocks-react`. They are copied out of the repo like a
+ * starter, so the guards hold them to a starter's rules — 12 more covered pins
+ * (26 total) and 12 more mirrored pairs (22 total).
+ */
+const EXAMPLE_PINS = { '@civitai/app-sdk': '^0.31.0', '@civitai/blocks-react': '^0.39.0' };
+export const DEFAULT_EXAMPLES = Object.fromEntries(
+  ['hello-world', 'settings', 'buzz-workflow', 'monetize', 'scopes-api', 'buzz-purchase'].map((n) => [
+    n,
+    { ...EXAMPLE_PINS },
+  ]),
+);
+
+/**
+ * The root's THIRD-PARTY overrides — security constraints on transitive
+ * packages, mirrored exactly from the real repo. These are the subject of
+ * check-starter-workspace-overrides rule 4: the root manifest is not part of a
+ * `npx tiged starters/<name>` copy, so each constraint has to be declared in
+ * the starter's own manifest too or it does not travel.
+ *
+ * Kept SEPARATE from the `@civitai/*` half because the two groups are governed
+ * by opposite rules — the first-party ones must be `workspace:` in the ROOT and
+ * must NOT appear in a starter, these must appear in EVERY tiged starter.
+ */
+export const DEFAULT_THIRD_PARTY_OVERRIDES = {
+  'cookie@<0.7.0': '^0.7.0',
+  'postcss@<8.5.10': '>=8.5.10',
+};
+
+export const DEFAULT_OVERRIDES = {
+  '@civitai/app-sdk': 'workspace:*',
+  '@civitai/blocks-react': 'workspace:*',
+  '@civitai/components': 'workspace:*',
+  '@civitai/components-react': 'workspace:*',
+  '@civitai/theme': 'workspace:*',
+  ...DEFAULT_THIRD_PARTY_OVERRIDES,
+};
+
+/**
+ * The compliant mirror blocks: every tiged-consumed starter carries every
+ * third-party root override under BOTH `overrides` (npm) and `pnpm.overrides`
+ * (pnpm), keyed and valued exactly as the root does.
+ *
+ * Derived from the two arguments rather than hard-coded, so a test that adds a
+ * root override or a starter gets a compliant baseline and can then break
+ * exactly one thing.
+ */
+export function defaultStarterMirrors(starters = DEFAULT_STARTERS, overrides = DEFAULT_OVERRIDES) {
+  const thirdParty = Object.fromEntries(
+    Object.entries(overrides ?? {}).filter(([k]) => !k.startsWith('@civitai/')),
+  );
+  const out = {};
+  for (const name of Object.keys(starters ?? {})) {
+    out[name] = { overrides: clone(thirdParty), pnpm: { overrides: clone(thirdParty) } };
+  }
+  return out;
+}
+
+/** Local workspace package versions, matching the DEFAULT_STARTERS pins. */
+export const DEFAULT_PACKAGES = {
+  'civitai-app-sdk': { name: '@civitai/app-sdk', version: '0.31.0' },
+  'civitai-blocks-react': { name: '@civitai/blocks-react', version: '0.39.0' },
+  'civitai-components': { name: '@civitai/components', version: '0.3.0' },
+  'civitai-components-react': { name: '@civitai/components-react', version: '0.3.0' },
+  'civitai-theme': { name: '@civitai/theme', version: '0.2.0' },
+};
+
+const clone = (v) => JSON.parse(JSON.stringify(v));
+
+/**
+ * Build a synthetic repo. Every section defaults to the real repo's shape;
+ * pass `null` for a section to omit it entirely.
+ *
+ * @param {object} [opts]
+ * @param {object|null} [opts.overrides]  root pnpm.overrides
+ * @param {object|null} [opts.starters]   { <dir>: { <pkg>: <range> } }
+ * @param {object|null} [opts.examples]   { <dir>: { <pkg>: <range> } }
+ * @param {object|null} [opts.packages]   { <dir>: { name, version } }
+ * @param {string[]}    [opts.scripts]    guard filenames to copy in
+ * @param {string}      [opts.depField]   dependency field to write pins into
+ * @param {object|null} [opts.starterMirrors] per-starter manifest fields merged
+ *   in verbatim — `{ <dir>: { overrides, pnpm } }`. Defaults to a COMPLIANT
+ *   mirror of every third-party root override (see defaultStarterMirrors), so a
+ *   test that wants a rule-4 failure breaks exactly one entry rather than
+ *   starting from a tree that fails for several reasons at once. Pass `null` for
+ *   the pre-#390 shape: no starter mirrors anything.
+ * @param {object|null} [opts.exampleMirrors] the same, for `starters/examples/*`.
+ *   Defaults to a compliant mirror of every third-party override in `overrides`.
+ */
+export function createFixture(opts = {}) {
+  const {
+    overrides = DEFAULT_OVERRIDES,
+    starters = DEFAULT_STARTERS,
+    examples = DEFAULT_EXAMPLES,
+    packages = DEFAULT_PACKAGES,
+    scripts = ['check-starter-workspace-overrides.mjs', 'check-starter-pins.mjs'],
+    depField = 'dependencies',
+    starterMirrors = defaultStarterMirrors(starters, overrides),
+    exampleMirrors = defaultStarterMirrors(examples, overrides),
+  } = opts;
+
+  const dir = mkdtempSync(join(tmpdir(), 'starter-guard-'));
+
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify(
+      { name: 'fixture-root', version: '0.0.0', private: true, pnpm: { overrides: clone(overrides ?? {}) } },
+      null,
+      2,
+    ) + '\n',
+  );
+
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  for (const s of scripts) cpSync(join(REAL_SCRIPTS, s), join(dir, 'scripts', s));
+
+  for (const [name, deps] of Object.entries(starters ?? {})) {
+    const d = join(dir, 'starters', name);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(
+      join(d, 'package.json'),
+      JSON.stringify(
+        {
+          name,
+          version: '0.0.0',
+          private: true,
+          ...clone(starterMirrors?.[name] ?? {}),
+          [depField]: clone(deps),
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+  }
+
+  for (const [name, deps] of Object.entries(examples ?? {})) {
+    const d = join(dir, 'starters', 'examples', name);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(
+      join(d, 'package.json'),
+      JSON.stringify(
+        { name, version: '0.0.0', private: true, ...clone(exampleMirrors?.[name] ?? {}), [depField]: clone(deps) },
+        null,
+        2,
+      ) + '\n',
+    );
+  }
+
+  for (const [d0, meta] of Object.entries(packages ?? {})) {
+    const d = join(dir, 'packages', d0);
+    mkdirSync(d, { recursive: true });
+    // `private` defaults to false (a publishable first-party package) but is
+    // honoured when a test sets it — assert-published-versions.mjs must SKIP a
+    // private package, and that arm needs a fixture that can express one.
+    writeFileSync(
+      join(d, 'package.json'),
+      JSON.stringify({ ...meta, private: meta.private === true }, null, 2) + '\n',
+    );
+  }
+
+  return dir;
+}
+
+export function destroyFixture(dir) {
+  if (dir && dir.includes('starter-guard-')) rmSync(dir, { recursive: true, force: true });
+}
+
+/**
+ * Run a guard inside a fixture. Returns { code, stdout, stderr, out }.
+ *
+ * ASYNC on purpose. `execFileSync` blocks the test process's event loop, which
+ * would deadlock against the in-process `startFakeRegistry` server the guard
+ * fetches from — the child waits for a response the parent cannot serve.
+ */
+export async function runGuard(dir, script, env = {}) {
+  // 🔴 STRIP the ambient CI variables the guards READ before layering the
+  // caller's env on top. GitHub Actions sets GITHUB_SHA to the CI commit, which
+  // does not exist inside a temp fixture repo — so a test that deliberately
+  // omits GITHUB_SHA silently got the runner's instead, and behaved differently
+  // in CI than locally. That made the one control proving `$GITHUB_SHA` is
+  // load-bearing die in CI before it could discriminate: 45/45 green locally,
+  // 5 required checks red on the PR.
+  //
+  // A test that WANTS one of these sets it explicitly in `env`, which still
+  // wins — the strip only removes what the runner injected behind our back.
+  const base = { ...process.env };
+  for (const k of ['GITHUB_SHA', 'NPM_REGISTRY', 'PUBLISH_CHECK_FROM_DISK']) delete base[k];
+  try {
+    const { stdout, stderr } = await execFileAsync(process.execPath, [join(dir, 'scripts', script)], {
+      encoding: 'utf8',
+      env: { ...base, ...env },
+    });
+    return { code: 0, stdout, stderr, out: stdout + stderr };
+  } catch (err) {
+    const stdout = err.stdout ?? '';
+    const stderr = err.stderr ?? '';
+    return { code: err.code ?? 1, stdout, stderr, out: stdout + stderr };
+  }
+}
+
+/**
+ * A stand-in npm registry. `versions` maps package name -> published version,
+ * the literal string 'notfound' (404) or 'error' (503).
+ *
+ * Serves TWO endpoint shapes, because the two guards ask different questions:
+ *   GET /<pkg>/latest     -> check-starter-pins.mjs (what is published NOW)
+ *   GET /<pkg>/<version>  -> assert-published-versions.mjs (does THIS exact
+ *                            version exist). A request for a version other than
+ *                            the mapped one 404s, which is exactly the
+ *                            failed-publish state that guard must catch.
+ *
+ * Returns { origin, close, hits, rawHits } — `hits` records every path served so
+ * a test can assert the guard actually issued the requests it claims to (a guard
+ * that silently makes no request would otherwise look identical to a passing one).
+ *
+ * 🔴 `hits` is the path with ANY QUERY STRING REMOVED, and `rawHits` is the URL
+ * exactly as requested. The guard cache-busts every read with a unique `?_cb=`
+ * param (see `cacheBusted` in assert-published-versions.mjs), so the raw URL is
+ * different on every single request and an equality assertion against it can
+ * never match. Routing on the stripped path is also what the REAL registry does
+ * — measured: an unknown query param is ignored, 200 for a live version and 404
+ * for an absent one — so a fixture that let the param change the response would
+ * be modelling a registry npm does not operate, and would fail the guard for a
+ * reason production cannot produce.
+ *
+ * Both are exposed rather than one, because they answer different questions:
+ * `hits` proves WHICH endpoint was asked and HOW MANY TIMES; `rawHits` is the
+ * only thing that can prove the reads were cache-busted at all. Asserting
+ * cache-busting against `hits` would be vacuous by construction.
+ */
+export async function startFakeRegistry(versions) {
+  const hits = [];
+  const rawHits = [];
+  // `versions` is caller-supplied data, so membership MUST be an own-property
+  // test: a bare `versions[pkg]` would resolve inherited keys ('constructor',
+  // 'toString') to truthy junk and serve a 200 for a package nobody declared.
+  const has = (k) => Object.prototype.hasOwnProperty.call(versions, k);
+  const server = createServer((req, res) => {
+    const raw = decodeURIComponent(req.url || '');
+    rawHits.push(raw);
+    // Strip the query BEFORE routing or recording — see the note above.
+    const url = raw.replace(/\?.*$/, '');
+    hits.push(url);
+    const path = url.replace(/^\//, '');
+
+    // Three shapes, and a SCOPED name contains a '/', so they cannot be told
+    // apart by counting segments:
+    //   /@scope/name            -> name probe (does the package exist at all)
+    //   /@scope/name/latest     -> dist-tag read
+    //   /@scope/name/<version>  -> exact-version read
+    // A declared package name always wins, so the probe is unambiguous.
+    let pkg;
+    let requested = null;
+    if (has(path)) {
+      pkg = path;
+    } else {
+      const i = path.lastIndexOf('/');
+      pkg = i > 0 ? path.slice(0, i) : path;
+      requested = i > 0 ? path.slice(i + 1) : null;
+    }
+
+    const v = has(pkg) ? versions[pkg] : undefined;
+    if (v === undefined || v === 'notfound') {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Not found' }));
+      return;
+    }
+    if (v === 'error') {
+      res.writeHead(503, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'unavailable' }));
+      return;
+    }
+    // Name probe: the package EXISTS, whatever versions it may have.
+    if (requested === null) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ name: pkg, 'dist-tags': { latest: v } }));
+      return;
+    }
+    // Exact-version request for a version this registry does not have.
+    if (requested !== 'latest' && requested !== v) {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'version not found' }));
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ name: pkg, version: v }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  return {
+    origin: `http://127.0.0.1:${port}`,
+    hits,
+    rawHits,
+    close: () =>
+      new Promise((resolve) => {
+        // undici keeps connections alive, so a bare close() never resolves.
+        server.closeAllConnections();
+        server.close(resolve);
+      }),
+  };
+}

@@ -17,15 +17,55 @@ jobs:
     name: Version + publish packages
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      # Check out with the SAME non-Actions token the changesets step uses below.
+      #
+      # `actions/checkout` persists its token as the git credential for the rest
+      # of the job, and that credential — NOT the `GITHUB_TOKEN` env var on the
+      # changesets step — is what actually pushes `changeset-release/main`. The
+      # env var only authenticates the Octokit calls, which is why the Version PR
+      # is authored by the PAT owner while every push to its branch was attributed
+      # to `github-actions[bot]`.
+      #
+      # That split is what stalls releases. This repo's Actions approval policy is
+      # `first_time_contributors`, and `github-actions[bot]` can never stop being
+      # one — so the `synchronize` run triggered by that push parks as
+      # `action_required`. Every first-attempt run on `changeset-release/main` with
+      # that actor has parked; the only ones that ever executed were manual re-runs.
+      # The Version PR is then left without its required checks and reads BLOCKED,
+      # with an unclicked approval button as the real cause. (On the 2026-08-12
+      # release the parked run also cancelled the healthy PAT-authored `opened` run
+      # via `cancel-in-progress`, leaving the branch with nothing but the parked one.)
+      #
+      # Pushing as the PAT owner (a contributor, not the bot) removes the approval
+      # requirement entirely. No policy is weakened: fork PRs still require
+      # approval, which on a public repo is the setting worth keeping.
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.CHANGESETS_TOKEN || secrets.GITHUB_TOKEN }}
 
       - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v6
+      # Node 24 ships npm >= 11.5.1, the minimum CLI version that supports
+      # npm OIDC trusted publishing. Node 20/22 bundle npm 10.x, whose OIDC
+      # handshake silently fails -> the registry treats the publish as
+      # anonymous and returns `E404 Not Found - PUT .../@civitai%2f<pkg>`
+      # (a 404, not 403, to hide package existence). That is exactly the
+      # failure seen on run 27824888566.
+      # Ref: https://docs.npmjs.com/trusted-publishers
+      #   "npm CLI version 11.5.1 or later and Node version 22.14.0 or higher"
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
           cache: pnpm
           registry-url: 'https://registry.npmjs.org'
+
+      # Use the npm bundled with Node 24 (>= 11.5.1 — has OIDC trusted-publishing
+      # AND a working `sigstore` for provenance). Do NOT `npm install -g npm@latest`:
+      # that global reinstall lands an npm whose provenance path fails with
+      # `Cannot find module 'sigstore'` (MODULE_NOT_FOUND from libnpmpublish/
+      # provenance.js), breaking `changeset publish` (run 29030639528). The bundled
+      # npm already satisfies the OIDC minimum, so the reinstall was redundant.
+      - run: npm --version
 
       - run: pnpm install --frozen-lockfile
 
@@ -35,15 +75,179 @@ jobs:
       - run: pnpm -r --filter "./packages/*" build
 
       - name: Create release PR or publish
-        uses: changesets/action@v1
+        # PINNED TO A SHA, deliberately. This ref USED to be `@v1`, and `v1` was the
+        # only ref in this repo's workflows resolving to a BRANCH rather than a tag —
+        # measured 2026-08-20: `refs/heads/v1` exists, `refs/tags/v1` does NOT
+        # (every other action here is tag=1 branch=0). So `@v1` meant "whatever
+        # was last pushed to that branch", and `scripts/assert-published-versions.mjs`
+        # depends on this action's INTERNALS — that `prepareBranch()` + `pushChanges()`
+        # commit the version bump and leave HEAD on it. An upstream push could
+        # invalidate the publish guard with no diff in this repo.
+        #
+        # a45c4d5 == refs/tags/v1.9.0^{} == the v1 branch head at pin time, so the pin
+        # was a NO-OP on the day it landed; it freezes behaviour rather than changing it.
+        #
+        # 🔴 release.yml has NO `pull_request` trigger, so nothing in a PR exercises this
+        # job — a bump to this line is green on every PR check and only breaks after
+        # merge, on the next push to main. That gap is closed by an exact-sha assertion
+        # in `tests/guards/workflow-action-pins.test.mjs` (PINNED), which runs in ci.yml's
+        # `Starter` job — PR-triggered and a required context. Change this line without
+        # updating PINNED and the PR goes red, whoever opened it.
+        #
+        # To bump: read the action's `src/git.ts` `prepareBranch()`/`pushChanges()`
+        # first, confirm the bump still lands as a commit with HEAD left on it, then
+        # move the SHA, update PINNED.sha/.version, update the `🔴 PREMISE` block in
+        # assert-published-versions.mjs, and move the `# vX.Y.Z` label below.
+        # ⚠️ A MINOR bump can change those internals as freely as a major — which is why
+        # PINNED asserts the exact commit rather than just "is it 40 hex".
+        # (Same convention as `peter-evans/create-pull-request` in
+        # `.github/workflows/revendor-canonical-schema.yml`.)
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
         with:
           publish: pnpm release
-          version: pnpm changeset version
+          # NOT a bare `changeset version`. `@civitai/components` commits a
+          # GENERATED artifact that embeds its own version —
+          # `packages/civitai-components/src/version.generated.ts`, written by
+          # `scripts/build-css.ts` from package.json — so bumping the version
+          # without re-running the generator leaves the committed constant a
+          # release behind. It drifted that way at 0.8.1 -> 0.9.0 (#492) and
+          # NOTHING caught it: the `design-system` job builds before it tests,
+          # so the parity test in `packages/civitai-components/test/css-integrity.test.ts`
+          # only ever sees the freshly generated value. The red surfaces for a
+          # human instead, in any checkout that has not been built — a fresh
+          # clone's `pnpm --filter @civitai/components test` fails on that
+          # assertion. `release:version` (root package.json) regenerates it in
+          # the same step, so the Version PR carries the artifact with the bump.
+          # `@civitai/blocks-react` and `@civitai/sdk` commit the same kind of
+          # file (`src/version.generated.ts`, reported to the host as
+          # `sdkVersion`) and `release:version` regenerates both too. Those
+          # three are the only packages whose generated output embeds their
+          # own version; that is why the filters are narrow.
+          version: pnpm release:version
           title: 'chore(release): version packages'
           commit: 'chore(release): version packages'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Open the Version-Packages PR with a NON-Actions token. The org
+          # disables "Allow GitHub Actions to create and approve pull requests"
+          # (enforced), so the default GITHUB_TOKEN 409s at the create-PR step —
+          # which is why the Version PR had to be opened by hand every release.
+          # A fine-grained PAT / GitHub App token is NOT subject to that org
+          # restriction, so the action can open (and trigger CI on) the PR.
+          # Falls back to GITHUB_TOKEN when the secret is absent: publishing still
+          # works via OIDC; only the auto-PR-creation needs CHANGESETS_TOKEN.
+          # SECRET: a fine-grained PAT (ideally a bot account) scoped to this repo
+          # with Contents: write + Pull requests: write.
+          GITHUB_TOKEN: ${{ secrets.CHANGESETS_TOKEN || secrets.GITHUB_TOKEN }}
           # No NPM_TOKEN — npm OIDC trusted publishing handles auth via
           # the id-token permission above. Configure the trust on npmjs.com
-          # for every published package (currently @civitai/app-sdk and
-          # @civitai/blocks-react).
+          # for every published package: @civitai/app-sdk and
+          # @civitai/blocks-react. Each must have a GitHub Actions Trusted
+          # Publisher (owner civitai, repo civitai-app-starters, workflow
+          # release.yml, environment blank).
+          # Provenance is auto-generated by OIDC publishing — no --provenance
+          # flag needed.
+
+      # Ask the REGISTRY whether the publish actually landed. A green
+      # changesets step is a claim about the job, not about npm — this arc has
+      # already shipped a release whose packages were verified only by
+      # unpacking the tarballs afterwards, by hand.
+      #
+      # It also closes a gap `check-starter-pins.mjs` documents and explicitly
+      # declines to close: a starter pin matching the LOCAL version but never
+      # published reads as AHEAD/pending and passes, because "release pending"
+      # and "release merged, publish failed" are byte-identical in the tree.
+      # Only a post-publish registry read can tell them apart.
+      #
+      # Runs on every push to main, not just publishing ones: the invariant is
+      # "every publishable version in this tree exists on npm", so a release
+      # that failed to publish is caught on the NEXT push too, not just the one
+      # that broke. Retries internally (npm's read path lags a publish), and
+      # degrades to a warning if the registry is unreachable — a blip must not
+      # red a release that succeeded.
+      # timeout-minutes is not belt-and-braces: this step retries BOTH probes on
+      # the same budget, so a package that 404s sleeps 2x(TRIES-1)xDELAY plus
+      # per-request timeouts. The release `concurrency` lane above has no
+      # cancel-in-progress, so an unbounded step here would park every
+      # subsequent release rather than just failing this one.
+      #
+      # 🔴 MUST RUN AFTER A FAILED PUBLISH — that is the whole point of this
+      # condition, and its absence is a measured defect, not a theoretical one.
+      #
+      # A step with no `if:` defaults to `if: success()`, so when the changesets
+      # step exits non-zero this one is SKIPPED — precisely when the registry
+      # state is unknown and possibly inconsistent. Measured on release run
+      # 33785932215: attempt 1 published 2 of 4 packages, this step ran and
+      # correctly failed with `PUBLISH DID NOT HAPPEN` (35 log lines). Attempt 2
+      # published `blocks-react@0.45.1` and got `E409 Cannot publish over
+      # previously staged version "0.4.1"` for `components@0.4.1` — the publish
+      # step failed, so this step contributed **0 lines** and did not appear in
+      # the run's step list at all. That is the exact moment consumers broke: a
+      # live dependent exact-pinning a staged dependency -> ETARGET on install.
+      # A failed publish is the state that most needs a registry read.
+      #
+      # `!cancelled()` rather than `always()`, deliberately. `always()` also runs
+      # through a CANCELLATION, and this step can sleep for minutes (see the
+      # budget note above) under a 10-minute cap. The release `concurrency` lane
+      # has no `cancel-in-progress`, so a run is only ever cancelled by a human
+      # or a timeout, and subsequent releases QUEUE behind it — holding the lane
+      # for up to 10 more minutes to assert against a release someone deliberately
+      # stopped is the wrong trade. `!cancelled()` covers success and failure,
+      # which is the invariant; it stops covering the case nobody asked for.
+      # (The `${{ }}` wrapper is required, not cosmetic: a bare `if: !cancelled()`
+      # is invalid YAML — `!` opens a tag.)
+      # 🔴 THE DEFAULT BUDGET IS AN ORDER OF MAGNITUDE UNDER THE MEASURED LAG, AND
+      # THIS GATE HAS NOW BEEN RED ON EIGHT CONSECUTIVE SUCCESSFUL PUBLISHES.
+      #
+      # The number that has to beat the lag is the VERSION-PROBE WINDOW, which is
+      # (TRIES-1) x DELAY — NOT the `2 x (TRIES-1) x DELAY` the script's docblock
+      # quotes. That figure is total SLEEPING across both probes (a 404 pays twice,
+      # version probe + name probe); the window a lagging version has to appear
+      # inside is only the first term. At the 5/3000 defaults that window is 12s.
+      #
+      # Measured read-after-write lag on THIS repo, publish-step success -> version
+      # visible on the registry: 76s, 126s, 127s, 157s, 187s, and 🔴 369s. So the gate
+      # was failing with ~12s of patience against a worst case of 157s, then reporting
+      # "PUBLISH DID NOT HAPPEN" for a publish that had already succeeded and pushed
+      # its git tag. Worked example, 2026-09-19: step 8 logged
+      # `success packages published successfully` at 01:35:53 and pushed
+      # `@civitai/blocks-react@0.52.0`; this step 404'd at 01:36:08; the registry
+      # served 0.52.0 at 01:37:59 — 127s.
+      #
+      # 🔴 2026-09-22, run 35782955125 (the #408 merge, FIVE packages): the tail moved
+      # AGAIN and blew past the 240s the 25/10000 pair bought. Publish logged success
+      # for `@civitai/app-sdk@0.50.0` + `@civitai/blocks-react@0.57.0` and pushed both
+      # tags at 20:52:34.403Z. This step logged `app-sdk@0.50.0 -> HTTP 404 after 25
+      # attempt(s)` and FAILED THE RUN; the registry `time` field puts 0.50.0 at
+      # 20:58:43.366Z = **369.0s**. The sibling landed at 187s, so two packages in one
+      # run straddled the old budget. `gh run rerun --failed` then printed
+      # `warn No unpublished projects to publish` with all five asserts OK — proving
+      # the publish had succeeded and this was propagation, never a silent failure.
+      # That is the ninth consecutive time this gate has been red on a SUCCESSFUL
+      # publish, which is what trains everyone to click through it — and a gate people
+      # click through is blind to the real partial publish it exists to catch.
+      #
+      # 60/10000 gives a 59 x 10s = 590s window, ~1.6x the worst observed (369s). The
+      # cost is paid ONLY by a package that never appears: a lagging one resolves as
+      # soon as it lands and sleeps no longer than it had to, and a healthy publish
+      # resolves on attempt 1 with no sleeping at all.
+      #
+      # timeout-minutes covers the GENUINE-failure case, where the full budget burns
+      # per package, sequentially: 2 x 59 x 10000 = 1180s each, so ~19.7min for one and
+      # ~39.3min for two. Three or more total-failure packages trips the cap — accepted
+      # on the same reasoning as before: that run fails loudly either way and the
+      # release `concurrency` lane has no `cancel-in-progress`, so the cap is what
+      # stops a bad run parking it.
+      # 🔴 If you raise TRIES or DELAY, re-derive both numbers; they are coupled.
+      # ⚠ A CHEAPER FIX EXISTS AND IS NOT TAKEN HERE: the worst-case sleep is doubled
+      # only because a 404 pays for the name probe on the same budget, every attempt.
+      # Running the name probe ONCE after the version probe gives up would halve it,
+      # and would let the window grow without dragging `timeout-minutes` with it. That
+      # is a change to `assert-published-versions.mjs`, not to these constants, so it
+      # is deliberately out of scope for a budget bump.
+      - name: Assert the published versions actually exist on npm
+        if: ${{ !cancelled() }}
+        timeout-minutes: 40
+        env:
+          PUBLISH_CHECK_TRIES: '60'
+          PUBLISH_CHECK_DELAY: '10000'
+        run: pnpm assert:published

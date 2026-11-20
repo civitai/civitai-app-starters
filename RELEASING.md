@@ -7,6 +7,8 @@ This repo publishes two packages to npm:
 
 The four starter templates under `starters/*` are private and aren't on npm — external devs `tiged` them directly from GitHub.
 
+Scaffolding/dev is handled by the Go **`civitai` CLI** ([github.com/civitai/cli](https://github.com/civitai/cli)) — the old `@civitai/blocks-cli` npm scaffolder it replaced stays published-but-deprecated on npm but is no longer part of this repo.
+
 The release pipeline runs on [changesets](https://github.com/changesets/changesets) plus a GitHub Actions workflow ([`.github/workflows/release.yml`](./.github/workflows/release.yml)) authenticated via npm **OIDC trusted publishing** — no `NPM_TOKEN` secret, no manual `npm login`, no OTP after the initial bootstrap.
 
 ## TL;DR — the happy path
@@ -35,7 +37,140 @@ For any change to a published package — `packages/civitai-app-sdk/src/**` or `
 - **`minor`** — new exported function, new optional argument, new subpath export, looser input acceptance. **Adding API.**
 - **`major`** — rename, removal, signature change, behavior change that existing callers will notice. **Breaking.**
 
+🔴 **One carve-out, because it reads both ways and the wrong reading ships a
+package that stays broken: a VENDORED-SCHEMA PARITY fix takes `patch` when it is
+permissive-only.** `packages/civitai-app-sdk/schemas/app-block/v1.json` is a byte
+mirror of a server contract, not API this package designed, and `defineBlock`
+validates against it at runtime. When the server has already changed and the
+mirror has not, the package is *wrong*, so correcting it is a **bug fix** — not
+the "looser input acceptance" above, which is about API this package chooses to
+widen. The distinction matters because every starter pins a caret and a `0.x`
+minor is a hard wall: shipping the correction as `minor` leaves every caret
+consumer with a package that rejects manifests the platform requires, which is
+the opposite of the fix. 🔴 **Permissive-only is the precondition, not a formality, and this list is the
+SINGLE SOURCE for what breaks it** — `scripts/revendor-canonical-schema.sh` and
+`.github/workflows/revendor-canonical-schema.yml` point here rather than
+restating it, because three divergent copies is how the short version loses the
+case that matters.
+
+A re-vendor is **NOT** permissive-only if the diff does any of these. Each makes
+a manifest that validated yesterday start failing, so each is a `minor` under the
+`0.x`-breaking rule below:
+
+🔴 **DECLARING A NEW PROPERTY IS A TIGHTENING HERE, and it is the item everyone
+omits — including the first two versions of this list.** The manifest schema's
+ROOT has **no `additionalProperties`**, so it is an *open* schema: a manifest may
+carry any key the schema does not mention, and that key is unvalidated. The
+moment a re-vendor *declares* that key with a `type` or a `pattern`, every
+manifest already using it with another shape starts failing. Measured against a
+real starter manifest at the actual commits, with a control that validates in
+both arms:
+
+| re-vendor | manifest carrying that key | |
+|---|---|---|
+| `cbfb851` declares `repository` | `VALID` → **`INVALID`** | host-allowlist `pattern` |
+| `cfd585d` declares `bootSkeleton` | `VALID` → **`INVALID`** | not of type `boolean` |
+| `a8a8a35` declares `goods[].justification` | `INVALID` → `VALID` | genuinely permissive — `goods.items` is closed |
+
+So this repo has had **three** tightening re-vendors, not one, and two of them
+tightened by this mechanism alone.
+
+- declares a **new property** on an open schema — i.e. anywhere without
+  `additionalProperties: false` (the root, today)
+- adds or narrows a **`pattern`**
+- adds an **`allOf`** / **`anyOf`** / **`not`** / **`oneOf`** / **`const`**
+  constraint
+- flips **`additionalProperties`** from `true`/absent to `false`
+- **lowers** a `maxLength` / `maximum` / `maxItems` / `maxProperties`, or
+  **raises** a `minLength` / `minimum` / `minItems` / `minProperties`, or adds an
+  `exclusiveMinimum` / `exclusiveMaximum` (note the direction: *lowering* a
+  `minimum` loosens, so "a lowered bound" on its own is the wrong test)
+- narrows a **`type`**, or removes a member from an **`enum`**
+- adds an entry to **`required`**, or adds `dependentRequired` /
+  `uniqueItems: true` / `propertyNames` / an assertive `format`
+- adds **`multipleOf`**, or tightens an existing one
+
+⚠ **Removing a property is NOT on that list, and the direction is the trap.** On
+a *closed* object (`goods.items`) removing a declared property is a tightening;
+on the open root it **loosens** — the key simply stops being validated. An
+earlier version of this list had it flatly under "tightening", which is the same
+direction error it fixes for bounds one bullet up.
+
+🔴 **This list is not theoretical: `77805d0` ("re-vendor tightened App Blocks
+manifest schema") lowered `buildCommand.maxLength` 256→128, added a `pattern`,
+and added four `not` clauses on `outputDir` — three mechanisms in one commit.**
+
+⚠ **The SDK suite does not catch these for you.** It pins the top-level
+`required` set, `tagline.maxLength`, the scopes enum and the
+property-set-is-typed ledger — so a tightening on any field outside that set
+passes the bot's validation step and the PR opens with `patch`. Reading the diff
+is the control.
+
+🔴 **While a package is `0.x`, a BREAKING change takes `minor`, not `major`.** This
+ladder read as if `major` were the only correct bump for a break, and every
+package here is `0.x` — so the written rule contradicted what the repo actually
+does. The practice is right and the omission was the bug: under npm's caret
+semantics a `0.x` minor is already a hard wall (`^0.4.0` means `>=0.4.0 <0.5.0`),
+so `minor` gives a caret consumer — which is what the starters pin — exactly the
+protection `major` would, while `major` on a `0.x` package means `1.0.0` and
+claims an API-stability commitment nobody here is making. Precedent, both merged:
+`feat(blocks-react)!` (#511) took `@civitai/blocks-react` 0.61.1 → **0.62.0**, and
+`feat(theme)!` (#516) took `@civitai/theme` 0.4.0 → **0.5.0**. Reserve `major` for
+a deliberate `1.0.0`. Say in the changeset body that the change is breaking —
+that text is what reaches the CHANGELOG and npm, and it is doing the work the
+bump level cannot.
+
 A starter-only change (no SDK touch) does not need a changeset. The starter `package.json` files are `ignore`'d in `.changeset/config.json`.
+
+## 🔴 Why every `@civitai/*` package must be in the root `pnpm.overrides`
+
+The starters pin **published caret ranges** (`"@civitai/theme": "^0.2.1"`), not
+`workspace:*`, because they are copied out of this repo verbatim by
+`npx tiged civitai/civitai-app-starters/starters/<name> my-app`. Nothing
+rewrites the deps on the way out, so a `workspace:` protocol there produces a
+scaffolded project whose `npm install` fails immediately. That was tried and
+reverted in `2a453e6` — **do not re-introduce it.**
+
+`ignore` in `.changeset/config.json` does **not** protect those pins. It only
+suppresses *versioning the starter itself*; changesets still rewrites the
+dependency ranges of every workspace dependent. So the Version Packages PR asks
+the starters for versions that **do not exist on npm yet**, and without an
+override that is a hard deadlock:
+
+- `pnpm install --lockfile-only` → `ERR_PNPM_NO_MATCHING_VERSION` ("The latest
+  release of `@civitai/theme` is 0.2.0") — the lockfile *cannot* be regenerated
+  before publish;
+- so `pnpm-lock.yaml` stays stale and every required check's
+  `pnpm install --frozen-lockfile` → `ERR_PNPM_OUTDATED_LOCKFILE`;
+- so the Version PR can never go green → never merge → never publish → the
+  versions never come into existence.
+
+A `pnpm.overrides` entry breaks the cycle without touching the published pins:
+pnpm applies the override **before** recording the lockfile importer entry, so
+the lockfile reads `specifier: workspace:*` and does **not** churn when
+changesets bumps the caret. The caret in `package.json` is still what a
+`tiged`'d copy sees.
+
+> Note: `linkWorkspacePackages` is *not* a substitute — measured, not assumed.
+> Spelled so that pnpm honours it, it changes what a specifier **resolves to**
+> (`version: link:../../packages/civitai-theme`) but leaves the **specifier**
+> itself as the caret (`specifier: ^0.2.0`), so `changeset version` bumping the
+> caret still churns the lockfile and still breaks `--frozen-lockfile` on the
+> Version PR. Only an override pins the recorded specifier. The full four-variant
+> measurement — including which spellings pnpm actually reads — is in the comment
+> block at the top of `pnpm-workspace.yaml`.
+
+**When adding a new first-party `@civitai/*` package that a starter depends on,
+add it to `pnpm.overrides` in the same PR.** Enforced by
+`scripts/check-starter-workspace-overrides.mjs`, which runs in the required
+`Starter` CI job *before* the install so it fails with an actionable message
+instead of the cryptic `ERR_PNPM_OUTDATED_LOCKFILE`. That guard also hard-blocks
+re-introducing the `workspace:` protocol into a tiged-consumed starter (the
+`2a453e6` regression) and asserts a floor on how many pins it covers, so the
+regression cannot come back as a silent drop in coverage.
+
+Both guards are unit-tested — `tests/guards/*.test.mjs`, run by `pnpm
+test:guards` and by the required `starters` CI job.
 
 ## Previewing what's pending
 
@@ -47,13 +182,130 @@ Lists every `.changeset/*.md` waiting to be consumed, plus the bump each implies
 
 ## What the release workflow actually does
 
-On every push to `main`, [`changesets/action@v1`](https://github.com/changesets/changesets-action) does one of two things:
+On every push to `main`, [`changesets/action`](https://github.com/changesets/changesets-action) — SHA-pinned to `a45c4d5` (v1.9.0); see `.github/workflows/release.yml` — does one of two things:
 
 1. **Pending changesets exist** → open / refresh a PR titled `chore(release): version @civitai/app-sdk`. The PR's diff applies the version bumps + CHANGELOG entries that `changeset version` produces.
 
 2. **No pending changesets** (i.e. the Version Packages PR was just merged) → run `pnpm release`, which is `pnpm -r --filter "./packages/*" build && changeset publish`. The publish step calls `npm publish` from each package directory whose version changed; npm detects it's running in GitHub Actions with `id-token: write` and uses **OIDC trusted publishing** to authenticate against the trust configured on each package's npm page (`access`). **Every publishable package must be in the `pnpm -r --filter "./packages/*" build` set** — `changeset publish` does not compile, so a package whose `dist/` isn't fresh will publish with stale or missing output.
 
 No `NPM_TOKEN`. No 2FA prompt. The deploy completes in ~90 seconds.
+
+## 🔴 Staged publishing — how a release goes half-live, and why re-running is a dead end
+
+**npm staged publishing is enabled on at least `@civitai/components`.** It exists so an
+automated workflow can put a version into the registry without a 2FA prompt, leaving a
+human to supply proof-of-presence later. `npm help stage`: a staged version sits in the
+registry *"in a state where it's not available for public access"*.
+
+**The divert is silent and it reports success.** Measured on release run `33785932215`
+attempt 1 (2026-09-03): `changeset publish` printed
+
+```
+🦋  success packages published successfully:
+🦋  @civitai/blocks-react@0.45.1
+🦋  @civitai/components@0.4.1
+🦋  @civitai/components-react@0.4.1
+🦋  @civitai/theme@0.3.1
+```
+
+and `changesets/action` pushed all four git tags — while the registry only ever held two
+of them (`theme@0.3.1` and `components-react@0.4.1`, both at `17:41:28Z`). `pnpm publish`
+got a 2xx for `@civitai/components@0.4.1`; the registry staged it. Nothing in the tool
+chain can see the difference. **`pnpm assert:published` is the only thing that caught it**,
+on both 2026-09-02 and 2026-09-03.
+
+**Then it deadlocks.** Staged and published versions share one semver index, so the slot
+is taken. Attempt 2 of the same run:
+
+```
+npm error 409 Conflict - PUT https://registry.npmjs.org/@civitai%2fcomponents
+  - Cannot publish over previously staged version "0.4.1".
+```
+
+Every later re-run gets the same, and so does a manual `npm publish`. **Re-running the
+release workflow cannot fix a staged version** — only a human with 2FA can:
+
+```bash
+npm stage list @civitai/components      # find the stage id   (needs an npm login; E401 without one)
+npm stage approve <stage-id>            # publish it          (2FA)
+npm stage reject  <stage-id>            # free the slot       (2FA)
+```
+
+**To find out WHETHER something is staged, look here first —
+<https://www.npmjs.com/settings/civitai/staged-packages>.** That page is the authoritative
+list, and an ordinary npmjs.com session is enough to read it. `npm stage list` needs an npm
+login and returns `E401 Unable to authenticate` from a machine that is not logged in
+(measured 2026-09-03), so it is not the route to reach for mid-incident when the only
+question is "is this version staged?".
+
+On 2026-09-03 `components@0.4.1` appeared at `17:45:38Z` — four minutes after the E409 —
+when a human approved it.
+
+### Why the half-live window breaks consumers
+
+`pnpm` rewrites `workspace:*` to an **exact** version when it packs, so the published
+`@civitai/blocks-react@0.45.1` requires `@civitai/components@0.4.1` to the digit (confirm
+with `npm view @civitai/blocks-react@0.45.1 dependencies`). A dependent going live while
+its dependency is staged therefore makes
+
+```
+npm install @civitai/blocks-react     # ETARGET — no matching version for @civitai/components@0.4.1
+```
+
+fail for every block author, with `latest` already moved. That happened twice, 2026-09-02
+and 2026-09-03, ~15 minutes each time.
+
+### 🔴 Approve in DEPENDENCY ORDER
+
+`npm stage approve` takes **one stage id at a time** and each approval publishes
+immediately, so there is no atomic batch — approval is inherently sequential. What removes
+the consumer-facing window is not speed, it is **order**: approve a package only after
+everything it depends on is live. Then every package that is visible at any instant has
+all of its dependencies visible too.
+
+```
+1. @civitai/theme             (no first-party deps)
+2. @civitai/components        (-> theme)
+3. @civitai/components-react  (-> theme, components)
+4. @civitai/blocks-react      (-> theme, components)
+—  @civitai/app-sdk           independent; app-sdk is a PEER dep of blocks-react, any order
+```
+
+Re-derive rather than trusting this list — it is the `dependencies` block of each
+`packages/*/package.json`, and a new package will not be in it.
+
+### Making a release stage ALL five instead of some
+
+The goal — *stage everything, publish nothing, approve as one batch* — **cannot be reached
+from this repo.** Two measured reasons:
+
+- `@changesets/cli` (2.31.0, the pinned version) has **no stage mode**: `changeset publish`
+  hardcodes `pnpm publish` with `--access`/`--tag`/`--no-git-checks`/`--json`, and the
+  string `stage` does not appear in its dist at all. `changesets/action`'s `publish:` input
+  runs whatever command you give it, so a stage-only flow means replacing `changeset
+  publish` wholesale — its already-published skipping, its git tags, and the `New tag:`
+  stdout lines the action parses to create GitHub Releases.
+- `npm stage publish` is `npm publish` with a flag (`lib/commands/stage/publish.js` extends
+  `Publish` with `static stage = true`), and **npm does not rewrite the `workspace:`
+  protocol** — this is a pnpm workspace, invisible to npm. Measured: `npm pack` on
+  `packages/civitai-components` produces a tarball whose manifest still reads
+  `"@civitai/theme": "workspace:*"`, which no consumer can install. Staging correctly would
+  mean `pnpm pack` → `npm stage publish <tarball>` per package, by hand.
+
+**The lever is on npmjs.com, not here.** Uniform staging is a per-package registry
+setting: give every one of the five packages the same trusted-publisher / package-access
+configuration that `@civitai/components` already has (see `npm help stage` → *Trust
+Relationship Permissions*, `npm trust <provider> --allow-stage-publish` /
+`--allow-publish`). `changeset publish` then stages all five with no code change at all —
+it already does exactly that for `components`, transparently.
+
+⚠️ **Doing that has a CI consequence, decide it deliberately.** `pnpm assert:published`
+asserts every version in the tree is *published*. If a release stages all five, that step
+fails by design until a human approves the batch, and it **cannot** verify the staged half
+itself: an OIDC short-lived token cannot run `npm stage` subcommands (only `npm stage
+publish` and `npm publish`). So the choice is between a release run that is red-until-
+approved (honest: the release genuinely is not finished) and loosening the guard that is
+currently the only thing detecting a partial release. Do not loosen it by accident.
 
 ## Bootstrapping the OIDC trust (one-time, per package)
 
@@ -88,7 +340,7 @@ Prefer the workflow path — it's the documented one and won't drift the CHANGEL
 - `.github/workflows/ci.yml` — runs typecheck + build per starter + SDK vitest on every PR + push.
 - `.github/workflows/release.yml` — opens Version Packages PR / publishes on push to main.
 
-If you change the workflow, do it in a separate PR — `changesets/action@v1` reads the file from `main`, so a workflow change paired with a changeset can race itself.
+If you change the workflow, do it in a separate PR — `changesets/action` reads the file from `main`, so a workflow change paired with a changeset can race itself.
 
 ## See also
 

@@ -1,0 +1,21 @@
+{
+  // The compiler options of the civitai service this code was moved out of, so the source compiles
+  // here unchanged; module resolution as the other packages in this repo (relative imports end in .js).
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
+    "strict": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "verbatimModuleSyntax": false
+  },
+  "include": ["src", "test", "vitest.config.ts"]
+}

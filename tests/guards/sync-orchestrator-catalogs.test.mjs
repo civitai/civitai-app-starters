@@ -1,0 +1,945 @@
+/**
+ * Self-test for `scripts/sync-orchestrator-catalogs.mjs`, the scheduled WRITE
+ * twin of the orchestrator catalog drift-check.
+ *
+ * WHY THIS FILE EXISTS. That script runs on a schedule with `contents: write`
+ * and opens PRs against this repo, and the thing it must never do is invent a
+ * description for a step type nobody has documented. Nothing else can observe
+ * that: the PR it opens is mechanically perfect — right keys, right counts,
+ * green typecheck/test/build — so a regression in `deriveDescription` ships a
+ * fabricated one-liner to developers with every signal green. This suite is the
+ * control on that rule, and on the two other decisions the script makes alone
+ * (refuse a removal; write nothing when it refuses).
+ *
+ * The script under test is byte-for-byte the file CI runs — it is driven by its
+ * `REPO_ROOT` / `SPEC_URL` env overrides against a synthetic tree and a
+ * synthetic spec, not by a test-only branch inside it.
+ *
+ * 🔴 EVERY ASSERTION BELOW IS PAIRED. A test that only checks the placeholder
+ * branch cannot tell "the rule works" from "the script never writes a
+ * description at all" — so the derived branch is asserted in the same shape,
+ * off the same spec, differing only in the field under test. Same for the
+ * refusal: "exit 2" and "wrote nothing" are separate claims and a refusal that
+ * had already written three files would satisfy the first one.
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { createServer } from 'node:http';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+
+import { CLAIMS } from '../../packages/civitai-app-sdk/test/orchestrator/step-count-claims.mjs';
+
+const execFileAsync = promisify(execFile);
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const SYNC = join(REPO_ROOT, 'scripts', 'sync-orchestrator-catalogs.mjs');
+const CHECK = join(REPO_ROOT, 'scripts', 'check-orchestrator-catalogs.mjs');
+
+/**
+ * A minimal spec with the two shapes the script reads. `steps` maps a step key
+ * to the `description` its `<Name>StepTemplate` carries — `null` for a schema
+ * with no description at all.
+ */
+function makeSpec(steps, engines = { comfy: 'A ComfyUI graph run as an imageGen engine.' }) {
+  const schemas = {
+    WorkflowStepTemplate: { discriminator: { mapping: {} } },
+    ImageGenInput: { discriminator: { mapping: {} } },
+  };
+  for (const [key, description] of Object.entries(steps)) {
+    const name = `${key[0].toUpperCase()}${key.slice(1)}StepTemplate`;
+    schemas.WorkflowStepTemplate.discriminator.mapping[key] = `#/components/schemas/${name}`;
+    schemas[name] = description === null ? { type: 'object' } : { type: 'object', description };
+  }
+  for (const [key, description] of Object.entries(engines)) {
+    const name = `${key[0].toUpperCase()}${key.slice(1)}ImageGenInput`;
+    schemas.ImageGenInput.discriminator.mapping[key] = `#/components/schemas/${name}`;
+    schemas[name] = description === null ? { type: 'object' } : { type: 'object', description };
+  }
+  return { components: { schemas } };
+}
+
+async function serveSpec(spec) {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(spec));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address();
+  return {
+    url: `http://127.0.0.1:${port}/spec.json`,
+    close: () => new Promise((r) => server.close(r)),
+  };
+}
+
+/** The `$type`s a synthetic ledger string names (`never` → none). */
+const ledgerKeys = (ledger) =>
+  ledger === 'never' || !ledger.startsWith("'")
+    ? []
+    : ledger.split('|').map((part) => part.trim().slice(1, -1));
+
+/** A claim template with `values` substituted — the fixture side, not the script's. */
+const renderClaim = (text, values) => text.replace(/\{(\w+)\}/g, (_, k) => values[k]);
+
+/**
+ * A synthetic tree carrying only the paths the script writes, in the real repo's
+ * shape: the six files it rewrites, plus the `.changeset` directory it drops a
+ * seventh file into. The SDK source and test file are REAL excerpts — same anchors
+ * the script does text surgery against — so a change to those anchors upstream
+ * fails here rather than in production.
+ *
+ * `mapped` is the synthetic `interface StepTemplateMap`'s keys; by default every
+ * catalog key the ledger does not name, which is the consistent state `main` is
+ * held to. `steps.ts` and the README carry every step-count claim from
+ * `step-count-claims.mjs`, rendered for that state, and the type test carries one
+ * `@ts-expect-error` pin per ledger entry — so a tree starts out passing the SDK's
+ * step-count guard, and what a run changes is what the run did.
+ */
+function makeTree({ stepTypes, engines, ledger = 'never', mapped }) {
+  const gapKeys = ledgerKeys(ledger);
+  const mappedKeys = mapped ?? stepTypes.filter((k) => !gapKeys.includes(k));
+  const gap = stepTypes.filter((k) => !mappedKeys.includes(k)).sort();
+  const values = {
+    catalog: String(stepTypes.length),
+    mapped: String(mappedKeys.length),
+    gapCount: String(gap.length),
+    gapList: gap.map((k) => `\`${k}\``).join(', '),
+  };
+  const claimsFor = (tag) => CLAIMS.filter((c) => c.files.includes(tag));
+
+  const dir = mkdtempSync(join(tmpdir(), 'catalog-sync-'));
+  mkdirSync(join(dir, 'packages/civitai-app-sdk/test/fixtures'), { recursive: true });
+  mkdirSync(join(dir, 'packages/civitai-app-sdk/test/orchestrator'), { recursive: true });
+  mkdirSync(join(dir, 'packages/civitai-app-sdk/src/orchestrator'), { recursive: true });
+  mkdirSync(join(dir, '.changeset'), { recursive: true });
+
+  writeFileSync(
+    join(dir, 'packages/civitai-app-sdk/test/fixtures/orchestrator-spec-catalogs.json'),
+    `${JSON.stringify(
+      { specUrl: 'http://example.invalid', readOn: '2000-01-01', workflowStepTypes: stepTypes, imageGenEngines: engines },
+      null,
+      2,
+    )}\n`,
+  );
+  writeFileSync(
+    join(dir, 'packages/civitai-app-sdk/src/orchestrator/index.ts'),
+    [
+      'export const WORKFLOW_STEP_TYPES = {',
+      ...stepTypes.map((k) => `  ${k}: 'existing description for ${k}',`),
+      '} as const;',
+      '',
+      'export type WorkflowStepType = keyof typeof WORKFLOW_STEP_TYPES;',
+      '',
+      'export const IMAGE_GEN_ENGINES = {',
+      ...engines.map((k) => `  ${k}: 'existing description for ${k}',`),
+      '} as const;',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(dir, 'packages/civitai-app-sdk/test/orchestrator.test.ts'),
+    [
+      '    expect(body.steps).toHaveLength(1);',
+      `    expect(SPEC_WORKFLOW_STEP_TYPES).toHaveLength(${stepTypes.length});`,
+      `    expect(SPEC_IMAGE_GEN_ENGINES).toHaveLength(${engines.length});`,
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(dir, 'packages/civitai-app-sdk/test/orchestrator/step-templates.test-d.ts'),
+    [
+      '// A real excerpt: the alias the sync script rewrites, with a line on each',
+      '// side so a replacement that swallowed its neighbours would be visible.',
+      'const before = 1;',
+      `type CatalogStepTypesWithoutAGeneratedType = ${ledger};`,
+      'const after = 2;',
+      '',
+      '/**',
+      ' * One alias per ledger entry, named `_NoGeneratedTemplateFor_<$type>`.',
+      ' */',
+      ...gapKeys.flatMap((k) => [
+        '// @ts-expect-error — documented `$type`, no generated template in the pinned peer',
+        `export type _NoGeneratedTemplateFor_${k} = WorkflowStepTemplateFor<'${k}'>;`,
+      ]),
+      'const afterPins = 3;',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(dir, STEPS),
+    [
+      '/**',
+      ' * A synthetic excerpt carrying every step-count claim the sync script rewrites.',
+      ...claimsFor('steps').flatMap((c) => [' *', ` * ${renderClaim(c.text, values)}`]),
+      ' */',
+      'interface StepTemplateMap {',
+      ...mappedKeys.map((k, i) => `  ${k}: T${i}StepTemplate;`),
+      '}',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(dir, README),
+    [
+      '# synthetic README excerpt',
+      ...claimsFor('readme').flatMap((c) => [
+        '',
+        `${c.id === 'gap' ? '> ' : ''}${renderClaim(c.text, values)}`,
+      ]),
+      '',
+    ].join('\n'),
+  );
+  return dir;
+}
+
+const read = (dir, p) => readFileSync(join(dir, p), 'utf8');
+const SDK = 'packages/civitai-app-sdk/src/orchestrator/index.ts';
+const FIXTURE = 'packages/civitai-app-sdk/test/fixtures/orchestrator-spec-catalogs.json';
+const TEST = 'packages/civitai-app-sdk/test/orchestrator.test.ts';
+const TYPE_TEST = 'packages/civitai-app-sdk/test/orchestrator/step-templates.test-d.ts';
+const STEPS = 'packages/civitai-app-sdk/src/orchestrator/steps.ts';
+const README = 'packages/civitai-app-sdk/README.md';
+const ALL = [SDK, FIXTURE, TEST, TYPE_TEST, STEPS, README];
+
+async function run(script, env) {
+  try {
+    const { stdout, stderr } = await execFileAsync(process.execPath, [script], {
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+    });
+    return { code: 0, out: stdout + stderr };
+  } catch (err) {
+    return { code: err.code ?? 1, out: (err.stdout ?? '') + (err.stderr ?? '') };
+  }
+}
+
+const runSync = (dir, specUrl) => run(SYNC, { REPO_ROOT: dir, SPEC_URL: specUrl });
+const runCheck = (env) => run(CHECK, env);
+
+/**
+ * Load the generated catalog module and report whether anything in it EXECUTED.
+ *
+ * The generated file is `.ts`, and the only TypeScript in it is erasable
+ * (`as const`, an `export type` alias). Both are stripped here and the result is
+ * imported as plain ESM, so this asserts the JavaScript-level question — does an
+ * injected statement reach executable position — without depending on which
+ * Node versions strip types.
+ */
+async function importGenerated(dir, tag) {
+  // Line-scoped on purpose: a global `as const` strip also rewrites the payload
+  // INSIDE a catalog value, which would quietly change the thing under test. The
+  // real terminator is the only line that is exactly `} as const;`.
+  const src = read(dir, SDK)
+    .split('\n')
+    .filter((l) => !l.startsWith('export type '))
+    .map((l) => (l === '} as const;' ? '};' : l))
+    .join('\n');
+  const mjs = join(dir, `generated-${tag}.mjs`);
+  writeFileSync(mjs, src);
+  try {
+    const mod = await import(`file://${mjs}`);
+    return { loaded: true, mod };
+  } catch (err) {
+    return { loaded: false, error: err };
+  }
+}
+
+test('a spec description that merely RESTATES the key becomes a placeholder, a real one is used', async (t) => {
+  // The pair is the point. `webScrape` gets "WebScrape" — what the OpenAPI
+  // generator emits when the source carries no doc comment, measured verbatim
+  // in the live spec on 2026-09-01. `songGen` gets a real sentence. Both arrive
+  // through the same code path in the same run, so a regression that collapses
+  // the rule in EITHER direction fails: always-placeholder loses the second
+  // assertion, always-derive loses the first.
+  const spec = makeSpec({
+    echo: 'Echo the input back.',
+    webScrape: 'WebScrape',
+    songGen: 'Generate a complete song from a caption and lyrics.',
+  });
+  const server = await serveSpec(spec);
+  const dir = makeTree({ stepTypes: ['echo'], engines: ['comfy'] });
+  t.after(async () => {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const { code, out } = await runSync(dir, server.url);
+  assert.equal(code, 0, `sync should succeed; got ${code}\n${out}`);
+
+  // Double-quoted since 2026-09-02: values are emitted with `JSON.stringify`,
+  // which is the only escaper here that also covers newlines and control
+  // characters. Nothing in this repo enforces a quote style on
+  // `packages/civitai-app-sdk/src/**` — no root prettier/eslint config, and the
+  // SDK package has no `lint` script — so correctness wins over cosmetics.
+  const sdk = read(dir, SDK);
+  assert.match(
+    sdk,
+    /webScrape: "TODO\(catalog\): no description yet/,
+    'a description that restates the key must NOT be shipped as the catalog entry',
+  );
+  assert.match(
+    sdk,
+    /songGen: "Generate a complete song from a caption and lyrics\."/,
+    'a real spec description must be used verbatim — otherwise this rule is just "never write anything"',
+  );
+
+  // The other three files, so a green on the two above cannot mean "it wrote
+  // the SDK file and nothing else".
+  const fixture = JSON.parse(read(dir, FIXTURE));
+  assert.deepEqual(fixture.workflowStepTypes, ['echo', 'songGen', 'webScrape']);
+  assert.match(read(dir, TEST), /expect\(SPEC_WORKFLOW_STEP_TYPES\)\.toHaveLength\(3\)/);
+  assert.match(
+    read(dir, TEST),
+    /expect\(body\.steps\)\.toHaveLength\(1\)/,
+    'the count bump must not have rewritten an unrelated toHaveLength assertion',
+  );
+  const changesets = readdirSync(join(dir, '.changeset'));
+  assert.equal(changesets.length, 1, `expected exactly 1 changeset, got ${changesets.join(', ')}`);
+  assert.match(read(dir, join('.changeset', changesets[0])), /'@civitai\/app-sdk': minor/);
+});
+
+test('a new STEP TYPE extends the not-yet-typed ledger; a new ENGINE leaves it alone', async (t) => {
+  // 🔴 WHAT BREAKS WITHOUT THIS. `step-templates.test-d.ts` asserts
+  // `Exclude<WorkflowStepType, keyof WorkflowStepTemplates>` equals this ledger.
+  // A new catalog key widens `WorkflowStepType`, so the ledger goes stale in the
+  // same edit and `pnpm --filter @civitai/app-sdk test` fails — which is the
+  // workflow's `Validate SDK` step, the gate in front of `create-pull-request`.
+  // The job would fail and NO PR would open. Measured against the live spec on
+  // 2026-09-15: `step-templates.test-d.ts(147,72): error TS2554`.
+  //
+  // PAIRED, because "always rewrite the file" would pass the first half alone:
+  // an `imageGen` engine does not widen `WorkflowStepType` and must therefore
+  // leave the ledger byte-identical.
+  const server = await serveSpec(
+    makeSpec(
+      { echo: 'Echo the input back.', songGen: 'Generate a song.' },
+      { comfy: 'A ComfyUI graph.', flux: 'Flux image generation.' },
+    ),
+  );
+  const dir = makeTree({ stepTypes: ['echo'], engines: ['comfy', 'flux'] });
+  // The engine-only arm's ledger is deliberately UNSORTED, which is a shape a
+  // human editing it by hand produces and the emitter never would. Without
+  // that, "write the ledger unconditionally" is an equivalent mutant: an
+  // engine-only run re-emits `never` byte-for-byte and the assertion below
+  // cannot see it. Measured — with a `never` ledger that mutant SURVIVED.
+  //
+  // The ledger's keys are catalog keys here, as they are on `main` (the type
+  // test pins the ledger to catalog-minus-map), so the gap pass finds the SAME
+  // set and must leave the hand ordering alone. Its own spec: the step-type arm
+  // above would otherwise see these two as additions.
+  const engineSpec = await serveSpec(
+    makeSpec(
+      {
+        echo: 'Echo the input back.',
+        imageScanning: 'Scan an image.',
+        songGen: 'Generate a song.',
+        yuE2: 'Generate music.',
+      },
+      { comfy: 'A ComfyUI graph.', flux: 'Flux image generation.' },
+    ),
+  );
+  const engineOnly = makeTree({
+    stepTypes: ['echo', 'imageScanning', 'songGen', 'yuE2'],
+    engines: ['comfy'],
+    ledger: "'yuE2' | 'imageScanning'",
+  });
+  t.after(async () => {
+    await server.close();
+    await engineSpec.close();
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(engineOnly, { recursive: true, force: true });
+  });
+
+  const stepRun = await runSync(dir, server.url);
+  assert.equal(stepRun.code, 0, `sync should succeed; got ${stepRun.code}\n${stepRun.out}`);
+  assert.match(
+    read(dir, TYPE_TEST),
+    /^type CatalogStepTypesWithoutAGeneratedType = 'songGen';$/m,
+    'a catalog key with no generated template yet must land in the ledger',
+  );
+  assert.match(read(dir, TYPE_TEST), /^const before = 1;$/m, 'the lines around it must survive');
+  assert.match(read(dir, TYPE_TEST), /^const after = 2;$/m, 'the lines around it must survive');
+  assert.match(stepRun.out, /songGen/, 'the run must say what it added to the ledger');
+
+  const engineBefore = read(engineOnly, TYPE_TEST);
+  const engineRun = await runSync(engineOnly, engineSpec.url);
+  assert.equal(engineRun.code, 0, `sync should succeed; got ${engineRun.code}\n${engineRun.out}`);
+  assert.match(
+    read(engineOnly, SDK),
+    /flux: "Flux image generation\."/,
+    'positive control: the engine really was added, so the ledger claim below is about the ledger',
+  );
+  assert.equal(
+    read(engineOnly, TYPE_TEST),
+    engineBefore,
+    'an imageGen engine does not widen WorkflowStepType, so it must not touch the ledger',
+  );
+});
+
+test('an existing ledger entry still in the gap is KEPT beside a new one, and an unparseable ledger is refused', async (t) => {
+  const server = await serveSpec(
+    makeSpec({ echo: 'Echo the input back.', songGen: 'Generate a song.', yuE2: 'Generate music.' }),
+  );
+  const grow = makeTree({ stepTypes: ['echo', 'yuE2'], engines: ['comfy'], ledger: "'yuE2'" });
+  const refuse = makeTree({
+    stepTypes: ['echo'],
+    engines: ['comfy'],
+    ledger: 'Exclude<WorkflowStepType, never>',
+  });
+  t.after(async () => {
+    await server.close();
+    rmSync(grow, { recursive: true, force: true });
+    rmSync(refuse, { recursive: true, force: true });
+  });
+
+  const growRun = await runSync(grow, server.url);
+  assert.equal(growRun.code, 0, `sync should succeed; got ${growRun.code}\n${growRun.out}`);
+  assert.match(
+    read(grow, TYPE_TEST),
+    /^type CatalogStepTypesWithoutAGeneratedType = 'songGen' \| 'yuE2';$/m,
+    'an entry a human is still waiting on must not be dropped, and the union is emitted sorted',
+  );
+
+  // A shape this script cannot parse is one it must not guess at — same
+  // contract as `bumpCount`, and the same "nothing written" promise.
+  const refuseBefore = ALL.map((p) => read(refuse, p));
+  const refuseRun = await runSync(refuse, server.url);
+  assert.equal(refuseRun.code, 1, `an unparseable ledger must exit 1, got ${refuseRun.code}\n${refuseRun.out}`);
+  assert.match(refuseRun.out, /CatalogStepTypesWithoutAGeneratedType/, 'the refusal must name the alias');
+  assert.deepEqual(
+    ALL.map((p) => read(refuse, p)),
+    refuseBefore,
+    'exit 1 must mean NOTHING was written',
+  );
+  assert.deepEqual(readdirSync(join(refuse, '.changeset')), [], 'and no changeset');
+});
+
+test('a HYPHENATED step type is REFUSED, naming the key, with nothing written', async (t) => {
+  // 🔴 WHAT THIS USED TO PIN, AND WHY IT CHANGED. `SAFE_KEY` deliberately allows
+  // hyphens (`flux1-kontext` is a live imageGen engine), and this test once
+  // chained two runs to prove the ledger WRITER and READER admit the same key
+  // shape — a hyphenated step type written into the ledger by run 1 used to wedge
+  // run 2 with exit 1 (fixed by deriving `SAFE_KEY_LITERAL` from `SAFE_KEY`).
+  //
+  // Since the script also writes one `_NoGeneratedTemplateFor_<$type>` alias per
+  // gap `$type`, a hyphenated step type cannot be synced at all:
+  // `_NoGeneratedTemplateFor_flux1-kontext` is not a TypeScript name, and how to
+  // spell such a pin is a decision for the SDK guard that reads them
+  // (`readCompileErrorPins`). So the script refuses up front — exit 1, the key
+  // named, nothing written — rather than writing a ledger the very next step
+  // (`Validate SDK`) fails on. No hyphenated STEP TYPE is live (0 of 58 in the
+  // pinned fixture), so this is a latent path, not a past incident.
+  const dir = makeTree({ stepTypes: ['echo'], engines: ['comfy'] });
+  const spec = await serveSpec(
+    makeSpec({ echo: 'Echo the input back.', 'flux1-kontext': 'Edit an image from an instruction.' }),
+  );
+  t.after(async () => {
+    await spec.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const before = ALL.map((p) => read(dir, p));
+  const run1 = await runSync(dir, spec.url);
+  assert.equal(run1.code, 1, `a hyphenated step type must exit 1; got ${run1.code}\n${run1.out}`);
+  assert.match(run1.out, /"flux1-kontext"/, 'the refusal must name the key');
+  assert.match(run1.out, /_NoGeneratedTemplateFor_/, 'and say it is the pin spelling that blocks it');
+  assert.deepEqual(ALL.map((p) => read(dir, p)), before, 'exit 1 must mean NOTHING was written');
+  assert.deepEqual(readdirSync(join(dir, '.changeset')), [], 'and no changeset');
+});
+
+test('a WITHDRAWN key is refused with exit 2 and NOTHING is written', async (t) => {
+  const server = await serveSpec(makeSpec({ echo: 'Echo the input back.' }));
+  const dir = makeTree({ stepTypes: ['echo', 'goneFromTheSpec'], engines: ['comfy'] });
+  t.after(async () => {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const before = [SDK, FIXTURE, TEST].map((p) => read(dir, p));
+  const { code, out } = await runSync(dir, server.url);
+
+  assert.equal(code, 2, `a removal must exit 2 (its own code), got ${code}\n${out}`);
+  assert.match(out, /goneFromTheSpec/, 'the refusal must name the withdrawn key');
+  // Separate claim from the exit code: a script that wrote three files and THEN
+  // refused would satisfy the assertion above.
+  assert.deepEqual(
+    [SDK, FIXTURE, TEST].map((p) => read(dir, p)),
+    before,
+    'a refused sync must leave every file byte-identical',
+  );
+  assert.deepEqual(readdirSync(join(dir, '.changeset')), [], 'a refused sync must write no changeset');
+});
+
+test('an unreachable spec FAILS rather than reporting a clean sync', async (t) => {
+  const dir = makeTree({ stepTypes: ['echo'], engines: ['comfy'] });
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // Port 0 is not connectable; any refusal is the shape under test.
+  const { code, out } = await runSync(dir, 'http://127.0.0.1:1/spec.json');
+  assert.equal(code, 1, `an unreachable spec must fail, got ${code}\n${out}`);
+  assert.doesNotMatch(out, /No drift/, 'a skipped sync must not read like a clean one');
+});
+
+test('check-orchestrator-catalogs.mjs REPORTS while a placeholder survives', async (t) => {
+  // 🔴 This is an ADVISORY signal, not a gate, and an earlier version of this
+  // comment called it "the ONLY mechanism stopping an uncurated description
+  // reaching `main`". That was false: `Orchestrator catalog drift-check` is not
+  // a required context (measured 2026-09-02 — 9 required contexts on `main`, and
+  // it is not one of them), so a `TODO(catalog)` line CAN be merged past it. What
+  // the sweep buys is that the placeholder is NAMED, loudly, in the log a
+  // reviewer reads and in `pnpm check:catalogs` locally. Worth testing; not worth
+  // overstating.
+  const dir = mkdtempSync(join(tmpdir(), 'catalog-sweep-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const withPlaceholder = join(dir, 'with.ts');
+  const withoutPlaceholder = join(dir, 'without.ts');
+  writeFileSync(
+    withPlaceholder,
+    "export const WORKFLOW_STEP_TYPES = {\n  webScrape: 'TODO(catalog): no description yet — replace me',\n} as const;\n",
+  );
+  writeFileSync(
+    withoutPlaceholder,
+    "export const WORKFLOW_STEP_TYPES = {\n  webScrape: 'Fetch one URL and return its content',\n} as const;\n",
+  );
+
+  // Both arms point at an unreachable spec so this stays offline: the sweep runs
+  // BEFORE the fetch, so the arms differ only in whether the placeholder message
+  // appears — not in the exit code, which is 1 either way here.
+  //
+  // 🔴 THAT IS EXACTLY WHY THIS TEST IS NOT ENOUGH ON ITS OWN, and why the
+  // reachable-spec test below exists. Because both arms fail for the fetch's own
+  // reason, neither one observes the sweep's CONTRIBUTION to the exit code:
+  // measured, deleting `process.exitCode = 1` from `fail()` left this file 4/4
+  // green while the script returned rc 0 over live `TODO(catalog)` entries.
+  const runOffline = async (sdkSrc) => {
+    const { out } = await runCheck({ SDK_SRC: sdkSrc, SPEC_URL: 'http://127.0.0.1:1/spec.json' });
+    return out;
+  };
+
+  assert.match(
+    await runOffline(withPlaceholder),
+    /still carries a PLACEHOLDER description/,
+    'the sweep must report a placeholder',
+  );
+  // The negative arm: without it, a sweep hardcoded to always report would pass.
+  assert.doesNotMatch(
+    await runOffline(withoutPlaceholder),
+    /PLACEHOLDER description/,
+    'the sweep must NOT report on a curated catalog — otherwise it is reporting unconditionally',
+  );
+});
+
+test('a placeholder alone EXITS NON-ZERO when the spec is reachable and in sync', async (t) => {
+  // 🔴 THE ARM THE SUITE WAS MISSING, and the one state the sweep exists for:
+  // spec reachable, catalogs in perfect sync, a placeholder still unwritten.
+  // Every other arm here fails for the fetch's own reason, so the sweep's own
+  // `process.exitCode = 1` was never observed — deleting that line kept the
+  // suite 4/4 green while `check:catalogs` returned rc 0 over two live
+  // `TODO(catalog)` entries, which is precisely the silent skip its docblock
+  // says it exists to prevent.
+  //
+  // Both the exit CODE and the message are asserted, separately: a run that
+  // printed the placeholder text and still exited 0 would satisfy the message
+  // assertion alone, and rc 0 is the whole defect.
+  const server = await serveSpec(makeSpec({ echo: 'Echo the input back.' }));
+  const dir = mkdtempSync(join(tmpdir(), 'catalog-sweep-live-'));
+  t.after(async () => {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Fixture matches the served spec EXACTLY, so the set comparison finds no
+  // drift and cannot be the source of the failure.
+  const fixture = join(dir, 'fixture.json');
+  writeFileSync(
+    fixture,
+    `${JSON.stringify({ specUrl: server.url, readOn: '2000-01-01', workflowStepTypes: ['echo'], imageGenEngines: ['comfy'] }, null, 2)}\n`,
+  );
+
+  const curated = join(dir, 'curated.ts');
+  const uncurated = join(dir, 'uncurated.ts');
+  writeFileSync(curated, "export const WORKFLOW_STEP_TYPES = {\n  echo: 'Echo the input back.',\n} as const;\n");
+  writeFileSync(
+    uncurated,
+    "export const WORKFLOW_STEP_TYPES = {\n  echo: 'TODO(catalog): no description yet — replace me',\n} as const;\n",
+  );
+
+  const env = (sdkSrc) => ({ SDK_SRC: sdkSrc, FIXTURE: fixture, SPEC_URL: server.url });
+
+  // Control arm FIRST: the same fixture, the same spec, a curated catalog. If
+  // this is not 0 then the arm under test proves nothing about the placeholder —
+  // it would just be failing for the drift the control shares.
+  const ok = await runCheck(env(curated));
+  assert.equal(ok.code, 0, `a curated catalog against a matching spec must exit 0; got ${ok.code}\n${ok.out}`);
+  assert.match(ok.out, /No drift/, 'the control arm must report a clean run');
+
+  const bad = await runCheck(env(uncurated));
+  assert.notEqual(bad.code, 0, `a surviving placeholder must exit NON-ZERO, got ${bad.code}\n${bad.out}`);
+  assert.match(bad.out, /still carries a PLACEHOLDER description/, 'and must say which entry');
+  assert.doesNotMatch(
+    bad.out,
+    /\nNo drift/,
+    'the summary must not contradict the failure it just reported',
+  );
+});
+
+test('a hostile discriminator key is REFUSED, with nothing written', async (t) => {
+  // 🔴 The keys come from an unauthenticated remote spec that a `contents: write`
+  // job fetches unattended, and the job's next step imports the module this
+  // generates. A key that closes the object literal therefore reaches executable
+  // position on the runner. Before the fix this exited 0, wrote the file, and
+  // `globalThis.PWNED` came back 1 on import.
+  const hostileKey = "x': 'y',\n} as const;\nglobalThis.PWNED=1;\nconst _pad = {'z";
+  const server = await serveSpec(
+    makeSpec({ echo: 'Echo the input back.', [hostileKey]: 'Looks like an ordinary sentence.' }),
+  );
+  const dir = makeTree({ stepTypes: ['echo'], engines: ['comfy'] });
+  t.after(async () => {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const before = [SDK, FIXTURE, TEST].map((p) => read(dir, p));
+  const { code, out } = await runSync(dir, server.url);
+
+  assert.notEqual(code, 0, `a key outside SAFE_KEY must fail, got ${code}\n${out}`);
+  assert.match(out, /refuses to emit/, 'the refusal must say what it refused to do');
+  assert.match(out, /globalThis\.PWNED/, 'and must name the offending key so it is diagnosable');
+  // Separate claim from the exit code — the whole point of F6's deferred writes.
+  assert.deepEqual(
+    [SDK, FIXTURE, TEST].map((p) => read(dir, p)),
+    before,
+    'a refused sync must leave every file byte-identical',
+  );
+  assert.deepEqual(readdirSync(join(dir, '.changeset')), [], 'a refused sync must write no changeset');
+});
+
+test('a hostile DESCRIPTION is contained by the emitter, not merely by the key belt', async (t) => {
+  // 🔴 `SAFE_KEY` cannot help here. A description is free prose — it legitimately
+  // contains quotes, apostrophes and (in 5 of the 60 live catalog schemas) newlines
+  // — so it can never be pattern-restricted, which makes it the end-to-end
+  // control on `tsString` ITSELF. If this passes only because of the key belt,
+  // the belt is doing work the emitter should be doing.
+  //
+  // The old emitter escaped backslashes and quotes but NOT newlines, so this
+  // payload produced an unterminated string literal: fail-closed, but as a
+  // syntax error in a file the next CI step imports. Verified against the
+  // pre-change script — it exited 0, wrote the file, and the module then failed
+  // to load with `SyntaxError: Expected unicode escape`.
+  //
+  // ⚠️ What this test pins is the COMPOSITE. Two independent changes close the
+  // vector — `deriveDescription` collapsing whitespace, and `tsString` using
+  // `JSON.stringify` — and reverting either ONE alone still leaves the payload
+  // inert. Measured, so do not read a green here as isolating the emitter; the
+  // emitter is isolated by the `tsKey` path, which has no pre-processing at all.
+  const hostile =
+    "Fetches a URL.',\n} as const;\nglobalThis.PWNED_BY_DESC=1;\nconst _pad = {\n  filler: 'x";
+  const server = await serveSpec(makeSpec({ echo: 'Echo the input back.', evil: hostile }));
+  const dir = makeTree({ stepTypes: ['echo'], engines: ['comfy'] });
+  t.after(async () => {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const { code, out } = await runSync(dir, server.url);
+  assert.equal(code, 0, `an ordinary key with an ugly description must still sync; got ${code}\n${out}`);
+
+  // 🔴 THE SUBSTANTIVE ASSERTIONS COME FIRST, DELIBERATELY. The shape checks
+  // below would also fail under a bad emitter, but they would fail on QUOTE
+  // STYLE — a cosmetic reason that reads like a passing safety test. Assert the
+  // behaviour (does it parse; does the payload run) before the spelling.
+  const sdk = read(dir, SDK);
+  const { loaded, error, mod } = await importGenerated(dir, 'desc');
+  assert.ok(
+    loaded,
+    `the generated module must still parse — a payload that merely breaks the file is ` +
+      `still a self-inflicted DoS on a job that imports it: ${error?.message}`,
+  );
+  assert.equal(globalThis.PWNED_BY_DESC, undefined, '🔴 the payload EXECUTED — the emitter is unsafe');
+  // Positive control on the whole check: the description really did travel
+  // through the emitter and land in the object, rather than being dropped.
+  assert.equal(
+    mod.WORKFLOW_STEP_TYPES.evil,
+    hostile.replace(/\s+/g, ' ').trim(),
+    'the description must round-trip intact (whitespace-collapsed), not be silently discarded',
+  );
+
+  // One line: the catalog value is a one-line description, and a value that
+  // spans lines is the shape that breaks out of a literal.
+  const evilLines = sdk.split('\n').filter((l) => l.trimStart().startsWith('evil:'));
+  assert.equal(evilLines.length, 1, `the entry must be exactly one line, got:\n${sdk}`);
+  assert.doesNotMatch(
+    evilLines[0],
+    /^\s*evil: '/,
+    'the value must not be emitted as a hand-escaped single-quoted literal',
+  );
+});
+
+test('a description that merely RESTATES the key morphologically is a placeholder', async (t) => {
+  // 🔴 The rule used to be an exact normalised match, which caught only the
+  // generator's verbatim echo. Measured against the live spec, three real keys
+  // slipped through it while saying nothing: `imageGen` -> "Image Generation",
+  // `transcode` -> "Transcoding", `videoGen` -> "Video generation". Those are the
+  // expensive case, because they LOOK curated and nobody rewrites them.
+  //
+  // Paired, in the same run and off the same spec, with keys whose descriptions
+  // add a word — otherwise "widened the rule" is indistinguishable from "rejects
+  // everything now", which would make every entry a placeholder.
+  const spec = makeSpec({
+    echo: 'Echo the input back.',
+    imageGen: 'Image Generation',
+    transcode: 'Transcoding',
+    videoGen: 'Video generation',
+    polyGen: '3D model generation',
+    comfy: 'Comfy workflows',
+    videoUpscaler: 'Upscale videos using FlashVSR',
+  });
+  const server = await serveSpec(spec);
+  const dir = makeTree({ stepTypes: ['echo'], engines: ['comfy'] });
+  t.after(async () => {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const { code, out } = await runSync(dir, server.url);
+  assert.equal(code, 0, `sync should succeed; got ${code}\n${out}`);
+  const sdk = read(dir, SDK);
+
+  for (const key of ['imageGen', 'transcode', 'videoGen']) {
+    assert.match(
+      sdk,
+      new RegExp(`${key}: "TODO\\(catalog\\): no description yet`),
+      `${key}: a morphological restatement of the key must NOT ship as a description`,
+    );
+  }
+  for (const [key, text] of [
+    ['polyGen', '3D model generation'],
+    ['comfy', 'Comfy workflows'],
+    ['videoUpscaler', 'Upscale videos using FlashVSR'],
+  ]) {
+    assert.match(
+      sdk,
+      new RegExp(`${key}: ${JSON.stringify(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+      `${key}: a description carrying a word the key does not have must be KEPT`,
+    );
+  }
+});
+
+test('a failure PART WAY THROUGH leaves every file byte-identical', async (t) => {
+  // 🔴 The EXIT CODES docblock promises "nothing written" on exit 1. It used to
+  // be false: the fixture and the SDK source were written BEFORE `bumpCount`
+  // ran, so a test file without the expected assertion left a maintainer who ran
+  // `pnpm sync:catalogs` with a half-applied change and a message saying
+  // otherwise. This drives exactly that ordering — a valid spec, real drift, and
+  // a test file `bumpCount` cannot edit.
+  const server = await serveSpec(makeSpec({ echo: 'Echo the input back.', songGen: 'Generate a song.' }));
+  const dir = makeTree({ stepTypes: ['echo'], engines: ['comfy'] });
+  t.after(async () => {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Remove the assertion `bumpCount` requires — the LAST of the three edits.
+  writeFileSync(join(dir, TEST), '    expect(body.steps).toHaveLength(1);\n');
+  const before = [SDK, FIXTURE, TEST, TYPE_TEST].map((p) => read(dir, p));
+
+  const { code, out } = await runSync(dir, server.url);
+  assert.equal(code, 1, `an unrecognised file shape must exit 1, got ${code}\n${out}`);
+  assert.match(out, /toHaveLength/, 'the failure must name what it could not edit');
+  assert.deepEqual(
+    [SDK, FIXTURE, TEST, TYPE_TEST].map((p) => read(dir, p)),
+    before,
+    'exit 1 must mean NOTHING was written — including the fixture and the SDK source, which are computed first',
+  );
+  assert.deepEqual(readdirSync(join(dir, '.changeset')), [], 'and no changeset');
+});
+
+// ---------------------------------------------------------------------------
+// The step-type GAP surfaces, against COPIES OF THE REAL FILES.
+//
+// Run 37834855058 (workflow_dispatch, 2026-10-08) added a step type, wrote the
+// fixture / catalog / count pin / ledger, and then failed its own `Validate SDK`
+// step in `step-count-prose.test.ts`: six `claim-count` misses and "pins one
+// live compile error per gap $type". The script did not touch the README /
+// steps.ts prose or the `@ts-expect-error` pins, so NO PR OPENED. These tests
+// drive the script over the real README, steps.ts and type test — the synthetic
+// excerpts above cannot see a claim that only the real prose wraps or words
+// differently — and assert the outcome the way that guard does: every claim, with
+// the values a human would write, occurs exactly once.
+// ---------------------------------------------------------------------------
+
+/** The guard's normalisation, restated: JSDoc `*` / blockquote `>` prefixes off, whitespace collapsed. */
+const normaliseProse = (text) =>
+  text
+    .replace(/^[ \t]*(?:\*|>)[ \t]?/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/** Copy the six files the script edits out of THIS checkout into a throwaway tree. */
+function copyRealTree() {
+  const dir = mkdtempSync(join(tmpdir(), 'catalog-sync-real-'));
+  for (const p of ALL) {
+    mkdirSync(dirname(join(dir, p)), { recursive: true });
+    writeFileSync(join(dir, p), readFileSync(join(REPO_ROOT, p), 'utf8'));
+  }
+  mkdirSync(join(dir, '.changeset'), { recursive: true });
+  return dir;
+}
+
+/** The ledger's members, read with a regex of this test's own. */
+function readLedger(dir) {
+  const m = /^type CatalogStepTypesWithoutAGeneratedType = ([^;]*);$/m.exec(read(dir, TYPE_TEST));
+  assert.ok(m, 'the ledger alias must be present');
+  return m[1].trim() === 'never' ? [] : m[1].split('|').map((s) => s.trim().slice(1, -1)).sort();
+}
+
+/** The `$type`s pinned by a `@ts-expect-error` + `_NoGeneratedTemplateFor_<$type>` pair. */
+function readPins(dir) {
+  const re =
+    /^\/\/ @ts-expect-error — documented `\$type`, no generated template in the pinned peer\nexport type _NoGeneratedTemplateFor_(\w+) = WorkflowStepTemplateFor<'(\w+)'>;$/gm;
+  return [...read(dir, TYPE_TEST).matchAll(re)].map((m) => {
+    assert.equal(m[1], m[2], `pin alias ${m[1]} must pin its own $type`);
+    return m[1];
+  }).sort();
+}
+
+/**
+ * Every claim for `tag` that does NOT occur exactly once in `file` with
+ * `values` substituted — the guard's own `claim-count` check, restated. Empty
+ * means the file passes it.
+ */
+function claimMisses(dir, file, tag, values) {
+  const text = normaliseProse(read(dir, file));
+  return CLAIMS.filter((c) => c.files.includes(tag))
+    .map((c) => {
+      const needle = normaliseProse(renderClaim(c.text, values));
+      const n = text.split(needle).length - 1;
+      return n === 1 ? null : `${c.id}: found ${n} of: ${needle}`;
+    })
+    .filter(Boolean);
+}
+
+const realFixture = () => JSON.parse(readFileSync(join(REPO_ROOT, FIXTURE), 'utf8'));
+
+/** A spec carrying exactly `steps` (no description) and the real fixture's engines. */
+const specFor = (steps) =>
+  makeSpec(
+    Object.fromEntries(steps.map((k) => [k, null])),
+    Object.fromEntries(realFixture().imageGenEngines.map((k) => [k, null])),
+  );
+
+test('REAL FILES: a new untyped step type restates the gap in the prose, the ledger and the pins — and a second run is a no-op', async (t) => {
+  const before = realFixture().workflowStepTypes;
+  const dir = copyRealTree();
+  // Expected values from THIS test's inputs, not from the script: the catalog
+  // grows by one, the map does not move, and the gap is the ledger the tree
+  // started with plus the new key.
+  const gapBefore = readLedger(dir);
+  const NEW = 'zzSyncProbeStep';
+  assert.ok(!before.includes(NEW));
+  const gap = [...gapBefore, NEW].sort();
+  const values = {
+    catalog: String(before.length + 1),
+    mapped: String(before.length - gapBefore.length),
+    gapCount: String(gap.length),
+    gapList: gap.map((k) => `\`${k}\``).join(', '),
+  };
+  // Positive control on the claim check itself: the UNTOUCHED copy must fail it
+  // for these values, or a green below says nothing about the script.
+  assert.notDeepEqual(claimMisses(dir, STEPS, 'steps', values), [], 'control: the stale steps.ts must miss');
+  assert.notDeepEqual(claimMisses(dir, README, 'readme', values), [], 'control: the stale README must miss');
+
+  const server = await serveSpec(specFor([...before, NEW]));
+  t.after(async () => {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const run1 = await runSync(dir, server.url);
+  assert.equal(run1.code, 0, `sync should succeed; got ${run1.code}\n${run1.out}`);
+
+  assert.deepEqual(claimMisses(dir, STEPS, 'steps', values), [], 'every steps.ts claim must state the new counts');
+  assert.deepEqual(claimMisses(dir, README, 'readme', values), [], 'every README claim must state the new counts');
+  assert.deepEqual(readLedger(dir), gap, 'the never-ledger must name the new gap');
+  assert.deepEqual(readPins(dir), gap, 'one @ts-expect-error pin per gap $type');
+  assert.equal(
+    [...read(dir, TYPE_TEST).matchAll(/^export type _NoGeneratedTemplateFor_/gm)].length,
+    gap.length,
+    'no pin may be left outside the block',
+  );
+
+  // Idempotent: the same spec again writes nothing and says so.
+  const after1 = ALL.map((p) => read(dir, p));
+  const changesets1 = readdirSync(join(dir, '.changeset'));
+  const run2 = await runSync(dir, server.url);
+  assert.equal(run2.code, 0, `run 2 should succeed; got ${run2.code}\n${run2.out}`);
+  assert.match(run2.out, /No drift/, 'a second run must report nothing to do');
+  assert.deepEqual(ALL.map((p) => read(dir, p)), after1, 'a second run must leave every file byte-identical');
+  assert.deepEqual(readdirSync(join(dir, '.changeset')), changesets1, 'and write no second changeset');
+});
+
+test('REAL FILES: a $type that gains a StepTemplateMap row leaves the gap everywhere, with no catalog drift', async (t) => {
+  // The REMOVAL direction. A human adds the row once `@civitai/client`
+  // republishes with the template; re-running the sync must drop that `$type`
+  // from the ledger, the pins and the prose, and write no catalog/changeset
+  // change, because the spec did not move.
+  const before = realFixture().workflowStepTypes;
+  const dir = copyRealTree();
+  const gapBefore = readLedger(dir);
+  assert.ok(gapBefore.length >= 2, 'needs a gap to shrink');
+  const leaving = gapBefore[0];
+  const steps = read(dir, STEPS);
+  const closeAt = steps.indexOf('\n}\n', steps.indexOf('interface StepTemplateMap {'));
+  writeFileSync(
+    join(dir, STEPS),
+    `${steps.slice(0, closeAt)}\n  ${leaving}: SomeGeneratedStepTemplate;${steps.slice(closeAt)}`,
+  );
+  const gap = gapBefore.filter((k) => k !== leaving);
+  const values = {
+    catalog: String(before.length),
+    mapped: String(before.length - gap.length),
+    gapCount: String(gap.length),
+    gapList: gap.map((k) => `\`${k}\``).join(', '),
+  };
+
+  const server = await serveSpec(specFor(before));
+  t.after(async () => {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const untouched = [SDK, FIXTURE, TEST].map((p) => read(dir, p));
+
+  const run = await runSync(dir, server.url);
+  assert.equal(run.code, 0, `sync should succeed; got ${run.code}\n${run.out}`);
+  assert.deepEqual(readLedger(dir), gap, `${leaving} must leave the ledger`);
+  assert.deepEqual(readPins(dir), gap, `${leaving} must lose its @ts-expect-error pin`);
+  assert.deepEqual(claimMisses(dir, STEPS, 'steps', values), []);
+  assert.deepEqual(claimMisses(dir, README, 'readme', values), []);
+  assert.deepEqual([SDK, FIXTURE, TEST].map((p) => read(dir, p)), untouched, 'no catalog drift, so no catalog edit');
+  assert.deepEqual(readdirSync(join(dir, '.changeset')), [], 'and no changeset');
+});
+
+test('REAL FILES: a REWORDED claim is refused by id, with nothing written', async (t) => {
+  // The rewrite is anchored on the whole sentence. A claim it cannot find must
+  // stop the run loudly — not leave a stale number for `Validate SDK` to find.
+  const before = realFixture().workflowStepTypes;
+  const dir = copyRealTree();
+  const readme = read(dir, README);
+  assert.equal(readme.split(' in total)').length - 1, 1, 'fixture precondition: catalog-3 occurs once');
+  writeFileSync(join(dir, README), readme.replace(' in total)', ' total)'));
+  const server = await serveSpec(specFor([...before, 'zzSyncProbeStep']));
+  t.after(async () => {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const snapshot = ALL.map((p) => read(dir, p));
+
+  const run = await runSync(dir, server.url);
+  assert.equal(run.code, 1, `a missing claim must exit 1; got ${run.code}\n${run.out}`);
+  assert.match(run.out, /claim catalog-3 occurs 0 times/, 'the refusal must name the claim');
+  assert.deepEqual(ALL.map((p) => read(dir, p)), snapshot, 'exit 1 must mean NOTHING was written');
+  assert.deepEqual(readdirSync(join(dir, '.changeset')), [], 'and no changeset');
+});

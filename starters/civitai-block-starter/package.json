@@ -2,7 +2,7 @@
   "name": "civitai-block-starter",
   "version": "0.0.0",
   "private": true,
-  "description": "Vite + React 19 starter for building Civitai App Blocks — iframe-embedded UIs that render on civitai.com pages.",
+  "description": "Vite + TypeScript starter for building Civitai Apps — iframe-embedded UIs on civitai.com pages — with web components and no UI framework.",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -12,7 +12,8 @@
     "starter",
     "template",
     "vite",
-    "react"
+    "web-components",
+    "custom-elements"
   ],
   "homepage": "https://github.com/civitai/civitai-app-starters/tree/main/starters/civitai-block-starter#readme",
   "bugs": "https://github.com/civitai/civitai-app-starters/issues",
@@ -26,20 +27,46 @@
     "dev:harness": "VITE_DEV_HARNESS=true vite",
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
     "preview": "vite preview"
   },
+  "comment-overrides": [
+    "SECURITY CONSTRAINTS ON TRANSITIVE DEPENDENCIES. Declared HERE, in the",
+    "starter's own manifest, because that is what travels: `npx tiged",
+    "civitai/civitai-app-starters/starters/civitai-block-starter my-app` copies",
+    "this directory alone, and the monorepo root's pnpm.overrides is NOT part of",
+    "the copy -- so a constraint kept only there protects the monorepo and nothing",
+    "a developer actually runs. NEITHER ENTRY HAS A REFERENT IN THIS STARTER",
+    "TODAY (it resolves no `cookie`, and no `postcss` below 8.5.10); both are",
+    "mirrored anyway so the rule stays mechanical rather than a hand-kept",
+    "exception list. BOTH blocks on purpose: `overrides` is npm's key and",
+    "`pnpm.overrides` is pnpm's -- pnpm does not read the plain key. Inside the",
+    "workspace pnpm warns `This will not take effect` for this file; that is",
+    "correct (only the root's overrides apply there) and not a reason to delete it.",
+    "Enforced by scripts/check-starter-workspace-overrides.mjs rule 4."
+  ],
+  "overrides": {
+    "cookie@<0.7.0": "^0.7.0",
+    "postcss@<8.5.10": ">=8.5.10"
+  },
+  "pnpm": {
+    "overrides": {
+      "cookie@<0.7.0": "^0.7.0",
+      "postcss@<8.5.10": ">=8.5.10"
+    }
+  },
   "dependencies": {
-    "@civitai/app-sdk": "workspace:^",
-    "@civitai/blocks-react": "workspace:^",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "@civitai/app-sdk": "^0.91.0",
+    "@civitai/components": "^0.13.0",
+    "@civitai/sdk": "^0.29.0",
+    "@civitai/theme": "^0.5.2"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
-    "@types/react": "^19.2.15",
-    "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^6.0.2",
+    "ajv": "^8.17.1",
+    "happy-dom": "^20.9.0",
     "typescript": "^5.9.2",
-    "vite": "^8.0.14"
+    "vite": "^8.0.14",
+    "vitest": "^4.1.11"
   }
 }

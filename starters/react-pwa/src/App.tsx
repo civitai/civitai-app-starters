@@ -3,6 +3,7 @@ import { getMe, type Me } from './lib/api';
 import { LoginButton } from './components/LoginButton';
 import { LogoutControls } from './components/LogoutControls';
 import { GenerateForm } from './components/GenerateForm';
+import { DesignSystemDemo } from './components/DesignSystemDemo';
 
 function readQueryFlash(): { error?: string; notice?: string } {
   const params = new URLSearchParams(window.location.search);
@@ -39,6 +40,8 @@ export function App() {
         {me?.authenticated && <LogoutControls />}
       </header>
 
+      <DesignSystemDemo />
+
       {flash.error && (
         <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
           OAuth error: <code className="font-mono">{flash.error}</code>
@@ -73,9 +76,14 @@ export function App() {
                 <p className="text-sm">
                   Signed in as <strong>{me.username ?? 'unknown'}</strong>
                 </p>
-                <p className="mt-1 text-sm">
-                  Buzz balance: <strong>{me.balance ?? '—'}</strong>
-                </p>
+                {/* Hidden entirely when the balance is unknown (no `BuzzRead`
+                    -> 403 from the BFF's buzz read). A dash here is what the
+                    pre-fix bug looked like. */}
+                {me.balance != null && (
+                  <p className="mt-1 text-sm">
+                    Buzz balance: <strong>{me.balance}</strong>
+                  </p>
+                )}
                 <p className="mt-2 text-xs text-zinc-500">
                   Granted scopes: <code className="font-mono">{me.grantedScopes?.join(', ')}</code>
                 </p>

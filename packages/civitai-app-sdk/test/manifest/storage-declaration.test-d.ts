@@ -1,0 +1,583 @@
+/**
+ * Compile-time coverage for the manifest's `storage` (document-store
+ * collections) declaration on `BlockManifestV1`.
+ *
+ * Written against `defineBlock`'s INLINE-LITERAL form on purpose, as
+ * `analytics-declaration.test-d.ts` is: that is where an untyped canonical
+ * property surfaces as TS2353 while Ajv accepts the same manifest from a JSON
+ * file.
+ *
+ * Compiled by `tsc -p tsconfig.typecheck.json` (the `test:types` script, run by
+ * `pnpm test`). Every `@ts-expect-error` below is a gate: if the case STOPS
+ * being a type error, the directive is unused and tsc fails. Nothing runs.
+ */
+import { expectTypeOf } from 'vitest';
+
+import { defineBlock } from '../../src/manifest/index.js';
+import type {
+  BlockManifestV1,
+  BlockStorageCollectionDeclaration,
+  BlockStorageCollectionHook,
+  BlockStorageCollectionSchema,
+  BlockStorageDeclaration,
+  BlockStorageImport,
+  BlockStorageIndexType,
+  BlockStorageMigrationKeyword,
+  BlockStorageMigrationOp,
+  BlockStoragePrivateCollectionDeclaration,
+  BlockStorageSchemaType,
+  BlockStorageSharedCollectionDeclaration,
+} from '../../src/manifest/index.js';
+import { BLOCK_SCOPES } from '../../src/blocks/index.js';
+
+const base: Pick<BlockManifestV1, 'blockId' | 'version' | 'name' | 'scopes' | 'contentRating'> = {
+  blockId: 'my-block',
+  version: '0.1.0',
+  name: 'My Block',
+  scopes: [],
+  contentRating: 'pg',
+};
+
+// --- the field is OPTIONAL and typed by the named declaration -----------------
+expectTypeOf<BlockManifestV1['storage']>().toEqualTypeOf<BlockStorageDeclaration | undefined>();
+// Optional since `imports` (civitai/civitai#7494): a manifest declares collections,
+// imports or both. "At least one" is the canonical's (`anyOf`), checked by Ajv, not here.
+expectTypeOf<BlockStorageDeclaration['collections']>().toEqualTypeOf<
+  Record<string, BlockStorageCollectionDeclaration> | undefined
+>();
+expectTypeOf<BlockStorageCollectionDeclaration['visibility']>().toEqualTypeOf<'private' | 'shared'>();
+expectTypeOf<BlockStorageSharedCollectionDeclaration['write']>().toEqualTypeOf<
+  'own' | 'anyone' | 'owner' | 'none'
+>();
+expectTypeOf<BlockStorageIndexType>().toEqualTypeOf<'string' | 'number' | 'boolean' | 'time'>();
+
+// --- the document-store scopes are named constants -----------------------------
+expectTypeOf(BLOCK_SCOPES.APPS_STORAGE).toEqualTypeOf<'apps:storage'>();
+expectTypeOf(BLOCK_SCOPES.APPS_STORAGE_PUBLISH).toEqualTypeOf<'apps:storage:publish'>();
+
+// --- a manifest with no storage still type-checks (backward compatible) -------
+defineBlock({ manifest: { ...base } });
+
+// --- valid declarations type-check inline: private, shared own, shared none ---
+defineBlock({
+  manifest: {
+    ...base,
+    scopes: [BLOCK_SCOPES.APPS_STORAGE, BLOCK_SCOPES.APPS_STORAGE_PUBLISH],
+    scopeJustifications: { [BLOCK_SCOPES.APPS_STORAGE_PUBLISH]: 'Viewers post entries to a shared board.' },
+    storage: {
+      collections: {
+        notes: { visibility: 'private', indexes: { status: 'string', 'meta.round': 'number' } },
+        posts: {
+          kind: 'docs',
+          visibility: 'shared',
+          write: 'own',
+          counters: ['plays'],
+          marks: ['vote'],
+          showAuthor: true,
+          indexes: { createdBy: 'string', score: 'number', pinned: 'boolean', due: 'time' },
+        },
+        tally: { visibility: 'shared', write: 'none', counters: ['views'] },
+      },
+    },
+  },
+});
+
+// --- `storage: {}` is NOT a type error any more: `collections` and `imports` are each
+// optional, and the canonical's "at least one of them" is refused by `defineBlock` at
+// runtime (canonical-derivation.test.ts, 'storage: collections required').
+
+// --- a shared collection must declare `write` (gate) --------------------------
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      // @ts-expect-error — `visibility: 'shared'` without `write`
+      collections: { posts: { visibility: 'shared' } },
+    },
+  },
+});
+
+// --- a private collection carries no shared-only field (gates) ----------------
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `write` on a private collection
+        notes: { visibility: 'private', write: 'own' },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `marks` on a private collection
+        notes: { visibility: 'private', marks: ['vote'] },
+      },
+    },
+  },
+});
+
+// --- closed enums (gates) -----------------------------------------------------
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `public` is not a visibility
+        notes: { visibility: 'public' },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `everyone` is not a write policy
+        posts: { visibility: 'shared', write: 'everyone' },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        notes: {
+          visibility: 'private',
+          // @ts-expect-error — `text` is not an index type
+          indexes: { status: 'text' },
+        },
+      },
+    },
+  },
+});
+
+// --- the built-in sort keys cannot be index names (gate) ----------------------
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        notes: {
+          visibility: 'private',
+          // @ts-expect-error — `createdAt` is a built-in sort key
+          indexes: { createdAt: 'time' },
+        },
+      },
+    },
+  },
+});
+
+// --- unknown keys are rejected at every level (gates) -------------------------
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: { notes: { visibility: 'private' } },
+      // @ts-expect-error — unknown key on `storage`
+      quota: 1,
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — unknown key on a collection
+        notes: { visibility: 'private', retention: 30 },
+      },
+    },
+  },
+});
+
+// --- ownedModelVersions (civitai/civitai#6132) ---------------------------------
+expectTypeOf<BlockStorageSharedCollectionDeclaration['ownedModelVersions']>().toEqualTypeOf<
+  string[] | undefined
+>();
+
+defineBlock({
+  manifest: {
+    ...base,
+    scopes: [BLOCK_SCOPES.APPS_STORAGE, BLOCK_SCOPES.APPS_STORAGE_PUBLISH],
+    scopeJustifications: { [BLOCK_SCOPES.APPS_STORAGE_PUBLISH]: 'Viewers publish their own workflows.' },
+    storage: {
+      collections: {
+        workflows: { visibility: 'shared', write: 'own', ownedModelVersions: ['/workflow/modelVersionId'] },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `ownedModelVersions` is shared-only
+        notes: { visibility: 'private', ownedModelVersions: ['/modelVersionId'] },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        workflows: {
+          visibility: 'shared',
+          write: 'own',
+          // @ts-expect-error — pointers are strings, not ids
+          ownedModelVersions: [123],
+        },
+      },
+    },
+  },
+});
+
+// --- registry (civitai/civitai#7931) -------------------------------------------
+expectTypeOf<BlockStorageSharedCollectionDeclaration['registry']>().toEqualTypeOf<'public' | undefined>();
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        posts: { visibility: 'shared', write: 'own', registry: 'public' },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `registry` is shared-only
+        notes: { visibility: 'private', registry: 'public' },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        posts: {
+          visibility: 'shared',
+          write: 'own',
+          // @ts-expect-error — the only value is 'public'
+          registry: 'private',
+        },
+      },
+    },
+  },
+});
+
+// --- hook (civitai/civitai#7832), RESERVED -------------------------------------
+expectTypeOf<BlockStorageCollectionHook>().toEqualTypeOf<{ file: string; sha256: string; timeoutMs?: number }>();
+expectTypeOf<BlockStorageSharedCollectionDeclaration['hook']>().toEqualTypeOf<BlockStorageCollectionHook | undefined>();
+expectTypeOf<BlockStoragePrivateCollectionDeclaration['hook']>().toEqualTypeOf<BlockStorageCollectionHook | undefined>();
+
+// The canonical shape, on every collection kind it allows.
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        notes: { visibility: 'private', hook: { file: 'hooks/notes.mjs', sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' } },
+        posts: { visibility: 'shared', write: 'own', hook: { file: 'hooks/posts.js', sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', timeoutMs: 120 } },
+        tally: { visibility: 'shared', write: 'none', counters: ['plays'], hook: { file: 'tally.js', sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' } },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `sha256` is required
+        posts: { visibility: 'shared', write: 'own', hook: { file: 'hooks/posts.js' } },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `file` is required
+        notes: { visibility: 'private', hook: { sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' } },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        posts: {
+          visibility: 'shared',
+          write: 'own',
+          // @ts-expect-error — `timeoutMs` is a number of milliseconds
+          hook: { file: 'hooks/posts.js', sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', timeoutMs: '50' },
+        },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        posts: {
+          visibility: 'shared',
+          write: 'own',
+          // @ts-expect-error — the hook object is closed: no `entry` key
+          hook: { file: 'hooks/posts.js', sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', entry: 'default' },
+        },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — a hook is an object, not a bare path
+        notes: { visibility: 'private', hook: 'hooks/notes.mjs' },
+      },
+    },
+  },
+});
+
+// --- imports: another app's collections (civitai/civitai#7494) ------------------
+expectTypeOf(BLOCK_SCOPES.APPS_STORAGE_IMPORT).toEqualTypeOf<'apps:storage:import'>();
+expectTypeOf<BlockStorageDeclaration['imports']>().toEqualTypeOf<BlockStorageImport[] | undefined>();
+expectTypeOf<BlockStorageImport['access']>().toEqualTypeOf<'read' | 'readwrite'>();
+expectTypeOf<BlockStoragePrivateCollectionDeclaration['exportable']>().toEqualTypeOf<boolean | undefined>();
+expectTypeOf<BlockStorageSharedCollectionDeclaration['exportable']>().toEqualTypeOf<boolean | undefined>();
+
+// A fork: imports only, no collections of its own.
+defineBlock({
+  manifest: {
+    ...base,
+    scopes: [BLOCK_SCOPES.APPS_STORAGE, BLOCK_SCOPES.APPS_STORAGE_IMPORT],
+    scopeJustifications: { [BLOCK_SCOPES.APPS_STORAGE_IMPORT]: 'Reads your notes from the app this one was forked from.' },
+    storage: { imports: [{ from: 'parent-app', collections: ['notes'], access: 'readwrite' }] },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: { notes: { visibility: 'private', exportable: false } },
+      imports: [{ from: 'parent-app', collections: ['notes'], access: 'read' }],
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      // @ts-expect-error — `write` is not an access level
+      imports: [{ from: 'parent-app', collections: ['notes'], access: 'write' }],
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      // @ts-expect-error — an import names its access
+      imports: [{ from: 'parent-app', collections: ['notes'] }],
+    },
+  },
+});
+
+// --- schema: the per-collection document schema (civitai/civitai#7491) -----------
+expectTypeOf<BlockStoragePrivateCollectionDeclaration['schema']>().toEqualTypeOf<
+  BlockStorageCollectionSchema | undefined
+>();
+expectTypeOf<BlockStorageSharedCollectionDeclaration['schema']>().toEqualTypeOf<
+  BlockStorageCollectionSchema | undefined
+>();
+expectTypeOf<BlockStorageSchemaType>().toEqualTypeOf<
+  'object' | 'array' | 'string' | 'number' | 'integer' | 'boolean' | 'null'
+>();
+
+defineBlock({
+  manifest: {
+    ...base,
+    scopes: [BLOCK_SCOPES.APPS_STORAGE, BLOCK_SCOPES.APPS_STORAGE_PUBLISH],
+    scopeJustifications: { [BLOCK_SCOPES.APPS_STORAGE_PUBLISH]: 'Viewers post cards to a shared board.' },
+    storage: {
+      collections: {
+        cards: {
+          visibility: 'private',
+          schema: {
+            type: 'object',
+            description: 'A saved card.',
+            required: ['title'],
+            additionalProperties: false,
+            properties: {
+              title: { type: 'string', minLength: 1, maxLength: 80, pattern: '^[^<>]*$' },
+              rating: { type: 'integer', minimum: 1, maximum: 5 },
+              tags: { type: 'array', minItems: 0, maxItems: 6, items: { type: ['string', 'null'] } },
+              tone: { enum: ['warm', 'cool', 7, null] },
+              kind: { const: 'card' },
+              scores: { type: 'object', additionalProperties: { type: 'number' } },
+            },
+          },
+        },
+        board: { visibility: 'shared', write: 'own', schema: { type: 'object' } },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        cards: {
+          visibility: 'private',
+          schema: {
+            properties: {
+              // @ts-expect-error — `format` is not a keyword of the subset
+              when: { type: 'string', format: 'date-time' },
+            },
+          },
+        },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `date` is not a type the subset names
+        cards: { visibility: 'private', schema: { type: 'date' } },
+      },
+    },
+  },
+});
+
+// --- migrations: declarative ops on stored documents (civitai/civitai#7661) -----------
+expectTypeOf<BlockStoragePrivateCollectionDeclaration['migrations']>().toEqualTypeOf<
+  BlockStorageMigrationOp[] | undefined
+>();
+expectTypeOf<BlockStorageSharedCollectionDeclaration['migrations']>().toEqualTypeOf<
+  BlockStorageMigrationOp[] | undefined
+>();
+expectTypeOf<BlockStorageMigrationOp['op']>().toEqualTypeOf<'default' | 'rename' | 'remove' | 'acknowledge'>();
+expectTypeOf<BlockStorageMigrationKeyword>().toEqualTypeOf<
+  | 'type'
+  | 'const'
+  | 'enum'
+  | 'minimum'
+  | 'maximum'
+  | 'minLength'
+  | 'maxLength'
+  | 'minItems'
+  | 'maxItems'
+  | 'pattern'
+  | 'additionalProperties'
+  | 'properties'
+>();
+
+defineBlock({
+  manifest: {
+    ...base,
+    scopes: [BLOCK_SCOPES.APPS_STORAGE, BLOCK_SCOPES.APPS_STORAGE_PUBLISH],
+    scopeJustifications: { [BLOCK_SCOPES.APPS_STORAGE_PUBLISH]: 'Viewers post cards to a shared board.' },
+    storage: {
+      collections: {
+        cards: {
+          visibility: 'private',
+          schema: { type: 'object', required: ['status'], properties: { status: { enum: ['draft', 'live'] } } },
+          migrations: [
+            { op: 'default', path: '/status', value: 'draft' },
+            { op: 'rename', from: '/name', to: '/title' },
+            { op: 'remove', path: '/legacy' },
+            { op: 'acknowledge', path: '/stars', keyword: 'maximum' },
+          ],
+        },
+        board: {
+          visibility: 'shared',
+          write: 'own',
+          migrations: [{ op: 'acknowledge', path: '', keyword: 'additionalProperties' }],
+        },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `drop` is not an op
+        cards: { visibility: 'private', migrations: [{ op: 'drop', path: '/legacy' }] },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — a `default` needs its `value`
+        cards: { visibility: 'private', migrations: [{ op: 'default', path: '/status' }] },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — a newly required field cannot be acknowledged
+        cards: { visibility: 'private', migrations: [{ op: 'acknowledge', path: '/status', keyword: 'required' }] },
+      },
+    },
+  },
+});

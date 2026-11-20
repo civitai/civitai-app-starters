@@ -1,0 +1,110 @@
+import { useCallback, useEffect, useState } from 'react';
+
+import type {
+  BlockDailyCompensationParams,
+  BlockDailyCompensationResource,
+} from '@civitai/app-sdk/blocks';
+
+import { getTransport } from '../transport/singleton.js';
+import { sendTypedRequest } from '../transport/transport.js';
+import { useRequestSequencer } from './useRequestSequencer.js';
+import { useTransportConnection } from './useTransportConnection.js';
+
+/**
+ * What {@link useDailyCompensation} returns.
+ */
+export interface UseDailyCompensation {
+  /**
+   * Per-modelVersion generation-compensation rows for the month of the requested
+   * `date`, or `null` until the first successful fetch. `data`/`cashData`
+   * `createdAt` are `YYYY-MM-DD` day-strings (NOT rehydrated to `Date`).
+   */
+  resources: BlockDailyCompensationResource[] | null;
+  /**
+   * Whether the viewer has ANY published resource — `false` distinguishes "no
+   * published models" from "published models that earned nothing this month"
+   * (both give `resources: []`). `null` until the first successful fetch.
+   */
+  hasPublishedResources: boolean | null;
+  /** `true` while a fetch (initial or `refetch`) is in flight. */
+  loading: boolean;
+  /**
+   * The last fetch's failure — a host-reported error (anon viewer / missing
+   * `buzz:read:self` scope / a ClickHouse blip surfaced as a retryable error) or
+   * the transport timeout. Free-text. Cleared at the start of the next fetch.
+   */
+  error: Error | null;
+  /** Re-request the compensation for the current `params`. */
+  refetch: () => void;
+}
+
+/**
+ * Read the signed-in viewer's per-modelVersion generation compensation for the
+ * MONTH containing `params.date`, through the host-mediated
+ * `GET_DAILY_COMPENSATION` → `DAILY_COMPENSATION_RESULT` bridge. Token-bound: the
+ * host self-binds off the block token and reads via its
+ * `blocks.getMyDailyCompensation` mutation (scope `buzz:read:self`).
+ *
+ * Fetches on mount and whenever `params` change (by value), and exposes `refetch`.
+ * A host that never answers surfaces as an `error` after the transport timeout.
+ * Only the LATEST request may write state: a reply superseded by a newer
+ * `refetch` / params change — or one that lands after unmount — is dropped
+ * (#392).
+ *
+ * @example
+ * const { resources, hasPublishedResources } = useDailyCompensation({ date: '2026-07-01' });
+ */
+export function useDailyCompensation(params: BlockDailyCompensationParams): UseDailyCompensation {
+  useTransportConnection();
+  const [resources, setResources] = useState<BlockDailyCompensationResource[] | null>(null);
+  const [hasPublishedResources, setHasPublishedResources] = useState<boolean | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+
+  // Latest-wins + unmount guard in one predicate (#392): a reply may write state
+  // only if it answers the request this hook is CURRENTLY waiting for. A bare
+  // mount check would let a superseded request's slow reply overwrite newer
+  // state — nothing unmounted, so it passes.
+  const seq = useRequestSequencer();
+
+  // Stable params key so `refetch`'s identity only changes when the params VALUE
+  // changes; the callback re-parses it so it closes over nothing but the key.
+  const paramsKey = JSON.stringify(params);
+
+  const refetch = useCallback(() => {
+    const token = seq.begin();
+    setLoading(true);
+    setError(null);
+    const parsed = JSON.parse(paramsKey) as BlockDailyCompensationParams;
+    sendTypedRequest(
+      getTransport(),
+      { type: 'GET_DAILY_COMPENSATION', payload: { params: parsed } },
+      'DAILY_COMPENSATION_RESULT',
+    )
+      .then((result) => {
+        if (!seq.isCurrent(token)) return;
+        if (result.error || !result.result) {
+          // `||`, not `??`: the reply validator gates `error` on SHAPE only, so a
+          // host `error: ''` is a VALID reply that reaches here. `??` replaces only
+          // null/undefined, so it would surface an Error with an EMPTY message.
+          setError(new Error(result.error || 'failed to fetch daily compensation'));
+          setLoading(false);
+          return;
+        }
+        setResources(result.result.resources);
+        setHasPublishedResources(result.result.hasPublishedResources);
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (!seq.isCurrent(token)) return;
+        setError(err instanceof Error ? err : new Error(String(err)));
+        setLoading(false);
+      });
+  }, [paramsKey, seq]);
+
+  useEffect(() => {
+    refetch();
+  }, [refetch]);
+
+  return { resources, hasPublishedResources, loading, error, refetch };
+}

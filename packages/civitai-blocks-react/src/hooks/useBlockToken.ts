@@ -2,9 +2,17 @@ import { useEffect } from 'react';
 
 import type { BlockToken } from '@civitai/app-sdk/blocks';
 
-import { getTransport } from '../internal/singleton.js';
-import { sendTypedRequest } from '../internal/transport.js';
+import { getTransport } from '../transport/singleton.js';
+import { sendTypedRequest } from '../transport/transport.js';
 import { useTransportSnapshot } from './useBlockContext.js';
+import { useTransportConnection } from './useTransportConnection.js';
+
+/**
+ * What {@link useBlockToken} returns: the live block token plus a manual
+ * `refresh` that resolves WITH the newly-minted token. See
+ * `./returnTypeLedger.js`.
+ */
+export type UseBlockToken = BlockToken & { refresh: () => Promise<BlockToken> };
 
 /** Refresh fires `REFRESH_LEAD_MS` before the token's `expiresAt`. */
 const REFRESH_LEAD_MS = 2 * 60 * 1000;
@@ -17,10 +25,32 @@ const REFRESH_LEAD_MS = 2 * 60 * 1000;
  * snapshot, and the hook re-renders with the new token.
  *
  * Consumers also get a `refresh()` callable for the 401-retry path. Call it
- * after any API request returns 401 — it forces an immediate token mint and
- * resolves once the new token is applied to the snapshot.
+ * after any API request returns 401 — it forces an immediate token mint,
+ * applies the new token to the snapshot, and RESOLVES WITH that new
+ * {@link BlockToken}.
+ *
+ * 🔴 RETRY WITH THE RESOLVED TOKEN, NOT THE `raw` YOU DESTRUCTURED. The `raw`
+ * in scope was captured from the render closure that ran BEFORE the refresh;
+ * awaiting `refresh()` re-renders the component but cannot reassign a `const`
+ * binding inside an async callback that is already executing. So a retry that
+ * re-reads the outer `raw` re-sends the STALE token and 401s for exactly the
+ * reason the first call did. This is why `refresh()` resolves with the token:
+ * the resolved value is the only in-scope handle on the fresh JWT.
+ *
+ * @returns The {@link BlockToken} fields (`raw`, `scopes`, `expiresAt`,
+ * `buzzBudget`, …) plus a `refresh()` for the 401-retry path, which resolves
+ * with the new {@link BlockToken}.
+ *
+ * @example
+ * const { raw, scopes, expiresAt, buzzBudget, refresh } = useBlockToken();
+ * let res = await fetch(url, { headers: { Authorization: `Bearer ${raw}` } });
+ * if (res.status === 401) {
+ *   const fresh = await refresh();        // resolves WITH the new token
+ *   res = await fetch(url, { headers: { Authorization: `Bearer ${fresh.raw}` } });
+ * }
  */
-export function useBlockToken(): BlockToken & { refresh: () => Promise<void> } {
+export function useBlockToken(): UseBlockToken {
+  useTransportConnection();
   const snap = useTransportSnapshot();
   const token = snap.token;
   const instanceId = snap.blockInstanceId;
@@ -47,25 +77,51 @@ export function useBlockToken(): BlockToken & { refresh: () => Promise<void> } {
 }
 
 /**
- * In-flight dedup. Both the scheduled-timeout path and the "already past"
- * synchronous path can fire while a previous refresh is still pending —
- * coalescing into a single round-trip avoids fanning out duplicate
- * REQUEST_TOKEN messages, which would otherwise hit the host once per
+ * In-flight dedup, keyed by `blockInstanceId`. Both the scheduled-timeout path
+ * and the "already past" synchronous path can fire while a previous refresh is
+ * still pending — coalescing into a single round-trip avoids fanning out
+ * duplicate REQUEST_TOKEN messages, which would otherwise hit the host once per
  * snapshot update.
+ *
+ * The key MUST include `blockInstanceId`: in iframe mode there is one module per
+ * iframe so any key works, but on the INLINE transport (v2) several block
+ * instances share one module context. A module-global singleton would coalesce
+ * across instances, so instance B's 401-retry `refresh()` would resolve on
+ * instance A's in-flight `REQUEST_TOKEN` and B would never mint its OWN token.
  */
-let inFlightRefresh: Promise<void> | null = null;
+const inFlightRefreshByInstance = new Map<string, Promise<BlockToken>>();
 
-async function requestRefresh(blockInstanceId: string): Promise<void> {
-  if (inFlightRefresh) return inFlightRefresh;
+/**
+ * Mint/await a token refresh for one block instance, coalescing concurrent calls
+ * for the SAME `blockInstanceId`. Exported for the inline-mode multi-instance
+ * dedup test — hooks call it via `useBlockToken().refresh`.
+ *
+ * Resolves with the REFRESHED {@link BlockToken} so a 401-retry has an in-scope
+ * handle on the new JWT — the caller's destructured `raw` belongs to a closure
+ * that ran before the refresh and cannot be reassigned by it.
+ *
+ * The value is read back off the transport SNAPSHOT rather than re-parsed from
+ * the reply payload, and that is the ordering this depends on:
+ * `IframeTransport.handleMessage` calls `applyTokenRefresh` BEFORE
+ * `pending.resolve`, deliberately (see the comment there), so by the time this
+ * `.then` runs the snapshot already holds the new token. Reading the snapshot
+ * keeps ONE parse of the wire token — the resolved value is the very object the
+ * next render observes, not a second `tokenFromWrapped` of the same bytes that
+ * could drift from it.
+ */
+export async function requestRefresh(blockInstanceId: string): Promise<BlockToken> {
+  const existing = inFlightRefreshByInstance.get(blockInstanceId);
+  if (existing) return existing;
   const transport = getTransport();
-  inFlightRefresh = sendTypedRequest(
+  const refresh = sendTypedRequest(
     transport,
     { type: 'REQUEST_TOKEN', payload: { blockInstanceId } },
     'TOKEN_REFRESH_RESPONSE',
   )
-    .then(() => undefined)
+    .then(() => transport.getSnapshot().token)
     .finally(() => {
-      inFlightRefresh = null;
+      inFlightRefreshByInstance.delete(blockInstanceId);
     });
-  return inFlightRefresh;
+  inFlightRefreshByInstance.set(blockInstanceId, refresh);
+  return refresh;
 }

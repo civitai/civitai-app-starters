@@ -1,0 +1,2350 @@
+/**
+ * Trust-boundary shape validation for inbound `postMessage` payloads.
+ *
+ * Origin allowlisting in `IframeTransport.handleMessage` gates *who* can
+ * send — these guards gate *what* the message contains. They're shape
+ * checks, not schema validation: each guard asserts the fields downstream
+ * code will dereference, nothing more. Anything that fails drops with a
+ * `console.warn` instead of crashing, so a malformed message degrades the
+ * affected feature without breaking the rest of the block.
+ *
+ * Keep these in lockstep with `BlockInitPayload` / `ParentToBlockMessage`
+ * in `@civitai/app-sdk/blocks` AND with the host implementation in
+ * civitai/civitai's `src/components/AppBlocks/IframeHost.tsx`. A new field
+ * downstream code reads → a new check here.
+ *
+ * ## The uniform `{ ok, error }` reply contract
+ *
+ * Every reply validator for an `{ ok, error }`-shaped result MUST early-accept
+ * a reply that carries an `error`:
+ *
+ * ```
+ * if (p.error !== undefined && typeof p.error !== 'string') return false;
+ * if (p.error !== undefined) return true; // hook throws before reading `<field>`
+ * if (typeof p.ok !== 'boolean') return false;
+ * ```
+ *
+ * i.e. **an error reply carrying `{ requestId, error }` is always valid**, and
+ * an `ok` boolean (plus any success-only field) is required only when there is
+ * NO `error`. A failing validator drops the message with nothing but a
+ * `console.warn`, so the block's pending request never settles and the UI hangs
+ * to the request timeout with no network call and no host-visible error — the
+ * exact class this uniformity removes.
+ *
+ * The early-accept is only sound because the consuming hook throws on a
+ * PRESENT `error` — `error !== undefined`, not a truthy one — BEFORE reading
+ * any other payload field; each one below names the field it would otherwise
+ * read. Presence, not truthiness, is the load-bearing word: `error: ''` is
+ * falsy, so a hook testing truthiness would sail past the early-accepted reply
+ * and read a success field the validator never checked. If you add an
+ * `{ ok, error }` validator whose hook reads a field on the error path, fix the
+ * hook — do not drop the early-accept, and do not tighten the early-accept to
+ * require a NON-EMPTY error either: that puts `{ requestId, error: '' }` back
+ * on the drop-and-hang path this contract exists to close.
+ *
+ * ✅ GAP CLOSED. Every hook consuming an early-accepting validator now tests
+ * PRESENCE, via the single-sourced `throwOnReplyError` / `throwOnFailedReply`
+ * in `./replyError.ts`. The six normalized by PR #273 were joined by the
+ * eleven that still tested TRUTHINESS (`isValidSharedWithdrawResult` and the
+ * `{ count, error? }` / list / get / quota family), and all seventeen call the
+ * same helper — so a future divergence is one edit, not seventeen.
+ *
+ * 🔴 If you add an `{ ok, error }` validator, its hook MUST call one of those
+ * helpers. Do not open-code the test again: the two spellings coexisted in one
+ * file for a release precisely because it was inline at every call site.
+ */
+
+import type {
+  BlockInitPayload,
+  BlockWorkflowSnapshot,
+  ParentToBlockMessageType,
+  Theme,
+  WrappedToken,
+} from '@civitai/app-sdk/blocks';
+
+import { isRoutableRequestId, isWireRequestIdShape } from './requestId.js';
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === 'object';
+
+const isNonEmptyString = (v: unknown): v is string =>
+  typeof v === 'string' && v.length > 0;
+
+/** Accepts an ISO 8601 string that `new Date()` can parse to a finite timestamp. */
+function isParseableDateString(v: unknown): v is string {
+  if (typeof v !== 'string' || v.length === 0) return false;
+  const ts = Date.parse(v);
+  return Number.isFinite(ts);
+}
+
+/**
+ * Shape check for the wrapped-token shape carried by `BLOCK_INIT.token`,
+ * `TOKEN_REFRESH.payload.token`, and `TOKEN_REFRESH_RESPONSE.payload.token`.
+ */
+export function isValidWrappedToken(t: unknown): t is WrappedToken {
+  if (!isObject(t)) return false;
+  if (!isNonEmptyString(t.raw)) return false;
+  if (!Array.isArray(t.scopes)) return false;
+  if (!t.scopes.every((s): s is string => typeof s === 'string')) return false;
+  if (!isParseableDateString(t.expiresAt)) return false;
+  if (t.buzzBudget !== undefined && typeof t.buzzBudget !== 'number') return false;
+  return true;
+}
+
+export function isValidBlockInitPayload(p: unknown): p is BlockInitPayload {
+  if (!isObject(p)) return false;
+  if (!isNonEmptyString(p.blockId)) return false;
+  if (!isNonEmptyString(p.blockInstanceId)) return false;
+  if (!isNonEmptyString(p.appId)) return false;
+  if (p.renderMode !== 'iframe' && p.renderMode !== 'inline') return false;
+
+  if (!isValidWrappedToken(p.token)) return false;
+
+  if (!isObject(p.context)) return false;
+  if (!isNonEmptyString(p.context.slotId)) return false;
+
+  if (!isObject(p.settings)) return false;
+  if (!isObject(p.settings.publisherSettings)) return false;
+  if (!isObject(p.settings.userSettings)) return false;
+
+  // `null` for anonymous viewers; otherwise { id, username, status?, signedIn? }.
+  //
+  // 🔴 The object-or-null SHAPE here is a compatibility floor, not a preference.
+  // This exact guard is compiled into every already-built, already-deployed block
+  // bundle, so a host that "thinned" `viewer` to a boolean would be rejected by
+  // the DEPLOYED copy of this function — and a rejected BLOCK_INIT is retried by
+  // the host for ~10s and then abandoned (see the note on `signedIn` below), so
+  // those blocks never become ready.
+  // `id`/`username` are @deprecated on `ViewerInfo` and the platform is migrating
+  // blocks to the scope-gated `GET_VIEWER` read, but the wire shape stays.
+  if (p.viewer !== null) {
+    if (!isObject(p.viewer)) return false;
+    if (typeof p.viewer.id !== 'number') return false;
+    if (p.viewer.username !== null && typeof p.viewer.username !== 'string') return false;
+    // `signedIn` is ADDITIVE + OPTIONAL: production sends it, but a host
+    // predating it omits the field (still valid — `viewer !== null` already
+    // means signed in), and when a host does send it, it is the literal `true`.
+    //
+    // 🔴 DELIBERATELY NOT REJECTED WHEN MALFORMED. A `signedIn` that is not
+    // `true` on a non-null viewer is a contradiction, but failing the WHOLE
+    // payload over it is the wrong-sized response: `isValidBlockInitPayload` is
+    // the gate on the entire init, so returning false here costs the block every
+    // field — token, context, settings, theme — over one advisory flag. The host
+    // re-posts BLOCK_INIT every 400ms (`INIT_RETRY_INTERVAL_MS`) until
+    // BLOCK_READY, ~25 times per `BLOCK_READY_TIMEOUT_MS` (10s) window. Those
+    // re-posts carry the FRESHEST payload rather than a byte-identical copy
+    // (both hosts re-point `buildInitPayloadRef` every render) — but the
+    // freshness varies query-resolved VALUES, never the shape this guard trips
+    // on, so a rejecting validator still rejects every one of them. Then, per
+    // surface: the model slot (`IframeHost`) has no auto-retry and renders
+    // `null`; the page host (`PageBlockHost`) auto-retries the entire handshake
+    // twice more (`MAX_AUTO_RETRIES = 2`, backoff [2s, 5s]) — a fresh controller
+    // and a fresh 10s window each time, ~37s total — and then shows its terminal
+    // fallback. That is a broken block, where ignoring the flag is merely a
+    // degraded one: `viewer?.signedIn === true` reads false and a block that
+    // open-coded that gate shows a sign-in CTA to someone already signed in.
+    // 🔴 THAT ASYMMETRY IS WHY THE SDK'S `isSignedIn` GATES ON PRESENCE, not on
+    // this flag — the property this guard enforces is the one the gate reads.
+    // Same principle the
+    // `isValidTokenRefreshResponse` comment below spells out — do not turn a
+    // degraded path into a broken one.
+    //
+    // It is also unreachable from the real host today, and the reason has
+    // changed twice — so state the CURRENT one rather than a status. On
+    // civitai/civitai `main`, `withSignedInFlag()` in
+    // `src/components/AppBlocks/projectBlockInit.ts` writes the LITERAL `true`
+    // (never a computed boolean — a present viewer object IS a signed-in
+    // viewer, and anonymous is the absence of the object), and that repo's
+    // contract test pins both the key set `['id', 'signedIn', 'username']` and
+    // `signedIn === true`. Both host surfaces funnel through that one helper.
+    // Before it landed (civitai/civitai#3707, merged 2026-08-07) the field was
+    // simply absent — also not malformed. Either way there is no malformed
+    // value to reject today, so the strict version bought nothing and would
+    // cost a fleet-wide brick the day that stopped holding — e.g. a future host
+    // writing `signedIn: !!user`, which is `false` exactly when `viewer` should
+    // have been `null`.
+    // `status` is OPTIONAL. The platform deliberately omits the viewer's coarse
+    // ban/mute moderation state from BLOCK_INIT to third-party iframes for
+    // privacy (civitai #2521). When present it must be one of the three values;
+    // when absent (undefined) the init is still valid. Requiring it here
+    // rejected every signed-in viewer's init from a #2521-minimized host.
+    if (
+      p.viewer.status !== undefined &&
+      p.viewer.status !== 'active' &&
+      p.viewer.status !== 'banned' &&
+      p.viewer.status !== 'muted'
+    ) {
+      return false;
+    }
+  }
+
+  if (p.theme !== 'light' && p.theme !== 'dark') return false;
+
+  // Color-domain maturity (civitai #2670). Both OPTIONAL + additive: a host
+  // that predates #2670 omits them (still valid). When present, shape-check so
+  // a malformed value drops rather than poisoning `useDomainMaturity`. `domain`
+  // is informational; the SFW decision is derived from `maxBrowsingLevel`.
+  if (
+    p.domain !== undefined &&
+    p.domain !== null &&
+    p.domain !== 'green' &&
+    p.domain !== 'blue' &&
+    p.domain !== 'red'
+  ) {
+    return false;
+  }
+  if (
+    p.maxBrowsingLevel !== undefined &&
+    (typeof p.maxBrowsingLevel !== 'number' || !Number.isFinite(p.maxBrowsingLevel))
+  ) {
+    return false;
+  }
+  // `effectiveBrowsingLevel` (the domain ceiling ∩ the viewer's own level).
+  // OPTIONAL + additive on the same terms: a host that predates it omits the
+  // field and the init stays valid — `useDomainMaturity` then falls back to
+  // `maxBrowsingLevel`. When present it must be a finite, NON-NEGATIVE number.
+  //
+  // 🔴 The `< 0` half is not cosmetic. This value is bit-ANDed with the domain
+  // ceiling downstream, and a negative has every bit set in two's complement,
+  // so `-1 & ceiling === ceiling`: a junk value would resolve to the FULL
+  // domain ceiling — the widest possible viewer — which is the exact inversion
+  // of what the field means. `effectiveBrowsingCeiling` rejects it too; this
+  // drops the whole malformed payload rather than letting it reach the hook.
+  if (
+    p.effectiveBrowsingLevel !== undefined &&
+    (typeof p.effectiveBrowsingLevel !== 'number' ||
+      !Number.isFinite(p.effectiveBrowsingLevel) ||
+      p.effectiveBrowsingLevel < 0)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+const WORKFLOW_STATUSES = new Set<string>([
+  'pending',
+  'processing',
+  'succeeded',
+  'failed',
+  'expired',
+  'canceled',
+]);
+
+const AUTO_CLAIM_TYPES = new Set<string>(['dailyBoost']);
+const AUTO_CLAIM_ACCOUNT_TYPES = new Set<string>(['yellow', 'blue', 'red', 'green']);
+
+export function isValidWorkflowSnapshot(s: unknown): s is BlockWorkflowSnapshot {
+  if (!isObject(s)) return false;
+  if (!isNonEmptyString(s.workflowId)) return false;
+  if (typeof s.status !== 'string' || !WORKFLOW_STATUSES.has(s.status)) return false;
+  if (s.cost !== undefined) {
+    if (!isObject(s.cost) || typeof s.cost.total !== 'number') return false;
+    // OPTIONAL: an older host omits it and the snapshot stays valid. Present, it
+    // is subtracted from `total` by the block, so a non-number or a negative
+    // would render a wrong price.
+    if (
+      s.cost.authorFee !== undefined &&
+      (!isFiniteNumber(s.cost.authorFee) || s.cost.authorFee < 0)
+    ) {
+      return false;
+    }
+  }
+  if (s.imageUrls !== undefined) {
+    if (!Array.isArray(s.imageUrls)) return false;
+    if (!s.imageUrls.every((u): u is string => typeof u === 'string')) return false;
+  }
+  if (s.error !== undefined && typeof s.error !== 'string') return false;
+  // OPTIONAL: set only on the refusals that define a code (today the training
+  // price-quote refusal), absent everywhere else. Checked as a STRING, not
+  // against today's codes — the open-ended-union rule below: a host adding a
+  // code must not turn into a dropped reply in every shipped bundle.
+  if (s.errorCode !== undefined && typeof s.errorCode !== 'string') return false;
+  if (s.autoClaim !== undefined) {
+    if (!isObject(s.autoClaim)) return false;
+    if (typeof s.autoClaim.type !== 'string' || !AUTO_CLAIM_TYPES.has(s.autoClaim.type)) {
+      return false;
+    }
+    if (typeof s.autoClaim.amount !== 'number' || !Number.isFinite(s.autoClaim.amount)) {
+      return false;
+    }
+    if (
+      typeof s.autoClaim.accountType !== 'string' ||
+      !AUTO_CLAIM_ACCOUNT_TYPES.has(s.autoClaim.accountType)
+    ) {
+      return false;
+    }
+  }
+  // ---- The host fields mirrored in #524, plus the training-publish pair. ----
+  //
+  // Same policy as `autoClaim` above: each is OPTIONAL (an older host omits it
+  // and the snapshot stays valid), and a PRESENT but malformed value rejects
+  // the snapshot, because the block dereferences these fields.
+  //
+  // 🔴 ONE DELIBERATE DIFFERENCE: the open-ended string unions
+  // (`modelSubstitutions[].reason`, `trainedEpochs[].$type`, `toolCalls[].type`)
+  // are checked as STRINGS, not against their current members. A rejected snapshot is a dropped
+  // poll reply — the block's request hangs to its timeout — so pinning today's
+  // members here would turn the host adding a value into a fleet-wide hang in
+  // every already-shipped block bundle. The types document that unknown values
+  // may arrive.
+  if (s.modelSubstitutions !== undefined) {
+    if (!Array.isArray(s.modelSubstitutions)) return false;
+    for (const m of s.modelSubstitutions) {
+      if (!isObject(m)) return false;
+      if (!isFiniteNumber(m.requested) || !isFiniteNumber(m.applied)) return false;
+      if (typeof m.reason !== 'string') return false;
+    }
+  }
+  if (s.textOutputs !== undefined) {
+    if (!Array.isArray(s.textOutputs)) return false;
+    if (!s.textOutputs.every((t): t is string => typeof t === 'string')) return false;
+  }
+  if (s.textOutputWithheld !== undefined) {
+    if (!isObject(s.textOutputWithheld) || typeof s.textOutputWithheld.reason !== 'string') {
+      return false;
+    }
+  }
+  if (s.toolCalls !== undefined) {
+    if (!Array.isArray(s.toolCalls)) return false;
+    for (const c of s.toolCalls) {
+      if (!isObject(c)) return false;
+      if (typeof c.id !== 'string' || typeof c.type !== 'string') return false;
+      if (!isObject(c.function)) return false;
+      if (typeof c.function.name !== 'string' || typeof c.function.arguments !== 'string') {
+        return false;
+      }
+    }
+  }
+  if (s.stepOutputs !== undefined) {
+    if (!Array.isArray(s.stepOutputs)) return false;
+    // `output` is `unknown` by contract — only the `$type` label is dereferenced.
+    for (const o of s.stepOutputs) {
+      if (!isObject(o) || typeof o.$type !== 'string') return false;
+    }
+  }
+  if (s.trainedEpochs !== undefined && !isValidTrainedEpochs(s.trainedEpochs)) return false;
+  if (s.publishedModel !== undefined && !isValidPublishedModel(s.publishedModel)) return false;
+  if (s.trainingQuote !== undefined && !isValidTrainingQuote(s.trainingQuote)) return false;
+  if (s.stepQuote !== undefined && !isValidStepQuote(s.stepQuote)) return false;
+  if (s.model3dOutputs !== undefined && !isValidModel3dOutputs(s.model3dOutputs)) return false;
+  if (s.steps !== undefined && !isValidWorkflowSteps(s.steps)) return false;
+  // 🔴 `eta` (and each step's `queue` / `progress` / `startedAt` /
+  // `completedAt`, the `throttled` marker, and `outputs` at both levels) is
+  // DELIBERATELY NOT CHECKED HERE. These are estimates,
+  // re-sent on every poll; rejecting the snapshot over one would drop the
+  // status and outputs with it and stall `watch` until its timeout. A malformed
+  // one is instead removed by `projectInboundPayload` →
+  // {@link projectWorkflowSnapshot}, so none this predicate let through reaches
+  // block code unchecked.
+  return true;
+}
+
+/** A finite number in [0, 1] — the `progress` fraction. */
+const isProgressFraction = (v: unknown): boolean =>
+  typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
+
+/** A whole number ≥ 0 — a queue position. */
+const isQueueCount = (v: unknown): boolean =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+const isStringOrNull = (v: unknown): boolean => v === null || typeof v === 'string';
+
+/**
+ * Shape check for `BlockWorkflowSnapshot.eta`. Times are any string (not
+ * parsed: they are estimates for display, and a host formatting change must
+ * not drop them) and `support` is any string (an open union).
+ */
+function isValidWorkflowEta(e: unknown): boolean {
+  if (e === null) return true;
+  if (!isObject(e)) return false;
+  if (typeof e.stepName !== 'string') return false;
+  if (e.queuedAhead !== null && !isQueueCount(e.queuedAhead)) return false;
+  if (!isStringOrNull(e.startsAt) || !isStringOrNull(e.completesAt)) return false;
+  if (e.progress !== null && !isProgressFraction(e.progress)) return false;
+  return isStringOrNull(e.support);
+}
+
+/** Shape check for `BlockWorkflowStepSnapshot.queue`; same leniency as {@link isValidWorkflowEta}. */
+function isValidWorkflowStepQueue(q: unknown): boolean {
+  if (q === null) return true;
+  if (!isObject(q)) return false;
+  if (q.precedingJobs !== null && !isQueueCount(q.precedingJobs)) return false;
+  if (!isStringOrNull(q.estimatedStartAt) || !isStringOrNull(q.estimatedCompleteAt)) return false;
+  return typeof q.support === 'string';
+}
+
+/** The optional per-step ETA fields and their checks. Absent passes; `undefined` is never checked. */
+const STEP_ETA_FIELDS: ReadonlyArray<readonly [string, (v: unknown) => boolean]> = [
+  ['queue', isValidWorkflowStepQueue],
+  ['progress', (v) => v === null || isProgressFraction(v)],
+  ['startedAt', isStringOrNull],
+  ['completedAt', isStringOrNull],
+];
+
+/** `obj` without the keys in `drop`; `obj` itself when there are none. */
+function withoutKeys<T extends Record<string, unknown>>(obj: T, drop: readonly string[]): T {
+  if (drop.length === 0) return obj;
+  const copy: Record<string, unknown> = { ...obj };
+  for (const k of drop) delete copy[k];
+  return copy as T;
+}
+
+/**
+ * One well-formed entry of `outputs` (`BlockWorkflowOutput`): EITHER an output to
+ * load — a non-empty `url`, an optional string `nsfwLevel`, no `restricted` and no
+ * `reason` — OR a restricted one — `restricted: true`, a string `reason`, and NO
+ * `url` and NO `nsfwLevel`. `reason` and `nsfwLevel` are checked as strings, not
+ * against today's members, for the open-union reason given at
+ * {@link isValidWorkflowSnapshot}.
+ *
+ * 🔴 A restricted entry that carries a `url` is MALFORMED and replaced whole (see
+ * {@link MALFORMED_OUTPUT_PLACEHOLDER}), so a url the host meant to withhold never
+ * reaches block code under a "restricted" label.
+ */
+function isValidWorkflowOutput(o: unknown): boolean {
+  if (!isObject(o)) return false;
+  const markers = ['restricted', 'pending', 'blocked'].filter((k) => o[k] !== undefined);
+  if (markers.length > 1) return false;
+  if (o.restricted === true) {
+    return typeof o.reason === 'string' && o.url === undefined && o.nsfwLevel === undefined;
+  }
+  // `{ pending: true }` / `{ blocked: true }`: the marker and nothing a block could load.
+  if (o.pending === true || o.blocked === true) {
+    return o.url === undefined && o.nsfwLevel === undefined && o.reason === undefined;
+  }
+  if (markers.length > 0 || o.reason !== undefined) return false;
+  if (!isNonEmptyString(o.url)) return false;
+  return o.nsfwLevel === undefined || typeof o.nsfwLevel === 'string';
+}
+
+/**
+ * What a malformed `outputs` entry is REPLACED with: a restricted entry, so the slot
+ * keeps its position (indexes are positions in `outputs` and must never shift) and
+ * block code shows a locked tile and fetches nothing. `'ceiling'` because the docs
+ * already tell a block to treat an unknown reason like it.
+ */
+export const MALFORMED_OUTPUT_PLACEHOLDER = Object.freeze({
+  restricted: true as const,
+  reason: 'ceiling' as const,
+});
+
+/**
+ * `obj` with its `outputs` projected: each malformed entry REPLACED IN PLACE by
+ * {@link MALFORMED_OUTPUT_PLACEHOLDER} (never removed — that would move every later
+ * position), or the whole field removed when it is not an array. `obj` itself when
+ * nothing changes.
+ */
+function withValidOutputs<T extends Record<string, unknown>>(input: T): T {
+  // The rating-pending marker is the literal `true` or nothing, like `throttled`.
+  const obj =
+    input.ratingPending !== undefined && input.ratingPending !== true
+      ? withoutKeys(input, ['ratingPending'])
+      : input;
+  const outputs = obj.outputs;
+  if (outputs === undefined) return obj;
+  if (!Array.isArray(outputs)) return withoutKeys(obj, ['outputs']);
+  if (outputs.every(isValidWorkflowOutput)) return obj;
+  return {
+    ...obj,
+    outputs: outputs.map((o) => (isValidWorkflowOutput(o) ? o : { ...MALFORMED_OUTPUT_PLACEHOLDER })),
+  };
+}
+
+/**
+ * A workflow snapshot with each MALFORMED queue/ETA field removed — `eta` and a
+ * `throttled` that is not `true` at the top level, and `queue`, `progress`,
+ * `startedAt` and `completedAt` on each entry of `steps` — and each malformed
+ * entry of `outputs` replaced in place by a restricted placeholder, at the top
+ * level and on each step (see {@link withValidOutputs}), and everything else as
+ * sent. The unit removed is the
+ * whole field: an `eta` with one bad member goes entirely, because a partial
+ * object would not have the published shape.
+ *
+ * Applied by {@link projectInboundPayload} to every reply that carries a
+ * snapshot, AFTER {@link isValidWorkflowSnapshot} (which does not look at these
+ * fields) accepted it. Identity when nothing is removed. A value that is not an
+ * object, or `steps` that is not an array, is returned as is: the validator
+ * decides those.
+ */
+export function projectWorkflowSnapshot(s: unknown): unknown {
+  if (!isObject(s)) return s;
+  let out: Record<string, unknown> = s;
+  if (Array.isArray(s.steps)) {
+    let changed = false;
+    const steps = s.steps.map((step: unknown) => {
+      if (!isObject(step)) return step;
+      const drop = STEP_ETA_FIELDS.filter(
+        ([key, ok]) => step[key] !== undefined && !ok(step[key]),
+      ).map(([key]) => key);
+      const projected = withValidOutputs(withoutKeys(step, drop));
+      if (projected === step) return step;
+      changed = true;
+      return projected;
+    });
+    if (changed) out = { ...out, steps };
+  }
+  out = withValidOutputs(out);
+  if (s.eta !== undefined && !isValidWorkflowEta(s.eta)) out = withoutKeys(out, ['eta']);
+  // The throttled-poll marker is the literal `true` or nothing: any other value
+  // is removed, so it can never be read as the marker (and `watch` never drops a
+  // real snapshot over it).
+  if (s.throttled !== undefined && s.throttled !== true) out = withoutKeys(out, ['throttled']);
+  return out;
+}
+
+/** `payload` with its `snapshot` projected by {@link projectWorkflowSnapshot}. */
+function projectSnapshotReply(payload: unknown): unknown {
+  if (!isObject(payload) || payload.snapshot === undefined) return payload;
+  const snapshot = projectWorkflowSnapshot(payload.snapshot);
+  return snapshot === payload.snapshot ? payload : { ...payload, snapshot };
+}
+
+/** `ESTIMATE_BATCH_RESULT` with each of its `snapshots` projected. */
+function projectEstimateBatchReply(payload: unknown): unknown {
+  if (!isObject(payload) || !Array.isArray(payload.snapshots)) return payload;
+  let changed = false;
+  const snapshots = payload.snapshots.map((cell: unknown) => {
+    const projected = projectWorkflowSnapshot(cell);
+    if (projected !== cell) changed = true;
+    return projected;
+  });
+  return changed ? { ...payload, snapshots } : payload;
+}
+
+/**
+ * `APP_WORKFLOWS_RESULT` / `CANCEL_APP_WORKFLOW_RESULT` with each row's `outputs`
+ * projected by {@link withValidOutputs}. Identity when nothing is removed.
+ */
+function projectAppWorkflowsReply(type: string, payload: unknown): unknown {
+  if (!isObject(payload) || !isObject(payload.result)) return payload;
+  const result = payload.result;
+  if (type === 'CANCEL_APP_WORKFLOW_RESULT') {
+    if (!isObject(result.workflow)) return payload;
+    const workflow = withValidOutputs(result.workflow);
+    return workflow === result.workflow ? payload : { ...payload, result: { ...result, workflow } };
+  }
+  if (!Array.isArray(result.workflows)) return payload;
+  let changed = false;
+  const workflows = result.workflows.map((w: unknown) => {
+    if (!isObject(w)) return w;
+    const projected = withValidOutputs(w);
+    if (projected !== w) changed = true;
+    return projected;
+  });
+  return changed ? { ...payload, result: { ...result, workflows } } : payload;
+}
+
+/** The inbound types whose payload carries one `snapshot`. */
+const SNAPSHOT_REPLY_TYPES = new Set<string>([
+  'ESTIMATE_RESULT',
+  'WORKFLOW_SUBMITTED',
+  'WORKFLOW_STATUS',
+  'WORKFLOW_CANCELED',
+  'TRAINING_RESULT',
+  'CONFIRMED_STEP_RESULT',
+]);
+
+/**
+ * Shape check for `stepQuote` — the viewer-confirmable quote a pass-through
+ * `step` estimate returns when its fixed price is above the per-call budget. The
+ * block passes `quoteId` back verbatim, renders `total` on its confirm button
+ * and may show `stepType`, so all three are pinned to their types.
+ *
+ * `quoteId`'s `sq_…` FORMAT is deliberately not pinned HERE, for the reason
+ * given on {@link isValidTrainingQuote}: a host changing the handle's format
+ * must not turn every such estimate reply into a dropped one. The format is
+ * checked where it is an instruction rather than an observation — on the way
+ * OUT, in `useRunConfirmedStep()`.
+ */
+function isValidStepQuote(q: unknown): boolean {
+  if (!isObject(q)) return false;
+  if (!isNonEmptyString(q.quoteId)) return false;
+  if (!isFiniteNumber(q.total)) return false;
+  if (typeof q.stepType !== 'string') return false;
+  return typeof q.expiresAt === 'string';
+}
+
+/**
+ * Shape check for `model3dOutputs` — shared by {@link isValidWorkflowSnapshot}
+ * and the `AppWorkflow` row guard, which carry the same field. A block matches
+ * an entry's `url` against its image list and loads it, and branches on
+ * `format` / `variant`, so each is pinned to a string. `format` and `variant`
+ * are OPEN sets (the orchestrator's own format names and output field paths)
+ * and are never checked against a list; `variant` may be the empty string.
+ */
+function isValidModel3dOutputs(outputs: unknown): boolean {
+  if (!Array.isArray(outputs)) return false;
+  for (const o of outputs) {
+    if (!isObject(o) || !isNonEmptyString(o.url)) return false;
+    if (typeof o.format !== 'string' || typeof o.variant !== 'string') return false;
+  }
+  return true;
+}
+
+/**
+ * Shape check for `steps` — the per-step view of a `kind: 'workflow'` run.
+ * OPTIONAL like its neighbours, and a PRESENT but malformed value rejects the
+ * snapshot: the block reads `name`, `$type`, `status` and `imageUrls` off every
+ * entry.
+ *
+ * `status` is checked against the SAME closed set as the snapshot's own
+ * `status`, unlike the open string unions above: it is typed as that closed
+ * union and a block `switch`es on it, so a snapshot carrying any other value is
+ * dropped rather than handed over. `output` is `unknown` by contract and is not
+ * inspected.
+ */
+function isValidWorkflowSteps(steps: unknown): boolean {
+  if (!Array.isArray(steps)) return false;
+  for (const step of steps) {
+    if (!isObject(step)) return false;
+    if (typeof step.name !== 'string' || typeof step.$type !== 'string') return false;
+    if (typeof step.status !== 'string' || !WORKFLOW_STATUSES.has(step.status)) return false;
+    if (step.imageUrls !== undefined) {
+      if (!Array.isArray(step.imageUrls)) return false;
+      if (!step.imageUrls.every((u): u is string => typeof u === 'string')) return false;
+    }
+    if (step.error !== undefined && typeof step.error !== 'string') return false;
+  }
+  return true;
+}
+
+/**
+ * Shape check for `trainingQuote` — the quote a `kind: 'training'` estimate
+ * returns. The block passes `quoteId` back verbatim and renders `total`, so both
+ * are pinned: a non-empty string, a finite number. `quoteId`'s `tq_…` FORMAT is
+ * deliberately not pinned — it is opaque, and a host changing it must not turn
+ * every estimate reply into a dropped one.
+ */
+function isValidTrainingQuote(q: unknown): boolean {
+  if (!isObject(q)) return false;
+  if (!isNonEmptyString(q.quoteId)) return false;
+  if (!isFiniteNumber(q.total)) return false;
+  if (!Number.isInteger(q.imageCount) || (q.imageCount as number) < 0) return false;
+  return typeof q.expiresAt === 'string';
+}
+
+/**
+ * Shape check for `trainedEpochs` — shared by {@link isValidWorkflowSnapshot}
+ * and the `AppWorkflow` row guard, which carry the same field. `$type` is
+ * checked as a STRING, not against today's members (see the forward-
+ * compatibility note in {@link isValidWorkflowSnapshot}).
+ */
+function isValidTrainedEpochs(epochs: unknown): boolean {
+  if (!Array.isArray(epochs)) return false;
+  for (const e of epochs) {
+    if (!isObject(e) || typeof e.$type !== 'string') return false;
+    if (!Number.isInteger(e.epochNumber)) return false;
+  }
+  return true;
+}
+
+/**
+ * Shape check for `publishedModel` — shared by {@link isValidWorkflowSnapshot}
+ * and the `AppWorkflow` row guard, which carry the same field.
+ */
+function isValidPublishedModel(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isFiniteNumber(p.modelId) || !isFiniteNumber(p.modelVersionId)) return false;
+  return typeof p.published === 'boolean';
+}
+
+/**
+ * Host-pushed token rotation. No `requestId` field; the host is the initiator.
+ * Carries the same wrapped-token shape as the reply path.
+ */
+export function isValidTokenRefresh(
+  p: unknown,
+): p is { token: WrappedToken } {
+  if (!isObject(p)) return false;
+  if (!isValidWrappedToken(p.token)) return false;
+  return true;
+}
+
+/**
+ * Host-pushed SITE-THEME change (the viewer toggled light/dark while the block
+ * was mounted). No `requestId` field; the host is the initiator, exactly like
+ * `TOKEN_REFRESH`.
+ *
+ * STRICTNESS: the theme is an ENUM, not free text — the snapshot value is what
+ * a block puts on `data-theme`, so an arbitrary string would poison every
+ * themed selector. Mirrors the `p.theme` check `isValidBlockInitPayload` already
+ * applies to the same field. Note this is the SAFE side of the too-strict trap
+ * documented on `isValidViewerResult`: dropping a malformed push costs at most
+ * a stale theme (the block keeps rendering the last good value), never a hang —
+ * nothing awaits this message.
+ *
+ * 🔴 A validator is only reachable once `payloadValidatorFor` maps the type to
+ * it. Its `default:` arm returns `null` — a STRUCTURAL PASS — so a new inbound
+ * type that is not added to that switch reaches state-mutating code entirely
+ * UNVALIDATED. Adding the guard and forgetting the switch entry is the whole
+ * bug; `validate.test.ts` pins the mapping for exactly that reason.
+ */
+export function isValidThemeChange(p: unknown): p is { theme: Theme } {
+  if (!isObject(p)) return false;
+  if (p.theme !== 'light' && p.theme !== 'dark') return false;
+  return true;
+}
+
+/**
+ * Host-pushed ROUTE change — the sub-path below the app root that is now
+ * showing. No `requestId` field; the host is the initiator, exactly like
+ * `TOKEN_REFRESH`.
+ *
+ * STRICTNESS: a string, and NOT a non-empty one. `''` is the genuine value on an
+ * app's own index — the same decision `isPageSlotContext` records for the field
+ * this message updates ("`subPath` is checked as a string, not a NON-EMPTY one")
+ * — so requiring content here would drop every navigation back to the app root
+ * and freeze the block on whatever sub-path it was last told about. That is a
+ * worse failure than the one a stricter check would prevent.
+ *
+ * Nothing further is asserted about the shape of the string. A leading slash, a
+ * dot segment or an absolute URL would all be host-side bugs, and this package
+ * is not the authority on the host's own resolver: the value lands in
+ * `context.subPath`, which is data a block routes on, not a URL this package
+ * fetches or assigns. Dropping a push costs at most a stale route (the block
+ * keeps rendering the last good value) and never a hang — nothing awaits it.
+ *
+ * 🔴 A validator is only reachable once `payloadValidatorFor` maps the type to
+ * it — see the same note on {@link isValidThemeChange}.
+ */
+export function isValidRouteChanged(
+  p: unknown,
+): p is { subPath: string; search?: string; hash?: string } {
+  if (!isObject(p)) return false;
+  if (typeof p.subPath !== 'string') return false;
+  // `search` / `hash` (HQ app_blocks_sdk_j1gc) are optional — an older host sends
+  // neither — but a PRESENT non-string is a host bug, and the push is dropped
+  // rather than half-applied, by the same reasoning as `subPath` above.
+  if (p.search !== undefined && typeof p.search !== 'string') return false;
+  if (p.hash !== undefined && typeof p.hash !== 'string') return false;
+  return true;
+}
+
+/**
+ * Host-pushed refusal of a `REQUEST_CONSENT` that can never be granted. No
+ * `requestId` field; the host is the initiator, exactly like `TOKEN_REFRESH`.
+ *
+ * 🔴 AN EMPTY `scopes` ARRAY IS VALID AND MUST PASS. The host decides to refuse
+ * on its unfiltered un-grantable set but puts only KNOWN block-scope names on
+ * the wire, so a request naming nothing the platform recognises produces a real
+ * refusal carrying `scopes: []`. A guard written as "must be a NON-EMPTY array
+ * of strings" — the obvious way to write it — would drop exactly that message,
+ * and drop it SILENTLY at the trust boundary, restoring the invisible dead end
+ * this whole message exists to remove. `validate.test.ts` pins the empty case
+ * for that reason.
+ *
+ * `reason` is checked as an ENUM rather than free text: it is a discriminator a
+ * block `switch`es on, so an arbitrary string would reach a consumer's default
+ * arm as an unhandled state. Dropping a malformed push is the safe side of the
+ * too-strict trap — nothing awaits this message, so the cost of a drop is at
+ * most a missed hint, never a hang.
+ *
+ * 🔴 A validator is only reachable once `payloadValidatorFor` maps the type to
+ * it — its `default:` arm returns `null`, a STRUCTURAL PASS.
+ */
+export function isValidConsentUnavailable(
+  p: unknown,
+): p is { reason: 'ungrantable'; scopes: string[] } {
+  if (!isObject(p)) return false;
+  if (p.reason !== 'ungrantable') return false;
+  if (!Array.isArray(p.scopes)) return false;
+  // Length is deliberately NOT checked — [] is a legitimate refusal.
+  if (!p.scopes.every((s) => typeof s === 'string')) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `REQUEST_TOKEN`.
+ *
+ * 🔴 DELIBERATELY LOOSER THAN THE TYPE. `ParentToBlockMessage` declares
+ * `payload: { requestId: string; token: WrappedToken }` — `requestId` REQUIRED
+ * as of v2 — but this guard still accepts a payload without it. That asymmetry
+ * is the whole back-compat story for a NEW SDK against an OLD host, so do not
+ * "fix" it by tightening:
+ *
+ *  - A pre-v2 host echoes `requestId` only via `...(requestId ? {requestId} : {})`,
+ *    so it OMITS the field whenever the block sent none — and also when the block
+ *    sent an empty string, because that spread is a truthiness test.
+ *  - The transport correlates a reply to a pending request STRICTLY by
+ *    `requestId`, so such a reply has never resolved `useBlockToken().refresh()`;
+ *    it only ever worked through the side effect that applies the token to the
+ *    snapshot regardless of correlation (`iframeTransport.handleMessage`).
+ *  - Requiring `requestId` here would DROP the message before that side effect
+ *    runs. The block would then lose the token update it currently still gets,
+ *    on top of the `refresh()` rejection it already gets — converting a degraded
+ *    path into a broken one, on the exact hosts that need the tolerance.
+ *
+ * So: the TYPE is a contract on the host (enforced by the host's own tests); the
+ * GUARD is a defence against the wire, and stays permissive. `requestId` is
+ * still shape-checked when present — a non-string cannot masquerade as a
+ * correlation id.
+ */
+export function isValidTokenRefreshResponse(
+  p: unknown,
+): p is { token: WrappedToken; requestId?: string } {
+  if (!isObject(p)) return false;
+  if (!isValidWrappedToken(p.token)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  return true;
+}
+
+export function isValidWorkflowReply(
+  p: unknown,
+): p is { snapshot: BlockWorkflowSnapshot; requestId?: string } {
+  if (!isObject(p)) return false;
+  if (!isValidWorkflowSnapshot(p.snapshot)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `ESTIMATE_WORKFLOW_BATCH`. A well-formed reply
+ * carries EITHER an `error` string OR `snapshots` + `aggregate`.
+ *
+ * 🔴 A PRESENT `error` IS ACCEPTED ON ITS OWN, unlike the single-estimate reply
+ * ({@link isValidWorkflowReply}, which requires a snapshot). That is what lets
+ * the host's generic `{ requestId, error: 'unsupported on this host' }` reach
+ * `useBatchEstimate`, which turns it into the typed error an app falls back to
+ * per-cell estimates on. Dropping it would leave the block waiting out the
+ * timeout instead. `error` is shape-checked only: the channel carries free-text
+ * server messages.
+ *
+ * Without an `error`, EVERY cell must be a valid workflow snapshot and the
+ * aggregate must hold three finite numbers. One malformed cell rejects the whole
+ * reply, the same way one malformed snapshot rejects a single-estimate reply:
+ * the block dereferences these fields.
+ */
+export function isValidEstimateBatchResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined) return typeof p.error === 'string';
+  if (!Array.isArray(p.snapshots)) return false;
+  if (!p.snapshots.every((s) => isValidWorkflowSnapshot(s))) return false;
+  const a = p.aggregate;
+  if (!isObject(a)) return false;
+  for (const key of ['total', 'pricedCells', 'cellCount'] as const) {
+    const value = a[key];
+    if (typeof value !== 'number' || !Number.isFinite(value)) return false;
+  }
+  return true;
+}
+
+/**
+ * Reply to `REQUEST_OUTPUT_UNLOCK`: EITHER an `error` string (the host's generic reply
+ * to a request it could not route) OR a `result` whose `outcome` is a string. A
+ * `result.snapshot`, when present, must be a valid workflow snapshot (it is then
+ * projected like every other snapshot reply, see {@link projectInboundPayload}), and
+ * a `result.message` a string. `outcome` is checked as a string, not against today's
+ * members: a newer host may report one this package does not know.
+ */
+export function isValidOutputUnlockResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined) return typeof p.error === 'string' && p.result === undefined;
+  const r = p.result;
+  if (!isObject(r) || typeof r.outcome !== 'string') return false;
+  if (r.message !== undefined && typeof r.message !== 'string') return false;
+  if (r.snapshot !== undefined && !isValidWorkflowSnapshot(r.snapshot)) return false;
+  return true;
+}
+
+/** `OUTPUT_UNLOCK_RESULT` with its `result.snapshot` projected. Identity when unchanged. */
+function projectOutputUnlockReply(payload: unknown): unknown {
+  if (!isObject(payload) || !isObject(payload.result)) return payload;
+  const result = payload.result;
+  if (result.snapshot === undefined) return payload;
+  const snapshot = projectWorkflowSnapshot(result.snapshot);
+  return snapshot === result.snapshot ? payload : { ...payload, result: { ...result, snapshot } };
+}
+
+export function isValidBuzzPurchaseResult(
+  p: unknown,
+): p is { purchased: boolean; newBalance?: number; requestId?: string } {
+  if (!isObject(p)) return false;
+  if (typeof p.purchased !== 'boolean') return false;
+  if (p.newBalance !== undefined && typeof p.newBalance !== 'number') return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  return true;
+}
+
+const isFiniteNumber = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isFinite(v);
+
+/**
+ * Reply to a block-initiated `GET_BUZZ_BALANCE`. A well-formed reply carries
+ * EITHER a `balance` ({ blue, green, yellow } — each a finite number) OR an
+ * `error` string; one with neither is malformed and dropped.
+ */
+export function isValidBuzzBalanceResult(
+  p: unknown,
+): p is {
+  balance?: { blue: number; green: number; yellow: number };
+  error?: string;
+  requestId?: string;
+} {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.balance !== undefined) {
+    if (!isObject(p.balance)) return false;
+    if (!isFiniteNumber(p.balance.blue)) return false;
+    if (!isFiniteNumber(p.balance.green)) return false;
+    if (!isFiniteNumber(p.balance.yellow)) return false;
+  }
+  // A reply must resolve to something — either the balance or an error.
+  if (p.balance === undefined && p.error === undefined) return false;
+  return true;
+}
+
+const VIEWER_STATUSES = new Set<string>(['active', 'muted']);
+
+/**
+ * Reply to a block-initiated `GET_VIEWER`. A well-formed reply carries EITHER a
+ * `viewer` ({ id, username, status, buzzBudget }) OR a free-text `error`; one
+ * with neither is malformed and dropped. Mirrors the `BUZZ_BALANCE_RESULT`
+ * value-or-error convention.
+ *
+ * NULLABILITY (host PR #3152): `username` is `string | null` and `buzzBudget` is
+ * `number | null` — both present-but-NULLABLE, not omitted. The guard MUST ACCEPT
+ * `null` for both (the host returns `username: null` for a viewer with no handle,
+ * `buzzBudget: null` when the token lacks the budget claim). Rejecting a valid
+ * `null` is the exact too-strict-guard trap that hung `useBuzzTransactions` on the
+ * null cursor — a dropped valid reply hangs the hook to its 30s timeout.
+ */
+export function isValidViewerResult(
+  p: unknown,
+): p is {
+  viewer?: { id: number; username: string | null; status: string; buzzBudget: number | null };
+  error?: string;
+  requestId?: string;
+} {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.viewer !== undefined) {
+    const v = p.viewer;
+    if (!isObject(v)) return false;
+    if (!isFiniteNumber(v.id)) return false;
+    // `username` is `string | null` — accept a string (any) OR null; reject only
+    // other types (number/undefined/object).
+    if (typeof v.username !== 'string' && v.username !== null) return false;
+    if (typeof v.status !== 'string' || !VIEWER_STATUSES.has(v.status)) return false;
+    // `buzzBudget` is `number | null` — accept a finite number OR null. Do NOT
+    // reject null (see NULLABILITY above).
+    if (!isFiniteNumber(v.buzzBudget) && v.buzzBudget !== null) return false;
+  }
+  // A reply must resolve to something — either the viewer or an error.
+  if (p.viewer === undefined && p.error === undefined) return false;
+  return true;
+}
+
+const CONTENT_RATINGS = new Set<string>(['g', 'pg', 'pg13', 'r', 'x']);
+
+/** The moderated (`purpose:'display'`) `IMAGE_UPLOAD_RESULT.selected` shape. */
+function isModeratedUpload(s: Record<string, unknown>): boolean {
+  if (typeof s.imageId !== 'number' || !Number.isInteger(s.imageId) || s.imageId <= 0) return false;
+  if (!isFiniteNumber(s.nsfwLevel)) return false;
+  if (typeof s.contentRating !== 'string' || !CONTENT_RATINGS.has(s.contentRating)) return false;
+  if (!isNonEmptyString(s.url)) return false;
+  return true;
+}
+
+/**
+ * The `purpose:'generationSource'` `IMAGE_UPLOAD_RESULT.selected` shape — a
+ * private img2img source `{ url, width, height }` (no nsfwLevel), plus
+ * `imageId` / `ready` when the host kept it as a scanned row. Mirrors civitai's
+ * `BlockSourceImageInfo`.
+ */
+function isGenerationSourceUpload(s: Record<string, unknown>): boolean {
+  if (!isNonEmptyString(s.url)) return false;
+  if (!isFiniteNumber(s.width) || s.width <= 0) return false;
+  if (!isFiniteNumber(s.height) || s.height <= 0) return false;
+  return true;
+}
+
+/**
+ * The `asyncScan:true` (`purpose:'display'`) EARLY-RESOLVE `IMAGE_UPLOAD_RESULT.selected`
+ * shape — a {@link BlockPendingImageInfo}: `status:'pending'`, a positive-integer
+ * `imageId`, and a non-empty `url`. NOT yet scanned (author-preview-only) — the
+ * verdict arrives later on `IMAGE_SCAN_RESOLVED`.
+ */
+function isPendingUpload(s: Record<string, unknown>): boolean {
+  if (s.status !== 'pending') return false;
+  if (typeof s.imageId !== 'number' || !Number.isInteger(s.imageId) || s.imageId <= 0) return false;
+  if (!isNonEmptyString(s.url)) return false;
+  return true;
+}
+
+/**
+ * The `purpose:'trainingData'` `IMAGE_UPLOAD_RESULT.selected` shape
+ * (civitai/civitai#6461): `{ images: [{ air }] }`, each `air` a non-empty
+ * string. A `url` an older host sends beside it is ignored. Mirrors the host's `TrainingDataUpload`. `air` is opaque —
+ * its key format is the host's to check, at the estimate — so only its type is
+ * pinned here.
+ */
+function isTrainingDataUpload(s: Record<string, unknown>): boolean {
+  if (!Array.isArray(s.images)) return false;
+  return s.images.every(
+    (img) => isObject(img) && isNonEmptyString(img.air),
+  );
+}
+
+/**
+ * Reply to a block-initiated `OPEN_IMAGE_UPLOAD`. `selected` is ABSENT when the
+ * user dismissed the upload modal (the block's hook resolves to `null`). When
+ * present it is a UNION keyed by the request's `purpose`:
+ *   • `'display'`  → the moderated `BlockUploadedImageInfo` (`imageId` a positive
+ *     integer, `nsfwLevel` finite, `contentRating` a `g|pg|pg13|r|x` ladder
+ *     value, `url` non-empty).
+ *   • `'generationSource'` → the source `{ url, width, height }` (positive finite
+ *     dimensions, non-empty url; no imageId/nsfwLevel).
+ *   • `'trainingData'` → `{ images: [{ air }] }` (non-empty strings).
+ * The guard accepts ANY of the shapes (the result carries no purpose discriminator).
+ * Kept in lockstep with the host's `IMAGE_UPLOAD_RESULT` (civitai/civitai
+ * `PageBlockHost.tsx` / `BlockImageUploadModal.tsx` /
+ * `BlockGenerationSourceUploadModal.tsx`).
+ */
+export function isValidImageUploadResult(
+  p: unknown,
+): p is {
+  requestId?: string;
+  selected?:
+    | { imageId: number; nsfwLevel: number; contentRating: string; url: string }
+    | { url: string; width: number; height: number }
+    | { status: 'pending'; imageId: number; url: string }
+    | { images: Array<{ url: string; air: string }> };
+  error?: string;
+  shared?: boolean;
+} {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  // `error` (civitai/civitai#5639): a refused or failed `OPEN_IMAGE_UPLOAD
+  // { bytes }`. Free text (host strings plus forwarded server messages), so
+  // only its TYPE is checked. 🔴 Accepting it is load-bearing: a validator that
+  // dropped `{ requestId, error }` would leave `useUploadImageBytes()` waiting
+  // out its whole timeout on a refusal the host already sent.
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  // `shared`: whether a `share: true` upload was recorded as shared. Boolean when present.
+  if (p.shared !== undefined && typeof p.shared !== 'boolean') return false;
+  // `selected` absent → cancelled upload (valid). When present, it must match
+  // one of the purpose-keyed shapes (moderated / generationSource / pending /
+  // trainingData).
+  if (p.selected !== undefined) {
+    const s = p.selected;
+    if (!isObject(s)) return false;
+    if (
+      !isModeratedUpload(s) &&
+      !isGenerationSourceUpload(s) &&
+      !isPendingUpload(s) &&
+      !isTrainingDataUpload(s)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Host→block `IMAGE_SCAN_RESOLVED` — the async scan verdict for a pending
+ * `'display'` upload (the `asyncScan:true` early-resolve path). Shape-checks the
+ * correlation fields (`requestId` a non-empty string, `imageId` a positive
+ * integer) + the discriminated `result` union the hook dereferences:
+ *   • `'scanned'` → carries a moderated {@link BlockUploadedImageInfo} `image`
+ *     (the ONLY verdict with a usable image).
+ *   • `'blocked'` → optional `reason` string, no image.
+ *   • `'error'`  → optional `message` string, no image.
+ * A malformed / unknown-status verdict drops (the hook keeps awaiting / times out)
+ * rather than crashing. Mirrors the host's `BlockImageScanPoller` verdict.
+ */
+export function isValidImageScanResolved(
+  p: unknown,
+): p is {
+  requestId: string;
+  imageId: number;
+  result:
+    | { status: 'scanned'; image: { imageId: number; nsfwLevel: number; contentRating: string; url: string } }
+    | { status: 'blocked'; reason?: string }
+    | { status: 'error'; message?: string };
+} {
+  if (!isObject(p)) return false;
+  if (!isRoutableRequestId(p.requestId)) return false;
+  if (typeof p.imageId !== 'number' || !Number.isInteger(p.imageId) || p.imageId <= 0) return false;
+  if (!isObject(p.result)) return false;
+  const r = p.result;
+  switch (r.status) {
+    case 'scanned':
+      return isObject(r.image) && isModeratedUpload(r.image);
+    case 'blocked':
+      return r.reason === undefined || typeof r.reason === 'string';
+    case 'error':
+      return r.message === undefined || typeof r.message === 'string';
+    default:
+      return false;
+  }
+}
+
+/**
+ * A value the block-side hooks will rehydrate to a `Date`: EITHER a `Date`
+ * instance OR an ISO-8601 string `new Date()` parses to a finite timestamp.
+ *
+ * The buzz self-read bridges need this both-ways tolerance because the host
+ * forwards the RAW tRPC `result` over a structured-clone `postMessage` (it does
+ * NOT `.toISOString()`-map it the way the removed `SHARED_LIST` bridge did), so
+ * `cursor` + each transaction's `date` arrive as a `Date` INSTANCE today. A
+ * string-only guard would DROP every real reply → the hook would hang.
+ */
+function isDateLike(v: unknown): boolean {
+  if (v instanceof Date) return Number.isFinite(v.getTime());
+  return isParseableDateString(v);
+}
+
+/**
+ * Reply to a block-initiated `GET_BUZZ_TRANSACTIONS`. A well-formed reply carries
+ * EITHER a `result` ({ transactions[], cursor? }) OR a free-text `error`; one with
+ * neither is malformed and dropped. Each transaction row is shape-checked to the
+ * fields the hook dereferences (`date` date-like, `type` string, `amount` finite),
+ * so a malformed row drops the whole reply rather than yielding a `NaN` date.
+ */
+export function isValidBuzzTransactionsResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    // `cursor` is `z.coerce.date().nullish()` server-side: `null` is a REAL
+    // value the host returns verbatim on the last/only page (any viewer with
+    // ≤ limit transactions gets it on the FIRST fetch). Accept `null`/`undefined`
+    // (the hook's `toIso` maps both to `cursor: null`); only a present-but-
+    // non-date-like cursor is malformed.
+    if (r.cursor != null && !isDateLike(r.cursor)) return false;
+    if (!Array.isArray(r.transactions)) return false;
+    for (const t of r.transactions) {
+      if (!isObject(t)) return false;
+      if (!isDateLike(t.date)) return false;
+      if (typeof t.type !== 'string') return false;
+      if (!isFiniteNumber(t.amount)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `GET_BUZZ_ACCOUNTS`. A well-formed reply carries
+ * EITHER a `result` ({ accounts[] }, each `{ accountType: string, balance: finite }`)
+ * OR a free-text `error`.
+ */
+export function isValidBuzzAccountsResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!Array.isArray(r.accounts)) return false;
+    for (const a of r.accounts) {
+      if (!isObject(a)) return false;
+      if (typeof a.accountType !== 'string') return false;
+      if (!isFiniteNumber(a.balance)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `GET_DAILY_COMPENSATION`. A well-formed reply carries
+ * EITHER a `result` ({ resources[], hasPublishedResources: boolean }) OR a
+ * free-text `error`.
+ */
+export function isValidDailyCompensationResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (typeof r.hasPublishedResources !== 'boolean') return false;
+    if (!Array.isArray(r.resources)) return false;
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+const WILDCARD_PACK_ERROR_CODES = new Set<string>([
+  'not-found',
+  'forbidden',
+  'too-large',
+  'parse-failed',
+  'busy',
+]);
+
+/**
+ * Reply to a block-initiated `GET_WILDCARD_PACK`. A well-formed reply carries
+ * EITHER a `pack` (shape-checked to the fields the hook reads — `modelVersionId`
+ * a positive int, `lists` an object, `maturity.browsingLevel` finite) OR a
+ * DISCRIMINATED `error` code (one of {@link WILDCARD_PACK_ERROR_CODES}); one with
+ * neither, or an unknown `error` string, is malformed and dropped. Unlike the
+ * buzz guards the error is NOT free-text — a rogue free-text error would drop the
+ * reply, mirroring the host's enum contract.
+ */
+export function isValidWildcardPackResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined) {
+    if (typeof p.error !== 'string' || !WILDCARD_PACK_ERROR_CODES.has(p.error)) return false;
+  }
+  if (p.pack !== undefined) {
+    const pack = p.pack;
+    if (!isObject(pack)) return false;
+    if (typeof pack.modelVersionId !== 'number' || !Number.isInteger(pack.modelVersionId)) {
+      return false;
+    }
+    if (!isObject(pack.lists)) return false;
+    if (typeof pack.truncated !== 'boolean') return false;
+    if (!Array.isArray(pack.truncatedLists)) return false;
+    if (!isObject(pack.maturity)) return false;
+    if (!isFiniteNumber(pack.maturity.browsingLevel)) return false;
+    if (typeof pack.maturity.sfwOnly !== 'boolean') return false;
+  }
+  if (p.pack === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * The CLOSED `RESOURCE_FILE_RESULT` error set, mirroring
+ * `BlockResourceFileErrorCode` (civitai/civitai-app-starters#664).
+ */
+const RESOURCE_FILE_ERROR_CODES = new Set<string>([
+  'not-found',
+  'forbidden',
+  'unauthorized',
+  'too-large',
+  'parse-failed',
+  'busy',
+  'rate-limited',
+]);
+
+const RESOURCE_FILE_ENTRY_FORMATS = new Set<string>(['ui', 'api', 'unknown']);
+
+/**
+ * Reply to a block-initiated `GET_RESOURCE_FILE`. Same contract shape as
+ * {@link isValidWildcardPackResult}: EITHER a `file` OR an `error` that is one of
+ * {@link RESOURCE_FILE_ERROR_CODES}; a free-text or unknown `error`, or a reply
+ * with neither, is malformed and dropped. The `file` is checked field by field —
+ * `meta` ids positive integers, names strings, `creatorUsername` a string or
+ * `null`, `truncated` a boolean, and EVERY entry an object with a string `path`,
+ * a known `format` and a `graph` key. `graph` itself is the host's parsed JSON
+ * and may be any JSON value.
+ */
+export function isValidResourceFileResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined) {
+    if (typeof p.error !== 'string' || !RESOURCE_FILE_ERROR_CODES.has(p.error)) return false;
+  }
+  if (p.file !== undefined) {
+    const file = p.file;
+    if (!isObject(file)) return false;
+    const meta = file.meta;
+    if (!isObject(meta)) return false;
+    if (!isPositiveInteger(meta.modelId)) return false;
+    if (!isPositiveInteger(meta.modelVersionId)) return false;
+    if (!isPositiveInteger(meta.fileId)) return false;
+    if (typeof meta.fileName !== 'string') return false;
+    if (typeof meta.modelName !== 'string') return false;
+    if (typeof meta.versionName !== 'string') return false;
+    if (meta.creatorUsername !== null && typeof meta.creatorUsername !== 'string') return false;
+    if (typeof file.truncated !== 'boolean') return false;
+    if (!Array.isArray(file.entries)) return false;
+    for (const entry of file.entries) {
+      if (!isObject(entry)) return false;
+      if (typeof entry.path !== 'string') return false;
+      if (typeof entry.format !== 'string' || !RESOURCE_FILE_ENTRY_FORMATS.has(entry.format)) {
+        return false;
+      }
+      if (!('graph' in entry)) return false;
+    }
+  }
+  if (p.file === undefined && p.error === undefined) return false;
+  return true;
+}
+
+// ============================================================
+// App generator SUBQUEUE reply validators
+// ============================================================
+//
+// Kept in lockstep with civitai/civitai's `AppWorkflow` / `projectAppWorkflow`
+// (`src/server/services/blocks/workflow.service.ts`, PR #3164) and the host's
+// `APP_WORKFLOWS_RESULT` / `CANCEL_APP_WORKFLOW_RESULT` builders in
+// `PageBlockHost.tsx`. Same value-or-error convention as the buzz bridges.
+
+const APP_WORKFLOW_STATUSES = new Set<string>([
+  'pending',
+  'processing',
+  'succeeded',
+  'failed',
+  'expired',
+  'canceled',
+]);
+
+/**
+ * Shape-check ONE {@link import('@civitai/app-sdk/blocks').AppWorkflow} row to the
+ * fields the hook dereferences. Deliberately accepts the LEGITIMATE nullish the
+ * host emits — an image's `width`/`height`/`nsfwLevel` and the workflow `cost` are
+ * `number | null` — while rejecting the malformed (a `NaN`/string cost, a missing
+ * url). Being too strict here (rejecting a valid `null`) is the trap that hangs the
+ * hook to its transport timeout, so `null` is explicitly allowed everywhere it's
+ * contractually valid.
+ */
+function isValidAppWorkflow(w: unknown): boolean {
+  if (!isObject(w)) return false;
+  if (!isNonEmptyString(w.workflowId)) return false;
+  if (typeof w.status !== 'string' || !APP_WORKFLOW_STATUSES.has(w.status)) return false;
+  // `cost` is `number | null` — accept a finite number OR null; reject other types.
+  if (w.cost !== null && !isFiniteNumber(w.cost)) return false;
+  if (!isParseableDateString(w.createdAt)) return false;
+  if (!Array.isArray(w.images)) return false;
+  for (const img of w.images) {
+    if (!isObject(img)) return false;
+    if (!isNonEmptyString(img.url)) return false;
+    // width/height/nsfwLevel are each `number | null` — accept a finite number OR null.
+    if (img.width !== null && !isFiniteNumber(img.width)) return false;
+    if (img.height !== null && !isFiniteNumber(img.height)) return false;
+    if (img.nsfwLevel !== null && !isFiniteNumber(img.nsfwLevel)) return false;
+  }
+  // OPTIONAL — absent on hosts that predate them; checked only when present.
+  if (w.publishedModel !== undefined && !isValidPublishedModel(w.publishedModel)) return false;
+  if (w.trainedEpochs !== undefined && !isValidTrainedEpochs(w.trainedEpochs)) return false;
+  if (w.model3dOutputs !== undefined && !isValidModel3dOutputs(w.model3dOutputs)) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `QUERY_APP_WORKFLOWS`. A well-formed reply carries
+ * EITHER a `result` ({ workflows: AppWorkflow[], cursor: string | null }) OR a
+ * free-text `error`; one with neither is malformed and dropped. `cursor` is
+ * `string | null` — `null` is the REAL last/only-page value the host returns
+ * verbatim (accept it; only a present-but-non-string-non-null cursor is malformed).
+ * An EMPTY `workflows` array is valid (a fresh app with no generations).
+ */
+export function isValidAppWorkflowsResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (r.cursor !== null && typeof r.cursor !== 'string') return false;
+    if (!Array.isArray(r.workflows)) return false;
+    for (const w of r.workflows) {
+      if (!isValidAppWorkflow(w)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `CANCEL_APP_WORKFLOW`. A well-formed reply carries
+ * EITHER a `result` ({ workflow: AppWorkflow }) OR a free-text `error` (FORBIDDEN /
+ * transport); one with neither is malformed and dropped.
+ */
+export function isValidCancelAppWorkflowResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!isValidAppWorkflow(r.workflow)) return false;
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+// ============================================================
+// Publish-outputs + gated-image reply validators
+// ============================================================
+//
+// Kept in lockstep with civitai/civitai's `blocks.publishGenerationOutputs` /
+// `blocks.getImagesByIds` return types + the host's `PUBLISH_RESULT` /
+// `IMAGES_RESULT` builders. Same value-or-error convention as the buzz +
+// app-subqueue bridges.
+
+/**
+ * Reply to a block-initiated `PUBLISH_GENERATION_OUTPUTS`. A well-formed reply
+ * carries EITHER a `result` ({ imageIds: number[] } — each a finite number) OR a
+ * free-text `error`; one with neither is malformed and dropped. Mirrors
+ * `isValidAppWorkflowsResult`'s value-or-error structure.
+ */
+export function isValidPublishResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!Array.isArray(r.imageIds)) return false;
+    for (const id of r.imageIds) {
+      if (!isFiniteNumber(id)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+const GATED_IMAGE_STATUSES = new Set<string>(['visible', 'hidden']);
+
+/**
+ * Shape-check ONE {@link import('@civitai/app-sdk/blocks').BlockGatedImage} entry.
+ * `imageId` is always a finite number and `status` one of `visible`/`hidden`.
+ *  - `visible` → `url` a non-empty string and `width`/`height` each
+ *    `number | null`, PLUS exactly one of two rating shapes (below).
+ *  - `hidden`  → `imageId` + `status`, and a `url` on one is REJECTED — defense
+ *    in depth against a buggy/hostile host leaking an unclamped url on an image
+ *    the viewer isn't allowed to see.
+ *
+ * 🔴 THIS PREDICATE DOES **NOT** ENFORCE AN ALLOWLIST ON A `hidden` ENTRY, AND AN
+ * EARLIER VERSION OF THIS DOCBLOCK CLAIMED IT DID ("ONLY imageId + status").
+ * It bans exactly one SPELLING — the literal key `url`. `previewUrl`, `src`,
+ * `imageUrl` or any other key sails through here. The allowlist is real, but it
+ * lives one step later, in {@link projectGatedImage}: every `hidden` entry is
+ * narrowed to `{ imageId, status }` at the transport boundary, so no extra key
+ * can reach a consumer. See that function for why the split is PROJECTION for
+ * unknown keys and REJECTION for `url`.
+ *
+ * 🔴 THE TWO `visible` SHAPES ARE MUTUALLY EXCLUSIVE, AND THAT IS ENFORCED.
+ * A RATED entry carries `nsfwLevel` + `contentRating` and NO `ratingPending`; an
+ * entry nothing has rated yet (returned only to the image's own author) carries
+ * `ratingPending: true` and NEITHER rating field. Anything in between is
+ * REJECTED, in BOTH directions:
+ *  - `ratingPending` alongside a rating would let a host assert a rating it has
+ *    just told us does not exist — the precise bug this state was added to stop
+ *    (an unrated image rendered as *"rated mature"*);
+ *  - a `visible` entry with neither a rating nor `ratingPending` is a host that
+ *    dropped the marker, and a block reading `nsfwLevel === undefined` there
+ *    cannot tell "unrated" from "the host lost the field".
+ * A half-populated entry (one rating field, not both) is rejected for the same
+ * reason it always was.
+ */
+function isValidGatedImage(img: unknown): boolean {
+  if (!isObject(img)) return false;
+  if (!isFiniteNumber(img.imageId)) return false;
+  if (typeof img.status !== 'string' || !GATED_IMAGE_STATUSES.has(img.status)) return false;
+  if (img.status === 'visible') {
+    if (!isNonEmptyString(img.url)) return false;
+    // width/height are each `number | null` — accept a finite number OR null.
+    if (img.width !== null && !isFiniteNumber(img.width)) return false;
+    if (img.height !== null && !isFiniteNumber(img.height)) return false;
+
+    // Presence, not truthiness: `nsfwLevel` is a bitmask whose unrated value is
+    // `0`, so a falsy check would read a real level as "absent".
+    const hasLevel = 'nsfwLevel' in img && img.nsfwLevel !== undefined;
+    const hasRating = 'contentRating' in img && img.contentRating !== undefined;
+    const claimsPending = 'ratingPending' in img && img.ratingPending !== undefined;
+
+    if (claimsPending) {
+      // The pending shape: the marker is EXACTLY `true`, and no rating is claimed.
+      if (img.ratingPending !== true) return false;
+      if (hasLevel || hasRating) return false;
+      return true;
+    }
+    // The rated shape: both fields, both well-formed.
+    if (!isFiniteNumber(img.nsfwLevel)) return false;
+    if (typeof img.contentRating !== 'string' || !CONTENT_RATINGS.has(img.contentRating)) {
+      return false;
+    }
+    return true;
+  }
+  // status === 'hidden'. A leaked `url` is the exact cross-user moderation-
+  // boundary breach this guard exists to catch, and the contract forbids the key
+  // outright, so it is fatal here. Every OTHER key is left to
+  // `projectGatedImage`, which drops it — see that function's docblock for why
+  // the two cases are handled differently. This line is NOT an allowlist.
+  if ('url' in img) return false;
+  return true;
+}
+
+/**
+ * Narrow ONE already-validated gated-image entry to the keys its `status`
+ * permits: a `hidden` entry becomes exactly `{ imageId, status }`; a `visible`
+ * entry is returned unchanged.
+ *
+ * 🔴 THIS IS WHERE THE `hidden` ALLOWLIST ACTUALLY LIVES. `isValidGatedImage`
+ * bans one spelling (`url`); this drops every key that is not `imageId` or
+ * `status`, so `previewUrl` / `src` / `imageUrl` / anything a future host adds
+ * cannot reach a consumer of `IMAGES_RESULT`.
+ *
+ * 🔴 WHY PROJECTION AND NOT REJECTION, for everything except `url`. A `false`
+ * from `isValidGatedImage` fails the WHOLE batch: `isValidImagesResult` returns
+ * false for one bad entry, `handleMessage` drops the entire `IMAGES_RESULT`
+ * before the pending-request lookup, and `useGatedImages().getImages()` then
+ * hangs to its transport timeout rather than rejecting. That failure mode is
+ * already documented in `useGatedImages.test.tsx` — it is what the
+ * `ratingPending` shape had to be admitted to avoid. The host is
+ * `civitai/civitai`, a separate repo on a separate release cadence, so an
+ * allowlist-by-rejection would convert ANY future host-side field addition into
+ * a block-wide hang. Dropping the key delivers the same moderation guarantee
+ * (nothing extra reaches a consumer) and costs a forward-compatible host
+ * nothing.
+ *
+ * `url` stays fatal because it is the one key the contract explicitly forbids on
+ * a `hidden` entry: a host can never legitimately add it, so it carries no
+ * forward-compat risk, and its presence is a live moderation breach worth
+ * surfacing loudly (`console.warn` + a `BLOCK_MESSAGE_REJECTED` report) rather
+ * than silently papering over.
+ *
+ * Identity-preserving: an entry that already satisfies the allowlist is returned
+ * as-is, so the common path allocates nothing.
+ */
+function projectGatedImage(img: unknown): unknown {
+  if (!isObject(img)) return img;
+  if (img.status !== 'hidden') return img;
+  const keys = Object.keys(img);
+  if (keys.length === 2 && 'imageId' in img && 'status' in img) return img;
+  return { imageId: img.imageId, status: img.status };
+}
+
+/**
+ * Reply to a block-initiated `GET_IMAGES_BY_IDS`. A well-formed reply carries
+ * EITHER a `result` ({ images: BlockGatedImage[] }) OR a free-text `error`; one
+ * with neither is malformed and dropped. Each image is shape-checked via
+ * {@link isValidGatedImage} — a `hidden` entry that carries a `url` DROPS the whole
+ * reply (defense in depth against a leaked unclamped url).
+ *
+ * Validation only. The `hidden` ALLOWLIST is applied separately, by
+ * {@link projectInboundPayload} → {@link projectGatedImage}, after this returns
+ * true.
+ */
+export function isValidImagesResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!Array.isArray(r.images)) return false;
+    for (const img of r.images) {
+      if (!isValidGatedImage(img)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `SET_COLLECTION_FOLLOW`. A well-formed reply carries
+ * EITHER a `result` (`{ collectionId: positive int, followed: boolean }`) OR an
+ * `error`; one with neither is malformed and dropped.
+ *
+ * 🔴 `error` IS SHAPE-CHECKED ONLY, NOT MEMBERSHIP-CHECKED — deliberately, and
+ * the opposite choice from {@link isValidWildcardPackResult}. The host's error
+ * channel is a UNION of the closed `BlockCollectionFollowErrorCode` refusals AND
+ * a free-text server message it forwards verbatim from the collection service
+ * (`err.message`, e.g. a FORBIDDEN on a private collection). Constraining it to
+ * the enum would DROP every server failure, and a dropped reply on a REQUEST-
+ * style message hangs the block to its 10-minute consent timeout — turning a
+ * legible "you may not follow that" into a wedged button. An empty-string
+ * `error` is likewise a valid reply here (the hook maps it to a code); the same
+ * `||`-not-`??` reasoning as `isValidPublishResult`'s consumer.
+ *
+ * `collectionId` is pinned to a positive integer so a malformed echo cannot
+ * reach a consumer keying UI state by id.
+ */
+export function isValidCollectionFollowResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (typeof r.collectionId !== 'number' || !Number.isInteger(r.collectionId)) return false;
+    if (r.collectionId <= 0) return false;
+    if (typeof r.followed !== 'boolean') return false;
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/** A positive integer id: what a reaction reply keys UI state by. */
+function isPositiveIntId(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v > 0;
+}
+
+/**
+ * One image's reaction state inside an `ENTITY_REACTION(S)_RESULT`: `counts` an
+ * object of finite numbers, `viewerReactions` an array of strings,
+ * `statsUnknown` a boolean.
+ *
+ * 🔴 The reaction NAMES are not membership-checked, in `counts` or in
+ * `viewerReactions`. The site stores five reactions and may add a sixth; a
+ * reply naming one this SDK does not know is still a true statement about the
+ * viewer, and dropping it would hang the request to its timeout instead.
+ */
+function isValidEntityReactionState(v: unknown): boolean {
+  if (!isObject(v)) return false;
+  if (!isObject(v.counts)) return false;
+  for (const n of Object.values(v.counts)) {
+    if (!isFiniteNumber(n)) return false;
+  }
+  if (!Array.isArray(v.viewerReactions)) return false;
+  for (const r of v.viewerReactions) {
+    if (typeof r !== 'string') return false;
+  }
+  if (typeof v.statsUnknown !== 'boolean') return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `SET_ENTITY_REACTION`. A well-formed reply carries
+ * EITHER a `result` OR an `error`; one with neither is malformed and dropped.
+ *
+ * `error` is SHAPE-CHECKED ONLY, although the host's set is closed
+ * (`ENTITY_REACTION_ERROR_CODES`): a code a newer host adds must still reach
+ * the block as a rejection. A membership check would drop it, and a dropped
+ * reply on a request-style message does not reject, it waits out the timeout.
+ * `useReactions` turns an unknown string into a `ReactionError` with no `code`.
+ *
+ * `result` is checked as far as a consumer reads it: `entityId` a positive
+ * integer (state is keyed by it), `reaction` a non-empty string, `reacted` and
+ * `changed` booleans, plus the state fields.
+ */
+export function isValidEntityReactionResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!isNonEmptyString(r.entityType)) return false;
+    if (!isPositiveIntId(r.entityId)) return false;
+    if (!isNonEmptyString(r.reaction)) return false;
+    if (typeof r.reacted !== 'boolean') return false;
+    if (typeof r.changed !== 'boolean') return false;
+    if (!isValidEntityReactionState(r)) return false;
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `GET_ENTITY_REACTIONS`. Same one-of and shape-only
+ * `error` contract as {@link isValidEntityReactionResult}.
+ *
+ * `result.byId` must be an object whose every key is a positive-integer id
+ * spelled as a string and whose every value is a valid state;
+ * `result.unavailable` an array of positive-integer ids.
+ */
+export function isValidEntityReactionsResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (!isNonEmptyString(r.entityType)) return false;
+    if (!isObject(r.byId)) return false;
+    for (const [key, state] of Object.entries(r.byId)) {
+      if (!/^[1-9][0-9]*$/.test(key)) return false;
+      if (!isValidEntityReactionState(state)) return false;
+    }
+    if (!Array.isArray(r.unavailable)) return false;
+    for (const id of r.unavailable) {
+      if (!isPositiveIntId(id)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to a block-initiated `CREATE_POST_FROM_APP`. A well-formed reply carries
+ * EITHER a `result` (`{ postId: positive int, url: non-empty string, imageIds:
+ * number[] }`) OR an `error`; one with neither is malformed and dropped.
+ *
+ * 🔴 `error` IS SHAPE-CHECKED ONLY, NOT MEMBERSHIP-CHECKED — the same decision
+ * as {@link isValidCollectionFollowResult} and the OPPOSITE of
+ * {@link isValidWildcardPackResult}, deliberately. The host's error channel is a
+ * union of its own closed refusal codes (`BlockCreatePostHostError`) AND any
+ * server message it forwards verbatim — a rate limit, a blocked title, a refused
+ * gallery attach, a write-trust refusal. Constraining it to the closed set would
+ * DROP every server failure at the top of the transport, before correlation, so
+ * the pending request would never reject: it would sit until its own timer
+ * fired, and for this consent-gated message that is TEN MINUTES. A legible "this
+ * app may not attach posts to its own publisher's models" would become a wedged
+ * button with no network call and no console error for the author to find.
+ *
+ * `postId` is pinned to a positive integer and `url` to a non-empty string: both
+ * are what a consumer navigates to or keys UI state by, and a malformed echo
+ * reaching that code is worse than a dropped reply — the write already happened,
+ * so a drop at least times out visibly.
+ */
+export function isValidCreatePostResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.result !== undefined) {
+    const r = p.result;
+    if (!isObject(r)) return false;
+    if (typeof r.postId !== 'number' || !Number.isInteger(r.postId)) return false;
+    if (r.postId <= 0) return false;
+    if (!isNonEmptyString(r.url)) return false;
+    if (!Array.isArray(r.imageIds)) return false;
+    for (const id of r.imageIds) {
+      if (!isFiniteNumber(id)) return false;
+    }
+  }
+  if (p.result === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to `RUN_TRAINING`. A well-formed reply carries EITHER a `snapshot` (a
+ * valid {@link isValidWorkflowSnapshot} — the block polls its `workflowId`) OR an
+ * `error`; one with neither is malformed and dropped.
+ *
+ * 🔴 `error` IS SHAPE-CHECKED ONLY, and here a membership check would cost the
+ * most: this request carries the TEN-MINUTE consent bound, and the host forwards
+ * server refusals (an expired quote, a changed body, an ineligible image) in this
+ * field. A dropped refusal would leave a Train button spinning for ten minutes.
+ */
+export function isValidTrainingResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.snapshot !== undefined && !isValidWorkflowSnapshot(p.snapshot)) return false;
+  if (p.snapshot === undefined && p.error === undefined) return false;
+  return true;
+}
+
+/**
+ * Reply to `RUN_CONFIRMED_STEP`. A well-formed reply carries EITHER a `snapshot`
+ * (a valid {@link isValidWorkflowSnapshot} — the block polls its `workflowId`)
+ * OR an `error`; one with neither is malformed and dropped.
+ *
+ * 🔴 `error` IS SHAPE-CHECKED ONLY, for the reason given on
+ * {@link isValidTrainingResult}: this request carries the same TEN-MINUTE
+ * consent bound, and the host forwards server refusals (an expired or used
+ * quote, a changed body or price, the feature flag) in the same field as its own
+ * codes. A membership check would drop those and leave a Run button spinning for
+ * ten minutes.
+ */
+export function isValidConfirmedStepResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.snapshot !== undefined && !isValidWorkflowSnapshot(p.snapshot)) return false;
+  if (p.snapshot === undefined && p.error === undefined) return false;
+  return true;
+}
+
+// ============================================================
+// Save-image reply validator
+// ============================================================
+
+/**
+ * Reply to `SAVE_IMAGE` (host download bridge). On success `ok` is a boolean;
+ * `error` is a free-text host-side failure (disallowed origin / withheld image
+ * / disallowed `bytes` type / over-size / fetch failure / `busy`). Uniform `{ ok, error }` contract (module
+ * header).
+ */
+export function isValidSaveImageResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `ok`
+  if (typeof p.ok !== 'boolean') return false;
+  return true;
+}
+
+// ============================================================
+// Picker + user-checkpoint reply validators
+// ============================================================
+
+/**
+ * The 5 base fields shared by `BlockCheckpointInfo` and `BlockResourceInfo`.
+ * `versionId` is the MONEY-ADJACENT id a block feeds into a workflow body — the
+ * one field that MUST be a real positive integer (defense-in-depth; the host
+ * also re-validates it server-side at estimate/submit). The rest of the
+ * projection is display-only, so each is checked ONLY WHEN PRESENT — a minimal
+ * reply carrying just a valid `versionId` is still safely consumable, and
+ * over-requiring would drop a legitimate id-only projection.
+ */
+function isValidPickerResourceBase(s: Record<string, unknown>): boolean {
+  if (typeof s.versionId !== 'number' || !Number.isInteger(s.versionId) || s.versionId <= 0) {
+    return false;
+  }
+  if (
+    s.modelId !== undefined &&
+    (typeof s.modelId !== 'number' || !Number.isInteger(s.modelId) || s.modelId <= 0)
+  ) {
+    return false;
+  }
+  if (s.modelName !== undefined && typeof s.modelName !== 'string') return false;
+  if (s.versionName !== undefined && typeof s.versionName !== 'string') return false;
+  if (s.baseModel !== undefined && typeof s.baseModel !== 'string') return false;
+  return true;
+}
+
+/**
+ * Reply to `OPEN_CHECKPOINT_PICKER`. `selected` is ABSENT when the user
+ * dismissed the picker (the hook resolves `{ selected: undefined }`); when
+ * present it is a `BlockCheckpointInfo` projection.
+ */
+export function isValidCheckpointPickerResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.selected !== undefined) {
+    if (!isObject(p.selected)) return false;
+    if (!isValidPickerResourceBase(p.selected)) return false;
+  }
+  return true;
+}
+
+/**
+ * One `BlockResourceInfo` projection — the 5 base fields plus `modelType` and
+ * the OPTIONAL public recommended-settings (`strength`/`minStrength`/
+ * `maxStrength` finite, `trainedWords` a string[], `clipSkip` a finite number
+ * OR `null`). Shared by the single-pick `selected` and every entry of the
+ * multi-select `selectedResources`, so the two cannot drift on what a
+ * well-formed resource is.
+ */
+function isValidPickerResource(s: unknown): boolean {
+  if (!isObject(s)) return false;
+  if (!isValidPickerResourceBase(s)) return false;
+  if (s.modelType !== undefined && typeof s.modelType !== 'string') return false;
+  if (s.strength !== undefined && !isFiniteNumber(s.strength)) return false;
+  if (s.minStrength !== undefined && !isFiniteNumber(s.minStrength)) return false;
+  if (s.maxStrength !== undefined && !isFiniteNumber(s.maxStrength)) return false;
+  if (s.trainedWords !== undefined) {
+    if (!Array.isArray(s.trainedWords)) return false;
+    if (!s.trainedWords.every((w): w is string => typeof w === 'string')) return false;
+  }
+  // `clipSkip` is `number | null` — accept a finite number OR null; reject
+  // other present types.
+  if (s.clipSkip !== undefined && s.clipSkip !== null && !isFiniteNumber(s.clipSkip)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Reply to `OPEN_RESOURCE_PICKER`.
+ *
+ * Single pick: `selected` is ABSENT on dismiss (the hook resolves `null`); when
+ * present it is a `BlockResourceInfo` projection.
+ *
+ * Multi-select: `selectedResources` is an array of the same projection (`[]` on
+ * dismiss). ONE malformed entry drops the whole reply — each `versionId` is
+ * money-adjacent, and handing the caller the well-formed remainder would
+ * silently change which resources a generation runs with.
+ *
+ * `error` (a refusal) is not validated here: the hook reads it by PRESENCE, and
+ * a reply carrying only `{ requestId, error }` must reach it.
+ */
+export function isValidResourcePickerResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.selected !== undefined && !isValidPickerResource(p.selected)) return false;
+  if (p.selectedResources !== undefined) {
+    if (!Array.isArray(p.selectedResources)) return false;
+    if (!p.selectedResources.every(isValidPickerResource)) return false;
+  }
+  return true;
+}
+
+const IMAGE_PICKER_SOURCES = new Set<string>(['posted', 'generated']);
+
+/**
+ * One `BlockPickedImageInfo`: `source` one of the two libraries, a non-empty
+ * `url`, finite positive `width`/`height`, a finite `nsfwLevel`, and an
+ * `imageId` that is either ABSENT (a generated output has none) or a positive
+ * integer. Shared by the single-pick `selected` and every entry of the
+ * multi-pick `selectedImages`, so the two cannot drift on what a well-formed
+ * image is.
+ */
+function isValidPickedImage(s: unknown): boolean {
+  if (!isObject(s)) return false;
+  if (typeof s.source !== 'string' || !IMAGE_PICKER_SOURCES.has(s.source)) return false;
+  if (!isNonEmptyString(s.url)) return false;
+  if (!isFiniteNumber(s.width) || s.width <= 0) return false;
+  if (!isFiniteNumber(s.height) || s.height <= 0) return false;
+  if (!isFiniteNumber(s.nsfwLevel)) return false;
+  if (s.imageId !== undefined) {
+    if (typeof s.imageId !== 'number' || !Number.isInteger(s.imageId) || s.imageId <= 0) return false;
+  }
+  return true;
+}
+
+/**
+ * Reply to `OPEN_IMAGE_PICKER`.
+ *
+ * Single pick: `selected` is ABSENT on dismiss (the hook resolves `null`); when
+ * present it is a `BlockPickedImageInfo`.
+ *
+ * Multi pick: `selectedImages` is an array of the same shape (`[]` on dismiss).
+ * ONE malformed entry drops the whole reply: handing the caller the
+ * well-formed remainder would silently change which images it goes on to use.
+ *
+ * `error` (a refusal) must be a string when present, and a reply carrying one
+ * is accepted without looking further: `useImagePicker` throws on a PRESENT
+ * `error` before it reads `selected` / `selectedImages`. 🔴 Accepting it is
+ * load-bearing: dropping `{ requestId, error }` would leave the hook waiting
+ * out its whole human-interaction timeout on a refusal the host already sent.
+ */
+export function isValidImagePickerResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading a pick
+  if (p.selected !== undefined && !isValidPickedImage(p.selected)) return false;
+  if (p.selectedImages !== undefined) {
+    if (!Array.isArray(p.selectedImages)) return false;
+    if (!p.selectedImages.every(isValidPickedImage)) return false;
+  }
+  return true;
+}
+
+const MEDIA_UPLOAD_KINDS = new Set<string>(['image', 'video', 'audio']);
+
+const isPositiveInteger = (v: unknown): boolean =>
+  typeof v === 'number' && Number.isInteger(v) && v > 0;
+
+/**
+ * One `BlockMediaUploadInfo`: a non-empty `url`, a known `kind`, a string
+ * `mimeType`, a whole `sizeBytes` ≥ 0, and dimensions by kind. `width` and
+ * `height` are positive whole numbers when present, REQUIRED for `image` and
+ * `video` (the host always measures them) and ABSENT for `audio`. `durationMs`
+ * is a finite number ≥ 0 when present.
+ */
+function isValidMediaUploadInfo(s: unknown): boolean {
+  if (!isObject(s)) return false;
+  if (!isNonEmptyString(s.url)) return false;
+  if (typeof s.kind !== 'string' || !MEDIA_UPLOAD_KINDS.has(s.kind)) return false;
+  if (typeof s.mimeType !== 'string') return false;
+  if (!isFiniteNumber(s.sizeBytes) || !Number.isInteger(s.sizeBytes) || s.sizeBytes < 0) return false;
+  if (s.kind === 'audio') {
+    if (s.width !== undefined || s.height !== undefined) return false;
+  } else if (!isPositiveInteger(s.width) || !isPositiveInteger(s.height)) {
+    return false;
+  }
+  if (s.durationMs !== undefined && (!isFiniteNumber(s.durationMs) || s.durationMs < 0)) return false;
+  return true;
+}
+
+/**
+ * Reply to `OPEN_MEDIA_UPLOAD`: `{ requestId, selected }`, `{ requestId, error }`
+ * or a bare `{ requestId }` (dismissed / declined).
+ *
+ * `error` must be a string when present, and a reply carrying one is accepted
+ * without looking further: `useMediaUpload` throws on a PRESENT `error` before
+ * it reads `selected`. 🔴 Accepting it is load-bearing: dropping
+ * `{ requestId, error }` would leave the hook waiting out its whole
+ * human-interaction timeout on a refusal the host already sent.
+ */
+export function isValidMediaUploadResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `selected`
+  if (p.selected !== undefined && !isValidMediaUploadInfo(p.selected)) return false;
+  return true;
+}
+
+/**
+ * One entry of `MEDIA_UPLOAD_BATCH_RESULT.results`: a whole `index` ≥ 0 and
+ * EXACTLY ONE of a valid `selected` (the single upload's
+ * {@link isValidMediaUploadInfo}) or a string `error`.
+ */
+function isValidMediaUploadBatchItemResult(e: unknown): boolean {
+  if (!isObject(e)) return false;
+  if (typeof e.index !== 'number' || !Number.isInteger(e.index) || e.index < 0) return false;
+  const hasSelected = e.selected !== undefined;
+  const hasError = e.error !== undefined;
+  if (hasSelected === hasError) return false;
+  if (hasError) return typeof e.error === 'string';
+  return isValidMediaUploadInfo(e.selected);
+}
+
+/**
+ * Reply to `OPEN_MEDIA_UPLOAD_BATCH`: `{ requestId, error }` (the whole batch
+ * refused), a bare `{ requestId }` (declined), or
+ * `{ requestId, results, expiresAt? }` (the batch ran) whose `results` is an
+ * array and whose `expiresAt` is a string when present.
+ *
+ * As for the single upload, a reply with a string `error` is accepted without
+ * looking further: `uploadBatch` throws on a PRESENT `error` before it reads
+ * `results`, and dropping the refusal would leave it waiting out its whole
+ * timeout. Whether `results` lines up with the items sent (one per item, in
+ * order) is checked by the hook, which knows the items.
+ *
+ * 🔴 THE ENTRIES ARE NOT CHECKED HERE, ON PURPOSE. The host answers once,
+ * after every file has uploaded; dropping the whole reply for one malformed
+ * entry left `uploadBatch` waiting out its timeout and the app learned none of
+ * the URLs. A malformed entry is instead answered as that item's error by
+ * {@link projectInboundPayload} ({@link projectMediaUploadBatchResults}), so
+ * no entry this predicate let through reaches block code unchecked.
+ */
+export function isValidMediaUploadBatchResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `results`
+  if (p.expiresAt !== undefined && typeof p.expiresAt !== 'string') return false;
+  if (p.results === undefined) return true;
+  return Array.isArray(p.results);
+}
+
+/**
+ * The per-item error a malformed `MEDIA_UPLOAD_BATCH_RESULT` entry is
+ * answered with: the same generic string `useMediaUpload` falls back to for a
+ * refusal that carries no message.
+ */
+export const MEDIA_UPLOAD_BATCH_MALFORMED_ENTRY_ERROR = 'media upload failed';
+
+/**
+ * `MEDIA_UPLOAD_BATCH_RESULT.results` with every malformed entry (one that
+ * fails {@link isValidMediaUploadBatchItemResult}) replaced by
+ * `{ index: <its position>, error }`, so it is that item's failure rather than
+ * the whole reply's. Nothing of a malformed entry crosses, so a `url` is never
+ * paired with an item through an entry that did not check out. A WELL-FORMED
+ * entry is passed through as sent, its `index` included: results that do not
+ * line up with the items (the wrong count, or an `index` that is not its
+ * position) still reject in the hook with `MEDIA_UPLOAD_BATCH_MISMATCH_ERROR`,
+ * since then no pairing can be trusted. Identity when every entry is well
+ * formed, and for a reply with an `error` (the hook throws before reading
+ * `results`) or no array of `results` (the validator decides those).
+ */
+function projectMediaUploadBatchResults(payload: unknown): unknown {
+  if (!isObject(payload) || payload.error !== undefined) return payload;
+  const sent: unknown = payload.results;
+  if (!Array.isArray(sent)) return payload;
+  let changed = false;
+  const results = sent.map((entry: unknown, position: number) => {
+    if (isValidMediaUploadBatchItemResult(entry)) return entry;
+    changed = true;
+    return { index: position, error: MEDIA_UPLOAD_BATCH_MALFORMED_ENTRY_ERROR };
+  });
+  return changed ? { ...payload, results } : payload;
+}
+
+/**
+ * Reply to `PERSIST_GENERATION_SOURCE`: `{ requestId, result }` or
+ * `{ requestId, error }`.
+ *
+ * 🔴 ONLY THE CORRELATION IS CHECKED HERE, ON PURPOSE. A reply this predicate
+ * rejects is DROPPED, and a dropped reply leaves `persist()` waiting out its
+ * whole timeout over a reply the host already sent. So any object whose
+ * `requestId` has the wire shape (`isWireRequestIdShape`) is let through, and
+ * {@link projectInboundPayload} ({@link projectGenerationSourcePersisted})
+ * answers a malformed one as an `error` — the same precedent as a malformed
+ * `MEDIA_UPLOAD_BATCH_RESULT` entry. No reply this lets through reaches block
+ * code with an unchecked `result`.
+ */
+export function isValidGenerationSourcePersistedResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  return isWireRequestIdShape(p.requestId);
+}
+
+/**
+ * The error a malformed `GENERATION_SOURCE_PERSISTED` reply is answered with:
+ * one whose `error` is not a string, or that carries no `error` and no
+ * well-formed `result`.
+ */
+export const GENERATION_SOURCE_PERSISTED_MALFORMED_ERROR =
+  'the host sent a malformed reply to PERSIST_GENERATION_SOURCE';
+
+/**
+ * A well-formed `GENERATION_SOURCE_PERSISTED.result`: a non-empty `url`,
+ * positive whole `width` / `height` / `imageId`, and a boolean `ready`.
+ */
+function isValidPersistedGenerationSource(r: unknown): boolean {
+  if (!isObject(r)) return false;
+  if (!isNonEmptyString(r.url)) return false;
+  if (!isPositiveInteger(r.width) || !isPositiveInteger(r.height)) return false;
+  if (!isPositiveInteger(r.imageId)) return false;
+  return typeof r.ready === 'boolean';
+}
+
+/**
+ * A `GENERATION_SOURCE_PERSISTED` payload with a malformed reply replaced by
+ * `{ requestId, error }` ({@link GENERATION_SOURCE_PERSISTED_MALFORMED_ERROR}),
+ * so `persist()` rejects instead of resolving with fields nobody checked or
+ * hanging to its timeout. Identity for a reply with a string `error` (the hook
+ * throws on it before reading `result`) and for one with a well-formed
+ * `result`. Nothing of a malformed `result` crosses.
+ */
+function projectGenerationSourcePersisted(payload: unknown): unknown {
+  if (!isObject(payload)) return payload;
+  if (typeof payload.error === 'string') return payload;
+  if (payload.error === undefined && isValidPersistedGenerationSource(payload.result)) return payload;
+  return { requestId: payload.requestId, error: GENERATION_SOURCE_PERSISTED_MALFORMED_ERROR };
+}
+
+/**
+ * Reply to `SHARE_LINK`: `{ requestId, result }` or `{ requestId, error }`.
+ *
+ * 🔴 ONLY THE CORRELATION IS CHECKED HERE, for the same reason as
+ * {@link isValidGenerationSourcePersistedResult}: a dropped reply leaves `share()`
+ * waiting out the human bound (10 min) over a reply the host already sent.
+ * {@link projectInboundPayload} ({@link projectShareLinkResult}) answers a
+ * malformed one as an `error`.
+ */
+export function isValidShareLinkResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  return isWireRequestIdShape(p.requestId);
+}
+
+/** The error a malformed `SHARE_LINK_RESULT` reply is answered with. */
+export const SHARE_LINK_MALFORMED_ERROR = 'the host sent a malformed reply to SHARE_LINK';
+
+/**
+ * A well-formed `SHARE_LINK_RESULT.result`: an `http(s)` `url` and EXACTLY one of the three
+ * `{ copied, method }` pairs the page host emits (civitai/civitai `deepLinkLogic.ts`
+ * `performShareLink`): `true`/`'clipboard'` (the write resolved), `false`/`'share'` and
+ * `false`/`'none'`. Any other pair — a copy claimed through the share sheet, a clipboard
+ * method that did not copy, an unknown method — is not believed.
+ */
+function isValidShareLinkResultBody(r: unknown): boolean {
+  if (!isObject(r)) return false;
+  if (!isNonEmptyString(r.url) || !/^https?:\/\//.test(r.url)) return false;
+  if (r.copied === true) return r.method === 'clipboard';
+  if (r.copied === false) return r.method === 'share' || r.method === 'none';
+  return false;
+}
+
+/**
+ * A `SHARE_LINK_RESULT` payload with a malformed reply replaced by
+ * `{ requestId, error }` ({@link SHARE_LINK_MALFORMED_ERROR}), so `share()` rejects
+ * instead of resolving with unchecked fields or hanging. Identity for a string
+ * `error` and for a well-formed `result`.
+ */
+function projectShareLinkResult(payload: unknown): unknown {
+  if (!isObject(payload)) return payload;
+  if (typeof payload.error === 'string') return payload;
+  if (payload.error === undefined && isValidShareLinkResultBody(payload.result)) return payload;
+  return { requestId: payload.requestId, error: SHARE_LINK_MALFORMED_ERROR };
+}
+
+/**
+ * Reply to `SET_USER_CHECKPOINT`. `ok` is required on the success path; the
+ * hook throws on `!ok || error !== undefined` — presence, not truthiness, so an
+ * `error: ''` cannot read as success. Uniform `{ ok, error }` contract
+ * (module header) — mirrors `isValidSharedUpdateResult`.
+ */
+export function isValidUserCheckpointSetResult(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if (!isWireRequestIdShape(p.requestId)) return false;
+  if (p.error !== undefined && typeof p.error !== 'string') return false;
+  if (p.error !== undefined) return true; // hook throws before reading `ok`
+  if (typeof p.ok !== 'boolean') return false;
+  return true;
+}
+
+/**
+ * Narrow an already-VALIDATED inbound payload to the fields a consumer is
+ * allowed to see, immediately before `iframeTransport` hands it to a pending
+ * request or a push listener.
+ *
+ * Validation answers "may this message be delivered at all"; projection answers
+ * "which of its fields may cross". They are deliberately separate steps: a
+ * predicate can only ever say yes/no about the WHOLE reply, so expressing an
+ * allowlist as a predicate makes one unexpected key fatal to every entry in the
+ * batch. See {@link projectGatedImage} for the concrete case and the hang it
+ * avoids.
+ *
+ * 🔴 SCOPE, STATED HONESTLY: five groups are projected today. `IMAGES_RESULT`
+ * (the hidden-entry allowlist), `MEDIA_UPLOAD_BATCH_RESULT` (a malformed
+ * entry becomes that item's error, {@link projectMediaUploadBatchResults}),
+ * `GENERATION_SOURCE_PERSISTED` and `SHARE_LINK_RESULT` (a malformed reply
+ * becomes an error, {@link projectGenerationSourcePersisted},
+ * {@link projectShareLinkResult}), and every reply carrying a
+ * workflow snapshot — the six in {@link SNAPSHOT_REPLY_TYPES} plus each cell of
+ * `ESTIMATE_BATCH_RESULT` — whose malformed queue/ETA fields are removed
+ * ({@link projectWorkflowSnapshot}).
+ * Every other type is returned by identity — this is not a general sanitizer and
+ * must not be read as one. Add a case here (and say so in the type's validator
+ * docblock) if another message ever needs one.
+ */
+export function projectInboundPayload(type: string, payload: unknown): unknown {
+  if (type === 'MEDIA_UPLOAD_BATCH_RESULT') return projectMediaUploadBatchResults(payload);
+  if (type === 'GENERATION_SOURCE_PERSISTED') return projectGenerationSourcePersisted(payload);
+  if (type === 'SHARE_LINK_RESULT') return projectShareLinkResult(payload);
+  if (SNAPSHOT_REPLY_TYPES.has(type)) return projectSnapshotReply(payload);
+  if (type === 'OUTPUT_UNLOCK_RESULT') return projectOutputUnlockReply(payload);
+  if (type === 'ESTIMATE_BATCH_RESULT') return projectEstimateBatchReply(payload);
+  if (type === 'APP_WORKFLOWS_RESULT' || type === 'CANCEL_APP_WORKFLOW_RESULT') {
+    return projectAppWorkflowsReply(type, payload);
+  }
+  if (type !== 'IMAGES_RESULT') return payload;
+  if (!isObject(payload)) return payload;
+  const result = payload.result;
+  if (!isObject(result) || !Array.isArray(result.images)) return payload;
+  let changed = false;
+  const images = result.images.map((img) => {
+    const projected = projectGatedImage(img);
+    if (projected !== img) changed = true;
+    return projected;
+  });
+  // Identity when nothing was dropped, so the overwhelmingly common path neither
+  // allocates nor perturbs object identity for anything downstream.
+  if (!changed) return payload;
+  return { ...payload, result: { ...result, images } };
+}
+
+/**
+ * Returns the validator for an inbound message type, or `null` for types
+ * that don't carry a payload requiring shape checks (SUSPEND/RESUME).
+ *
+ * Falsy result from the validator means "drop the message"; `iframeTransport`
+ * pairs that with a `console.warn` carrying the type name.
+ *
+ * 🔴 EXHAUSTIVE OVER `ParentToBlockMessage` AT COMPILE TIME. The `default:` arm
+ * binds the switch subject to `never`, so a union member with no `case` above
+ * fails `tsc` with `Type '"NEW_TYPE"' is not assignable to type 'never'`. Adding
+ * a message type to the protocol and forgetting its validator is therefore a
+ * BUILD error, not a silent unvalidated path.
+ *
+ * ⚠️ The gate proves the type is MAPPED, not that it is mapped to the RIGHT
+ * validator, and not that it is mapped to a validator at all rather than to
+ * `null` — `case 'NEW_TYPE': return null;` satisfies it. `validate.test.ts`
+ * covers that residual by asserting a validator (not `null`) for every
+ * payload-carrying type, plus identity for the highest-stakes few.
+ */
+export function payloadValidatorFor(
+  type: string,
+): ((payload: unknown) => boolean) | null {
+  // Widened to `string` on the parameter so a JavaScript caller — and a block
+  // running under a NEWER host than it was built against — reaches the
+  // `default:` arm rather than bypassing the lookup. Narrowed here so the switch
+  // has a union subject for the exhaustiveness check to bind.
+  const messageType = type as ParentToBlockMessageType;
+  switch (messageType) {
+    case 'BLOCK_INIT':
+      return isValidBlockInitPayload;
+    case 'TOKEN_REFRESH':
+      return isValidTokenRefresh;
+    case 'TOKEN_REFRESH_RESPONSE':
+      return isValidTokenRefreshResponse;
+    case 'THEME_CHANGE':
+      return isValidThemeChange;
+    case 'ROUTE_CHANGED':
+      return isValidRouteChanged;
+    case 'CONSENT_UNAVAILABLE':
+      return isValidConsentUnavailable;
+    case 'ESTIMATE_RESULT':
+    case 'WORKFLOW_SUBMITTED':
+    case 'WORKFLOW_STATUS':
+    case 'WORKFLOW_CANCELED':
+      return isValidWorkflowReply;
+    case 'ESTIMATE_BATCH_RESULT':
+      return isValidEstimateBatchResult;
+    case 'BUZZ_PURCHASE_RESULT':
+      return isValidBuzzPurchaseResult;
+    case 'OUTPUT_UNLOCK_RESULT':
+      return isValidOutputUnlockResult;
+    case 'BUZZ_BALANCE_RESULT':
+      return isValidBuzzBalanceResult;
+    case 'VIEWER_RESULT':
+      return isValidViewerResult;
+    case 'BUZZ_TRANSACTIONS_RESULT':
+      return isValidBuzzTransactionsResult;
+    case 'BUZZ_ACCOUNTS_RESULT':
+      return isValidBuzzAccountsResult;
+    case 'DAILY_COMPENSATION_RESULT':
+      return isValidDailyCompensationResult;
+    case 'WILDCARD_PACK_RESULT':
+      return isValidWildcardPackResult;
+    case 'RESOURCE_FILE_RESULT':
+      return isValidResourceFileResult;
+    case 'APP_WORKFLOWS_RESULT':
+      return isValidAppWorkflowsResult;
+    case 'CANCEL_APP_WORKFLOW_RESULT':
+      return isValidCancelAppWorkflowResult;
+    case 'PUBLISH_RESULT':
+      return isValidPublishResult;
+    case 'GENERATION_SOURCE_PERSISTED':
+      return isValidGenerationSourcePersistedResult;
+    case 'SHARE_LINK_RESULT':
+      return isValidShareLinkResult;
+    case 'IMAGES_RESULT':
+      return isValidImagesResult;
+    case 'COLLECTION_FOLLOW_RESULT':
+      return isValidCollectionFollowResult;
+    case 'ENTITY_REACTION_RESULT':
+      return isValidEntityReactionResult;
+    case 'ENTITY_REACTIONS_RESULT':
+      return isValidEntityReactionsResult;
+    // 🔴 PRESENCE of this entry IS compiler-enforced (the `never` bind in
+    // `default:`); WHICH validator it names is not. This reply settles a PUBLIC
+    // POST, so the identity is pinned by test as well — see the mapping pin in
+    // `validate.test.ts`.
+    case 'CREATE_POST_RESULT':
+      return isValidCreatePostResult;
+    // Same caveat as CREATE_POST_RESULT: presence is compiler-enforced, the
+    // identity is pinned by test (`validate.test.ts`). TRAINING_RESULT settles a
+    // charged run.
+    case 'TRAINING_RESULT':
+      return isValidTrainingResult;
+    // Settles a charged job, like TRAINING_RESULT directly above.
+    case 'CONFIRMED_STEP_RESULT':
+      return isValidConfirmedStepResult;
+    case 'IMAGE_UPLOAD_RESULT':
+      return isValidImageUploadResult;
+    case 'IMAGE_SCAN_RESOLVED':
+      return isValidImageScanResolved;
+    case 'SAVE_IMAGE_RESULT':
+      return isValidSaveImageResult;
+    case 'CHECKPOINT_PICKER_RESULT':
+      return isValidCheckpointPickerResult;
+    case 'RESOURCE_PICKER_RESULT':
+      return isValidResourcePickerResult;
+    case 'IMAGE_PICKER_RESULT':
+      return isValidImagePickerResult;
+    case 'MEDIA_UPLOAD_RESULT':
+      return isValidMediaUploadResult;
+    case 'MEDIA_UPLOAD_BATCH_RESULT':
+      return isValidMediaUploadBatchResult;
+    case 'USER_CHECKPOINT_SET':
+      return isValidUserCheckpointSetResult;
+    case 'SUSPEND':
+    case 'RESUME':
+      return null;
+    default: {
+      // ── COMPILE-TIME TOTALITY GATE ─────────────────────────────────────────
+      // Every `ParentToBlockMessage` member is handled above, so the subject
+      // narrows to `never` here. Add a member to the union without a `case` and
+      // this assignment fails:
+      //   Type '"NEW_TYPE"' is not assignable to type 'never'.
+      // Do NOT "fix" that by widening this binding — the error IS the gate.
+      const exhaustive: never = messageType;
+      void exhaustive;
+
+      // ── RUNTIME: a type the union does not declare ─────────────────────────
+      // 🔴 THIS ARM IS A STRUCTURAL PASS, AND THAT IS A DELIBERATE CHOICE
+      // RATHER THAN AN OVERSIGHT — an earlier comment here justified it with
+      // "handleMessage's earlier `isMessage` branches won't match them anyway",
+      // which is true but is only a third of the reason and reads as if the
+      // other paths had been checked. They have been, so state it: a type
+      // outside the union cannot reach `pending.resolve` (`sendRequest`'s
+      // `responseType` is keyed to the union), cannot reach a push listener
+      // (`onMessage`'s `type` is too), and matches none of the three `isMessage`
+      // branches. It is a no-op in `handleMessage` either way, so returning a
+      // rejecting validator would protect nothing and would cost real
+      // forward-compatibility: a host that has shipped a new message type ahead
+      // of this package would make every older block in the fleet emit a
+      // `console.warn` reading "dropping malformed …" (it is not malformed, it
+      // is unrecognised) plus an unbudgeted `BLOCK_MESSAGE_REJECTED` beacon
+      // labelled `other` on every delivery.
+      //
+      // The residual hole this leaves is narrow and worth naming: an UNTYPED
+      // JavaScript consumer that registers `onMessage('SOME_FUTURE_TYPE', …)`
+      // receives that payload unvalidated. Nothing in this package can validate
+      // a type it does not know; such a consumer must validate for itself.
+      return null;
+    }
+  }
+}

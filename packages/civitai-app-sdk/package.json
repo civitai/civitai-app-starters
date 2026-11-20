@@ -1,11 +1,15 @@
 {
   "name": "@civitai/app-sdk",
-  "version": "0.8.0",
+  "version": "0.91.0",
   "description": "OAuth + PKCE, encrypted-cookie sessions, scopes, and orchestrator helpers for building third-party Civitai apps.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "sideEffects": [
+    "./dist/safe-storage/index.js",
+    "./dist/blocks/index.js"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -27,31 +31,116 @@
       "types": "./dist/orchestrator/index.d.ts",
       "import": "./dist/orchestrator/index.js"
     },
+    "./orchestrator/steps": {
+      "types": "./dist/orchestrator/steps.d.ts",
+      "import": "./dist/orchestrator/steps.js"
+    },
     "./blocks": {
       "types": "./dist/blocks/index.d.ts",
       "import": "./dist/blocks/index.js"
     },
+    "./safe-storage": {
+      "types": "./dist/safe-storage/index.d.ts",
+      "import": "./dist/safe-storage/index.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest/index.d.ts",
+      "import": "./dist/manifest/index.js"
+    },
+    "./vite": {
+      "types": "./dist/vite/index.d.ts",
+      "import": "./dist/vite/index.js"
+    },
+    "./save-zip": {
+      "types": "./dist/save-zip/index.d.ts",
+      "import": "./dist/save-zip/index.js"
+    },
     "./schemas/app-block/v1.json": "./schemas/app-block/v1.json"
   },
+  "comment-packaging": "`!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs.",
   "files": [
     "dist",
+    "!dist/**/*.map",
     "schemas",
     "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test:types": "tsc -p tsconfig.typecheck.json",
+    "test:exports": "node scripts/check-exports.mjs",
+    "test": "vitest run && tsc -p tsconfig.typecheck.json",
     "test:watch": "vitest"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {},
+  "comment-peerDependencies": [
+    "@civitai/client is consumed for TYPES ONLY, by `./orchestrator/steps`.",
+    "It is an OPTIONAL peer, never a dependency: `dependencies` is empty on",
+    "purpose (this package ships into sandboxed browser iframes and every app",
+    "inherits its install graph), and @civitai/client has no types-only entry",
+    "point -- it ships .d.ts beside .js in one package with a real runtime",
+    "(@hey-api/client-fetch, rfc6902, tslib). Optional-peer keeps that graph",
+    "out of every app that does not ask for the step types, and keeps the",
+    "version the APP's choice.",
+    "",
+    "🔴 THE PIN IS NOT `latest` AND MUST NOT BECOME IT. @civitai/client's npm",
+    "`latest` dist-tag is 0.1.1-beta.0; the version the orchestrator is",
+    "actually generated against ships under the `beta` tag (0.2.0-beta.98 as of",
+    "this writing -- cross-checked against what civitai/civitai resolves).",
+    "`pnpm add @civitai/client` therefore installs something ~97 betas behind",
+    "and MISSING MOST STEP TYPES, with no error. The range below deliberately",
+    "excludes 0.1.x: verify with",
+    "`semver.satisfies('0.1.1-beta.0', '^0.2.0-beta.98')` === false.",
+    "Install with the tag: `pnpm add -D @civitai/client@beta`."
+  ],
+  "comment-peerDependencies-ajv-vite": [
+    "ajv and vite are OPTIONAL peers of the NODE-ONLY subpaths added when #330",
+    "was closed: `./manifest` (defineBlock) and `./vite` (blockManifestPlugin).",
+    "",
+    "`dependencies` stays EMPTY for the same reason it always has: this package",
+    "ships into sandboxed browser iframes and every app inherits its install",
+    "graph. A build-time JSON-Schema engine has no business in that graph, so",
+    "ajv is a peer a scaffold opts into: `pnpm add -D ajv`.",
+    "",
+    "ajv: a VALUE import (`ajv/dist/2020.js`, the draft 2020-12 entry — the",
+    "canonical schema declares $schema draft/2020-12, so the default `ajv`",
+    "entry point would refuse to compile it). FLOOR ^8.17.1: `ajv/dist/2020`",
+    "has existed since 8.6.0, but 8.17.x is what this repo builds and tests",
+    "against, and 8.x is a single major so the caret admits every later 8.",
+    "",
+    "vite: TYPES ONLY (`import type { Plugin }`). Nothing is value-imported, so",
+    "there is no module-evaluation failure mode -- only a typecheck one. The",
+    "range spans 5-8 because `Plugin.configResolved(config)` (the one member",
+    "`./vite` reads) has been stable across all of them; this repo builds and",
+    "tests against vite 8, which is what every scaffold pins."
+  ],
+  "peerDependencies": {
+    "@civitai/client": "^0.2.0-beta.98",
+    "ajv": "^8.17.1",
+    "vite": "^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@civitai/client": {
+      "optional": true
+    },
+    "ajv": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@civitai/client": "0.2.0-beta.98",
     "@types/node": "^25.9.1",
+    "ajv": "^8.17.1",
+    "jszip": "^3.10.1",
     "typescript": "^5.9.2",
-    "vitest": "^4.1.7"
+    "vite": "^8.0.14",
+    "vitest": "^4.1.11"
   },
   "publishConfig": {
     "access": "public"

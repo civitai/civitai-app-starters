@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@civitai/components — copy-paste demo</title>
+
+    <!--
+      SERVABLE, COPY-PASTE demo. Zero build step, zero framework: this page
+      loads the design-system stylesheets straight from a CDN and uses only
+      hand-written HTML following @civitai/components/MARKUP.md. Open it directly
+      in a browser, or copy it as the starting point for a no-framework block.
+
+      THE THIRD LINK IS NOT OPTIONAL IF YOU COLOUR TEXT. `utilities.css` is a
+      SEPARATE sheet — it is not bundled into `styles.css`, and `injectStyles()`
+      does not inject it — so the `ci-*` classes (`ci-muted`, `ci-text-error`,
+      `ci-text-center`, `ci-truncate`) only exist once it is loaded. Text
+      deliberately has no `data-color`/`data-align`/`data-truncate` of its own,
+      which makes that sheet load-bearing rather than a nicety; this page uses
+      `ci-muted` and `ci-text-error` below and would render them as plain body
+      copy without it.
+
+      The <link>s below are UNVERSIONED on purpose: they track each
+      package's `latest` dist-tag, so this page always demos the current design
+      system and can never drift from MARKUP.md. It drifted twice while pinned —
+      jsDelivr serves every published version forever, so a stale pin returns
+      200 with an OLD stylesheet and newly documented attributes render as
+      unstyled bare elements, with no console error and no failed request.
+
+      If you pin in your own copy: these packages version INDEPENDENTLY, so
+      never copy one version across both — a version a package never published
+      is a hard 404, and a 404'd stylesheet renders an unstyled page with no
+      error either. Read each version from that package's npm page. The two
+      @civitai/components sheets DO share its version, being one package.
+
+      The literal `/styles.css` and `/utilities.css` paths work on every CDN
+      because the packages ship real root files at both — jsDelivr ignores
+      package.json `exports`.
+    -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme/styles.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components/styles.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components/utilities.css" />
+
+    <style>
+      /* Page theming comes straight from the design-system tokens. */
+      body {
+        margin: 0;
+        padding: 32px;
+        font-family: var(--civitai-font);
+        background: var(--civitai-color-body);
+        color: var(--civitai-color-text);
+      }
+      .wrap { max-width: 640px; margin: 0 auto; }
+      header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+      h1 { font-size: 18px; margin: 0; }
+      h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--civitai-color-text-dimmed); margin: 28px 0 10px; }
+      .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>@civitai/components</h1>
+        <!-- Light/dark toggle: flips data-theme on <html>; every token re-resolves. -->
+        <button data-civitai-ui="button" data-variant="outline" data-size="sm" type="button" id="theme-toggle">
+          Toggle theme
+        </button>
+      </header>
+
+      <h2>Text</h2>
+      <!--
+        The only component that prescribes no element of its own: the tag is the
+        author's choice and carries the meaning, `data-civitai-ui="text"` carries
+        the style. The heading below is a real <h3>, so it lands in this page's
+        outline; its size says nothing about its level.
+
+        Colour comes from `utilities.css` (`ci-muted`, `ci-text-error`), not from
+        a `data-color` on this component — `color` inherits, so a utility class
+        reaches the styled element either way, and duplicating the predicate here
+        would be published API that could not be withdrawn.
+      -->
+      <h3 data-civitai-ui="text" data-size="4xl" data-weight="bold">Generate an image</h3>
+      <p data-civitai-ui="text">Pick a model, then press Generate.</p>
+      <p data-civitai-ui="text" data-size="sm" class="ci-muted">
+        Secondary copy, at <span data-civitai-ui="text" data-size="sm" data-weight="semibold">data-size="sm"</span>.
+      </p>
+      <p data-civitai-ui="text" data-size="xs" class="ci-text-error">Something went wrong.</p>
+      <!--
+        The full ramp, one scale: 12/13/14/16/20/24/28/32/40px. Everything from
+        `lg` up is a value `utilities.css` already ships as `ci-fs-N`, in the
+        opposite direction — `lg`=ci-fs-6 … `5xl`=ci-fs-1.
+      -->
+      <p data-civitai-ui="text" data-size="5xl" data-weight="bold">5xl</p>
+      <p data-civitai-ui="text" data-size="3xl" data-weight="semibold">3xl</p>
+      <p data-civitai-ui="text" data-size="2xl">2xl</p>
+
+      <h2>Button</h2>
+      <div class="row">
+        <button data-civitai-ui="button" data-variant="filled" data-size="md" type="button">Filled</button>
+        <button data-civitai-ui="button" data-variant="light" data-size="md" type="button">Light</button>
+        <button data-civitai-ui="button" data-variant="outline" data-size="md" type="button">Outline</button>
+        <button data-civitai-ui="button" data-variant="subtle" data-size="md" type="button">Subtle</button>
+        <button data-civitai-ui="button" data-variant="filled" data-size="md" type="button" aria-busy="true" disabled>
+          <span data-civitai-ui="loader" data-size="sm" aria-hidden="true"></span>Loading
+        </button>
+      </div>
+
+      <h2>Badge</h2>
+      <div class="row">
+        <span data-civitai-ui="badge" data-variant="filled" data-size="md">filled</span>
+        <span data-civitai-ui="badge" data-variant="light" data-size="md">light</span>
+        <span data-civitai-ui="badge" data-variant="outline" data-size="md">outline</span>
+      </div>
+      <div class="row">
+        <span data-civitai-ui="badge" data-variant="filled" data-color="info" data-size="md">info</span>
+        <span data-civitai-ui="badge" data-variant="filled" data-color="success" data-size="md">success</span>
+        <span data-civitai-ui="badge" data-variant="filled" data-color="warning" data-size="md">warning</span>
+        <span data-civitai-ui="badge" data-variant="filled" data-color="error" data-size="md">error</span>
+        <span data-civitai-ui="badge" data-variant="light" data-color="success" data-size="md">ready</span>
+        <span data-civitai-ui="badge" data-variant="outline" data-color="error" data-size="md">failed</span>
+      </div>
+
+      <h2>Loader</h2>
+      <div class="row" role="status" aria-label="Loading">
+        <span data-civitai-ui="loader" data-size="sm"></span>
+        <span data-civitai-ui="loader" data-size="md"></span>
+        <span data-civitai-ui="loader" data-size="lg"></span>
+      </div>
+
+      <h2>Card + Stack + Group + inputs</h2>
+      <div data-civitai-ui="card" data-with-border="true" data-padding="md">
+        <div data-civitai-ui="stack" data-gap="md">
+          <div data-civitai-ui="text-input">
+            <label data-civitai-ui-label for="name">Name</label>
+            <input data-civitai-ui-control id="name" placeholder="Ada Lovelace" />
+          </div>
+          <div data-civitai-ui="number-input">
+            <label data-civitai-ui-label for="steps">Steps</label>
+            <input type="number" data-civitai-ui-control id="steps" value="30" />
+          </div>
+          <div data-civitai-ui="textarea">
+            <label data-civitai-ui-label for="prompt">Prompt<span data-civitai-ui-required aria-hidden="true">*</span></label>
+            <textarea data-civitai-ui-control id="prompt" rows="2">a serene mountain lake</textarea>
+          </div>
+          <div data-civitai-ui="text-input" data-invalid="true">
+            <label data-civitai-ui-label for="seed">Seed</label>
+            <input data-civitai-ui-control id="seed" aria-invalid="true" aria-describedby="seed-err" value="-1" />
+            <span id="seed-err" data-civitai-ui-error role="alert">Must be a positive integer</span>
+          </div>
+          <div data-civitai-ui="group">
+            <button data-civitai-ui="button" data-variant="filled" data-size="md" type="button">Generate</button>
+            <button data-civitai-ui="button" data-variant="subtle" data-size="md" type="button">Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <h2>Alert</h2>
+      <div data-civitai-ui="stack" data-gap="sm">
+        <div data-civitai-ui="alert" data-color="info" role="alert"><div data-civitai-ui-alert-body><div data-civitai-ui-alert-title>Heads up</div>Your generation is queued.</div></div>
+        <div data-civitai-ui="alert" data-color="success" role="alert"><div data-civitai-ui-alert-body><div data-civitai-ui-alert-title>Saved</div>Changes are live.</div></div>
+        <div data-civitai-ui="alert" data-color="warning" role="alert"><div data-civitai-ui-alert-body>Low on Buzz.</div></div>
+        <div data-civitai-ui="alert" data-color="error" role="alert"><div data-civitai-ui-alert-body><div data-civitai-ui-alert-title>Failed</div>The worker rejected the job.</div></div>
+      </div>
+    </div>
+
+    <script>
+      // The only JS on the page: flip data-theme on <html> between light/dark.
+      document.getElementById('theme-toggle').addEventListener('click', function () {
+        var root = document.documentElement;
+        root.setAttribute('data-theme', root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+      });
+    </script>
+  </body>
+</html>

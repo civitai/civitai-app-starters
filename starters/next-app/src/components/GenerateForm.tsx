@@ -15,7 +15,20 @@ const SERVER_WAIT_MS = 25_000;
 // Overall ceiling for the wait — once exceeded we give up and surface an error.
 const OVERALL_TIMEOUT_MS = 5 * 60 * 1000;
 
-export function GenerateForm({ initialBalance }: { initialBalance?: number }) {
+/**
+ * `initialBalance` is the user's Buzz balance, or `null`/`undefined` when this
+ * app could not read it — `BuzzRead` is optional at OAuth consent and a client
+ * without it gets a 403 from `buzz.getUserAccount`. It comes from
+ * `getBuzzBalance()`, NEVER from `/api/v1/me`, which returns no balance at all.
+ *
+ * 🔴 UNKNOWN RENDERS NOTHING, ON PURPOSE — the cost line below drops its
+ * "Your balance: …" clause rather than printing a dash or a zero. That is why
+ * this prop was silently invisible before the balance was ever wired up: it was
+ * always `undefined`, so the clause never rendered and nobody could see it was
+ * broken. `tests/guards/starter-buzz-balance-source.test.mjs` pins where the
+ * value comes from so it cannot silently go back to being always-undefined.
+ */
+export function GenerateForm({ initialBalance }: { initialBalance?: number | null }) {
   const [prompt, setPrompt] = useState(
     'A close-up oil painting of a mossy stone fox, dappled forest light',
   );

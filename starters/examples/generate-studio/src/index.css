@@ -1,0 +1,53 @@
+:root {
+  /* Dark first, in the same order as index.html's <meta name="color-scheme">:
+     this declaration overrides the meta once the stylesheet loads. */
+  color-scheme: dark light;
+  font-family: var(--civitai-font, system-ui, sans-serif);
+  color: var(--civitai-color-text);
+}
+
+body {
+  margin: 0;
+  /* No `background` on html/body: index.html's boot <style> owns the page
+     colour, and this file loads after it, so a rule here would win. */
+}
+
+/*
+  FULL WIDTH, ON PURPOSE. A page app owns the whole viewport (/apps/run/<slug>),
+  so there is no max-width box: one column on a phone, then controls beside a
+  results column that takes every remaining pixel. The output grid adds columns
+  as the width grows instead of stretching a few images.
+*/
+.studio {
+  box-sizing: border-box;
+  padding: 16px;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  .studio {
+    grid-template-columns: minmax(340px, 420px) minmax(0, 1fr);
+    gap: 24px;
+  }
+}
+
+@media (min-width: 1800px) {
+  .studio {
+    grid-template-columns: minmax(380px, 480px) minmax(0, 1fr);
+  }
+}
+
+.output-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+}
+
+@media (min-width: 1800px) {
+  .output-grid {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  }
+}

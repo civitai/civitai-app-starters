@@ -1,0 +1,323 @@
+{
+ "tools": [
+  {
+   "name": "search_models",
+   "title": "Search models",
+   "description": "Search Civitai models (checkpoints, LoRAs, embeddings, etc). Returns names, base models, stats, trigger words, and AIR URNs for use with generation. Supports filtering by type, base model, tag, creator, and generation capability. Returns nextCursor for pagination.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "query": {
+      "type": "string",
+      "description": "Free-text search over model names/keywords"
+     },
+     "type": {
+      "type": "string",
+      "description": "Model type filter, e.g. Checkpoint, LORA, TextualInversion (validated against enums)"
+     },
+     "baseModel": {
+      "type": "string",
+      "description": "Base model filter, e.g. \"SDXL 1.0\", \"Pony\", \"Flux.1 D\""
+     },
+     "sort": {
+      "type": "string",
+      "description": "Sort order (default \"Highest Rated\")"
+     },
+     "period": {
+      "type": "string",
+      "description": "Timeframe (default \"AllTime\")"
+     },
+     "tag": {
+      "type": "string",
+      "description": "Filter by tag name"
+     },
+     "username": {
+      "type": "string",
+      "description": "Filter by creator username"
+     },
+     "supportsGeneration": {
+      "type": "boolean",
+      "description": "Only models that support on-site generation"
+     },
+     "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "default": 12,
+      "description": "Max results to return"
+     },
+     "cursor": {
+      "type": "string",
+      "description": "Pagination cursor from a previous result"
+     }
+    },
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "get_model",
+   "title": "Get model details",
+   "description": "Fetch full details for one or more models by ID (batch, concurrency 3): all versions, files, trigger words, and AIR URNs.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ids": {
+      "type": "array",
+      "items": {
+       "type": "integer"
+      },
+      "minItems": 1,
+      "maxItems": 20,
+      "description": "Model IDs to fetch"
+     }
+    },
+    "required": [
+     "ids"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "get_model_version",
+   "title": "Get model version details",
+   "description": "Fetch model version details by version ID (batch, concurrency 3): files, hashes, trigger words, and the AIR URN for generation.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ids": {
+      "type": "array",
+      "items": {
+       "type": "integer"
+      },
+      "minItems": 1,
+      "maxItems": 20,
+      "description": "Model version IDs to fetch"
+     }
+    },
+    "required": [
+     "ids"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "search_images",
+   "title": "Search images",
+   "description": "Search Civitai images with full generation metadata (prompt, negative, sampler, steps, CFG, seed, resources). Filter by query, model, version, base model, creator, type. Returns nextCursor for pagination.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "query": {
+      "type": "string",
+      "description": "Free-text search over prompts/tags"
+     },
+     "modelId": {
+      "type": "integer",
+      "description": "Filter to images made with this model"
+     },
+     "modelVersionId": {
+      "type": "integer",
+      "description": "Filter to images made with this version"
+     },
+     "baseModel": {
+      "type": "string",
+      "description": "Filter by base model used"
+     },
+     "username": {
+      "type": "string",
+      "description": "Filter by creator username"
+     },
+     "sort": {
+      "type": "string",
+      "description": "Sort order (default \"Most Reactions\")"
+     },
+     "period": {
+      "type": "string",
+      "description": "Timeframe (default \"AllTime\")"
+     },
+     "type": {
+      "type": "string",
+      "description": "\"image\" or \"video\""
+     },
+     "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "default": 12,
+      "description": "Max results"
+     },
+     "cursor": {
+      "type": "string",
+      "description": "Pagination cursor"
+     }
+    },
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "create_post",
+   "title": "Create (and optionally publish) a post",
+   "description": "Create a Civitai image post and attach images in order. This is the primary way to share creative work. Wraps the composite `post.createWithImages` endpoint in ONE atomic call: the server creates the post, attaches every image (in the given order), and optionally publishes \u2014 handling cleanup itself if any part fails. Each image is supplied by a pre-uploaded UUID or a URL (uploaded automatically first). Set publish=true to publish immediately (default false leaves it as a draft you can publish later with publish_post). Requires an onboarded, non-muted account and the MediaWrite scope (a Full API key works).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "title": {
+      "type": "string",
+      "description": "Post title"
+     },
+     "detail": {
+      "type": "string",
+      "description": "Post description/detail (HTML or plain text)"
+     },
+     "images": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "uuid": {
+         "type": "string",
+         "description": "Pre-uploaded image UUID (from upload_image)"
+        },
+        "url": {
+         "type": "string",
+         "format": "uri",
+         "description": "Remote image URL (uploaded automatically to get a UUID)"
+        },
+        "width": {
+         "type": "integer",
+         "description": "Image width in px"
+        },
+        "height": {
+         "type": "integer",
+         "description": "Image height in px"
+        },
+        "type": {
+         "type": "string",
+         "enum": [
+          "image",
+          "video",
+          "audio"
+         ],
+         "description": "Media type (default image)"
+        }
+       },
+       "additionalProperties": false
+      },
+      "minItems": 1,
+      "description": "Images to attach, in order"
+     },
+     "tags": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Tag names"
+     },
+     "modelVersionId": {
+      "type": "integer",
+      "description": "Associate the post (and its images) with this model version id"
+     },
+     "collectionId": {
+      "type": "integer",
+      "description": "Add the post to this contest/collection"
+     },
+     "publish": {
+      "type": "boolean",
+      "default": false,
+      "description": "Publish immediately (else leave as draft)"
+     }
+    },
+    "required": [
+     "images"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": false
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "upload_image",
+   "title": "Upload image",
+   "description": "Upload an image to Civitai from a URL or base64 data. Returns the image UUID (and probed dimensions) needed to set article covers and announcement images. Chains the presign + PUT upload internally.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Remote image URL to fetch and upload"
+     },
+     "data": {
+      "type": "string",
+      "description": "Base64-encoded image bytes (data: URI prefix is stripped)"
+     },
+     "contentType": {
+      "type": "string",
+      "description": "MIME type override, e.g. image/png"
+     }
+    },
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   },
+   "annotations": {
+    "readOnlyHint": false
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  },
+  {
+   "name": "whoami",
+   "title": "Who am I",
+   "description": "Resolve the current user from the active API key (id, username) and report authoritative account status via user.getSelfStatus (UserRead scope). Good smoke test for deployments and for confirming which account will perform user actions. Reports REAL onboarding state (isOnboarded + completedSteps), muted state, and an authoritative isModerator flag, plus subscription tier. An un-onboarded account fails every verified/guarded social write (post, react, review, follow) and a muted account fails guarded writes \u2014 so check this first if writes are 500ing, then call complete_onboarding_step.",
+   "inputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {}
+   },
+   "annotations": {
+    "readOnlyHint": true
+   },
+   "execution": {
+    "taskSupport": "forbidden"
+   }
+  }
+ ]
+}

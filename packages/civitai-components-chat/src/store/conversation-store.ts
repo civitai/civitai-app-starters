@@ -1,0 +1,151 @@
+import type { ModelMessage } from 'ai';
+
+import type { SubagentCheckpoint } from '../agent/subagent-result.js';
+import type { SavedPanel } from '../panels/panel.js';
+import type { SavedPost } from '../posting/post.js';
+import type { Attachment, Conversation, SavedTurn, TitleSource, Turn } from '../types.js';
+import type { OpenedConversation } from './thread-store.js';
+
+/**
+ * Why `open` rejects when the viewer opened or started another chat before it finished: its result is
+ * stale, and the caller drops it without a word.
+ */
+export const SUPERSEDED = 'superseded';
+
+export function supersededError(): Error {
+  return Object.assign(new Error('Another chat was opened meanwhile.'), { code: SUPERSEDED });
+}
+
+export function isSuperseded(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === SUPERSEDED;
+}
+
+/** Why `open(id, { existing: true })` rejects when nothing is saved under `id`. */
+export const NOT_FOUND = 'not-found';
+
+export function notFoundError(): Error {
+  return Object.assign(new Error('There is no saved chat with that id.'), { code: NOT_FOUND });
+}
+
+/** How `open` opens a chat. */
+export interface OpenOptions {
+  /**
+   * Only a chat that is saved: one with nothing saved under its id rejects (`NOT_FOUND`) instead of
+   * opening as a new, empty chat with that id, and does not become the open chat.
+   */
+  existing?: boolean;
+  /**
+   * Called once the chat was read (and, with `existing`, found), just before it becomes the open chat:
+   * not at all when it cannot be opened, so the chat open now stays as it is.
+   */
+  ready?: () => void;
+}
+
+/** A row of the chat list. */
+export interface ListedConversation {
+  id: string;
+  title: string;
+  /** ISO 8601; the list groups by it (Today, Yesterday, …). */
+  updatedAt: string;
+}
+
+/**
+ * What the chat asks of wherever its conversations live: the orchestrator (`ThreadStore`, the
+ * default) or a host's own storage (`HostThreadStore`). It holds the open conversation and the list,
+ * and fires `list-change` and `conversation-change`.
+ */
+export interface ConversationStore extends EventTarget {
+  summaries: ListedConversation[];
+  current: Conversation | null;
+  readonly hasMore: boolean;
+  /** What the latest save cost the viewer, when saving costs anything. */
+  saveCost?: number;
+  /**
+   * Governs one thing only: `remove` takes a chat off the list as it starts, so the element may leave a
+   * chat being deleted at once; without it, it leaves once the delete worked (unless the viewer picked
+   * another chat meanwhile). The name is historical. Every store's `open` rejects as superseded
+   * (`isSuperseded`) when another chat was opened or started before it finished, whatever this says.
+   */
+  readonly supersedesOpens?: boolean;
+  refreshList(): Promise<void>;
+  loadMore(): Promise<void>;
+  open(id: string, options?: OpenOptions): Promise<OpenedConversation>;
+  /**
+   * Whether `id` is saved where this store keeps chats: it was read from there, or a save of it worked.
+   * A new chat is not, until its first save. Fires `saved-change` when that becomes true.
+   */
+  isSaved(id: string): boolean;
+  startNew(): Conversation;
+  appendUserTurn(content: string, attachments: Attachment[], refs?: string[]): Turn;
+  /**
+   * The viewer edited their latest message, `turn`, whose reply is asked for afresh: its text becomes
+   * `content`, the reply that followed it is dropped, and the chat is saved so (see `editTurn`). Nothing
+   * when `turn` is not the chat's latest. A store without it gets `editTurn` applied, unsaved until the
+   * reply ends.
+   */
+  editUserTurn?(turn: Turn, content: string): void;
+  completeTurn(turn: Turn): Promise<void>;
+  /**
+   * A reply to `turn` starts in this tab (`send`, or Retry/Continue): a store that saves progress marks it
+   * as this tab's, so a reload of this tab knows a reply it finds unfinished died here.
+   */
+  replyStarted?(turn: Turn): void;
+  /**
+   * The reply to `turn` has got this far: `messages` is every step that finished so far, and the step now
+   * running as far as its tool calls go (a call with no result started and has not finished). A store
+   * that saves progress (`ThreadStore`, as a v3 head with the reply `running`) saves it; `completeTurn`
+   * saves how it ended.
+   */
+  checkpoint?(turn: Turn, progress: { messages: ModelMessage[] }): Promise<void>;
+  /**
+   * A write subagent started by the reply to `turn` (its `dispatch_agent` call `toolCallId`) has got this
+   * far. A store that saves progress saves it with the reply's progress, so Continue after the page closed
+   * gives that call, if it has no result, the interrupted result with this `changed` list.
+   */
+  checkpointSubagent?(turn: Turn, toolCallId: string, progress: SubagentCheckpoint): Promise<void>;
+  savePost(id: string, post: SavedPost): Promise<void>;
+  setModel(model: string | undefined): Promise<void>;
+  savePanel(panel: SavedPanel): Promise<void>;
+  setTitle(title: string, source: TitleSource): Promise<void>;
+  rename(id: string, title: string): Promise<void>;
+  remove(id: string): Promise<void>;
+}
+
+/** One saved turn: the user's message and, once the reply finished, the reply's messages. Opaque JSON to a store. */
+export type ChatSavedTurn = SavedTurn;
+
+/** A conversation as a host's store keeps it: save it as JSON, hand it back unchanged. */
+export interface ChatConversation {
+  id: string;
+  title: string;
+  /** Who named it: `first-message` (its first words), `llm` (the assistant) or `user`. */
+  titleSource: TitleSource;
+  /** ISO 8601. */
+  createdAt: string;
+  /** ISO 8601; the time of its latest message. */
+  updatedAt: string;
+  turns: ChatSavedTurn[];
+  /** The model this chat picked; unset, it follows the default. */
+  model?: string;
+  /** The chat's `scope`, when it has one. */
+  scope?: string;
+}
+
+/** A row of `list()`. */
+export interface ChatConversationSummary {
+  id: string;
+  title: string;
+  /** ISO 8601. */
+  updatedAt: string;
+}
+
+/** Where a host keeps its viewer's conversations. Every method may reject; the chat shows a short error. */
+export interface ChatConversationStore {
+  /** The viewer's conversations in this scope, newest first; `next` is a cursor for the following page, absent when there is none. */
+  list(options: { scope?: string; cursor?: string }): Promise<{ items: ChatConversationSummary[]; next?: string | null }>;
+  /** One conversation as last saved, or `null` when there is no such conversation. */
+  load(id: string, options: { scope?: string }): Promise<ChatConversation | null>;
+  /** Creates or replaces the whole conversation. Saves of one conversation come one at a time, in order. */
+  save(conversation: ChatConversation): Promise<void>;
+  delete(id: string, options: { scope?: string }): Promise<void>;
+}

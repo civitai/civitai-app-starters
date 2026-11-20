@@ -1,11 +1,34 @@
 import type { BlockSettings } from '@civitai/app-sdk/blocks';
 
 import { useTransportSnapshot } from './useBlockContext.js';
+import { useTransportConnection } from './useTransportConnection.js';
+
+/**
+ * What {@link useBlockSettings} returns. An alias — see
+ * `./returnTypeLedger.js` for why every hook on the entry has one of these.
+ */
+export type UseBlockSettings = BlockSettings;
 
 /**
  * Shorthand for `useBlockContext().settings`. Returns the publisher- and
- * user-controlled settings the host forwarded at init.
+ * user-controlled settings the host forwarded at init. Read-only from the
+ * iframe — there is no general "set settings" bridge message. Writing them is
+ * platform-side, in the settings panel reached from the **Manage** control on
+ * an installed app.
+ *
+ * ⚠ `userSettings` is `{}` from both current hosts — per-viewer settings are
+ * not wired yet — so do not read an empty object as "the viewer changed
+ * nothing".
+ *
+ * The one setting a block can write itself is the viewer's checkpoint, via the
+ * `SET_USER_CHECKPOINT` message (see `useCheckpointPicker`). 🔴 It does NOT
+ * come back through here: the host merges it into `context.checkpoint`, so
+ * reading `userSettings` after `persist()` returns `{}` and no error.
+ *
+ * @example
+ * const { publisherSettings, userSettings } = useBlockSettings();
  */
-export function useBlockSettings(): BlockSettings {
+export function useBlockSettings(): UseBlockSettings {
+  useTransportConnection();
   return useTransportSnapshot().settings;
 }

@@ -1,0 +1,377 @@
+name: Re-vendor canonical schema
+
+# Scheduled WRITE twin of the check-canonical-schema CI guard: pulls the
+# server-published canonical App Block manifest schema, re-vendors the byte-exact
+# mirror at packages/civitai-app-sdk/schemas/app-block/v1.json when it drifts, and
+# opens a PR. Keeps the mirror in parity without a human noticing the guard went red.
+# (JS twin of the civitai/cli automation.)
+#
+# A SECOND, INDEPENDENT job (`revendor-storage-contract`) does the same for the
+# App Blocks document-store contract mirror
+# (packages/civitai-sdk/schemas/app-block/storage-contract.v1.json, guarded by
+# scripts/check-storage-contract.sh), published by civitai.com on the same release
+# cut. It has its OWN open-PR guard, branch and PR, so a contract failure (a 404,
+# or a contract the fake does not satisfy) can never stop the schema PR, and vice
+# versa. Its script writes no changeset — that file is not published.
+
+on:
+  schedule:
+    # Every 6 hours at :37 past the hour — 00:37, 06:37, 12:37, 18:37 UTC.
+    #
+    # WHY THIS CADENCE IS LOAD-BEARING, and why it is no longer weekly. This
+    # number is not a politeness setting; it IS the bound on how long this
+    # repo's CI stays red after a canonical schema change.
+    #
+    # The chain: `check-canonical-schema.sh` byte-compares the vendored mirror
+    # (packages/civitai-app-sdk/schemas/app-block/v1.json) against the schema
+    # published LIVE at the canonical URL, with `diff -u`. That publish happens
+    # on a civitai `release` cut — an event this repo cannot observe. There is
+    # no webhook from civitai, no repository_dispatch, nothing to subscribe to.
+    # So the ONLY thing that closes the gap between "the canonical changed" and
+    # "the mirror was re-vendored" is this cron firing. Until it does, the guard
+    # is red wherever it runs and nothing clears it but a human noticing and
+    # dispatching this workflow by hand. Since `ci.yml` grew lanes, "wherever it
+    # runs" is: every push to main, and the PRs that touch the vendored schema,
+    # its check script, ci.yml or `scripts/ci-lanes.mjs` (the classifier there
+    # decides) -- NOT every PR. A red run there shows on main's commit status,
+    # and this workflow's PR is the other place the drift becomes visible.
+    #
+    # The concrete case this was raised for: civitai PR #4314 added an optional
+    # `repository` property to the canonical manifest schema and merged to
+    # civitai `main` on 2026-08-23. dp-prod deploys from `release`, not `main`,
+    # so the published schema does not carry it yet and this mirror is still
+    # green. It goes red the moment a `main` -> `release` cut publishes the new
+    # bytes — and that cut is invisible from here. On the old weekly cron
+    # ("37 7 * * 1", Mondays) that was up to SEVEN DAYS of red CI; at 6-hourly
+    # it is at most ~6 hours.
+    #
+    # The minute is deliberately :37 and NOT :00 — GitHub delays cron jobs
+    # scheduled on the hour, because everyone schedules on the hour. :37 also
+    # keeps this off the minute of the sibling scheduled workflow in this repo
+    # (published-starter-smoke :23), so the two never open PRs in the same
+    # minute.
+    #
+    # Cron literal quoted so the `*` isn't parsed as a YAML alias.
+    - cron: "37 */6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  NODE_VERSION: '24'
+  # 🔴 SINGLE-SOURCED DELIBERATELY. The guard below queries this branch and
+  # `create-pull-request` writes it. TWO SPELLINGS OF IT WOULD MAKE THE GUARD
+  # SILENTLY INERT: it would ask about a branch nobody opens a PR on, `open`
+  # would always be empty, every step would run, and the next cron would
+  # force-push a reviewer's commit away with the job green throughout. Pinned
+  # by tests/guards/revendor-guard-gating.test.mjs.
+  REVENDOR_BRANCH: automation/revendor-canonical-schema
+  # The contract job's branch — single-sourced for the same reason, and DISTINCT
+  # from the schema's, so each job's guard sees only its own PR.
+  CONTRACT_REVENDOR_BRANCH: automation/revendor-storage-contract
+
+jobs:
+  revendor:
+    name: Re-vendor + open PR on drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Adopted VERBATIM in shape from the sibling
+      # `sync-orchestrator-catalogs.yml`, which has carried it since that
+      # workflow learned the same lesson. Its comment there explains why the
+      # sibling needed it and says it was "fine for the sibling
+      # `revendor-canonical-schema.yml`, whose PR is mergeable as-is and which
+      # nobody commits to". 🔴 THAT PREMISE IS NOW FALSE FOR THIS WORKFLOW: this
+      # bot writes a changeset carrying a semver DECISION it cannot verify, so a
+      # reviewer may need to change the bump level on this branch before merging.
+      # `create-pull-request` rebases and force-pushes the branch on every run,
+      # and the mirror on `main` keeps drifting until the PR merges, so
+      # re-detection is CERTAIN rather than unlikely — without this step a
+      # reviewer's downgrade is discarded within 6 hours (the cron is 4x/day).
+      #
+      # `github.token` rather than CHANGESETS_TOKEN: this is a read, and the
+      # `pull-requests: write` grant above already covers it. A `gh` failure
+      # (rate limit, outage) fails the step and therefore the job, which is the
+      # safe direction — an unanswered "is a PR open?" must never be read as "no".
+      #
+      # 🔴 THE COST, STATED BECAUSE IT IS REAL AND HIGHER HERE THAN FOR THE
+      # SIBLING. While a re-vendor PR is open this job skips ENTIRELY — including
+      # a manual `workflow_dispatch`, so there is no override. If the canonical
+      # drifts again while that PR sits open, the PR's bytes are stale and merging
+      # it does NOT restore parity; `ci.yml`'s `schema-drift` job is a hard fail
+      # wherever it runs (every push to main, and the PRs `scripts/ci-lanes.mjs`
+      # routes to it) until a later run re-vendors. Where that shows: on main's
+      # commit status, and nowhere on the PRs that do not run the job. It also
+      # points at the wrong object, so: IF A RE-VENDOR PR GOES STALE, CLOSE IT
+      # and the next run re-vendors. An open-but-abandoned PR blocks every future
+      # re-vendor for as long as it stays open. The old behaviour kept
+      # re-vendoring instead, and destroyed reviewer commits silently to do it; a
+      # stall was chosen over a silent clobber, and the stall is only as visible
+      # as a red main.
+      - name: Refuse to clobber an open re-vendor PR
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          n="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$REVENDOR_BRANCH" \
+                 --state open --json number --jq '.[0].number // empty')"
+          echo "open=$n" >> "$GITHUB_OUTPUT"
+          if [[ -n "$n" ]]; then
+            echo "::notice::PR #${n} is already open on ${REVENDOR_BRANCH}. Skipping this run so a reviewer's commits on that branch are not force-pushed away. Merge or close it and the next run will re-vendor."
+          fi
+
+      - uses: pnpm/action-setup@v6
+        if: steps.guard.outputs.open == ''
+
+      - uses: actions/setup-node@v7
+        if: steps.guard.outputs.open == ''
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Re-vendor canonical schema
+        if: steps.guard.outputs.open == ''
+        run: ./scripts/revendor-canonical-schema.sh
+
+      - name: Detect changes
+        id: changed
+        if: steps.guard.outputs.open == ''
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Validate the FULL relevant SDK suite (not a subset): schema-parity /
+      # defineBlock tests read the vendored schema, so a canonical change that
+      # breaks an SDK assertion fails HERE and no PR opens.
+      #
+      # 🔴 DO NOT READ THE CONVERSE. This said "an additive/optional change
+      # passes and the PR opens" until 2026-10-03, which is true of the common
+      # case and reads as "the bot can only ever open an innocuous PR". What
+      # passes is anything the SDK suite does not assert on, and that set
+      # includes CONSTRAINT TIGHTENINGS: the suite pins the top-level `required`
+      # set, `tagline.maxLength`, the scopes enum and the property-set-is-typed
+      # ledger — so a new `pattern`, a new `allOf`/`not`, a lowered `maxLength`
+      # or `additionalProperties` true->false on an unpinned field sails
+      # through. That has happened in this repo: `77805d0` re-vendored exactly
+      # such a tightening (`buildCommand.maxLength` 256->128 plus a new
+      # `pattern`, and four `not` clauses on `outputDir`). An ADDITIVE change
+      # passing is also the DESIGNED path, not a surprise — this repo types the
+      # field first so the ledger is green when the bytes arrive.
+      - name: Validate SDK against the re-vendored schema
+        if: steps.guard.outputs.open == '' && steps.changed.outputs.changed == 'true'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @civitai/app-sdk typecheck
+          pnpm --filter @civitai/app-sdk test
+          pnpm --filter @civitai/app-sdk build
+
+      - name: Open PR if schema changed
+        if: steps.guard.outputs.open == '' && steps.changed.outputs.changed == 'true'
+        # SHA-pinned to an EXACT commit, asserted by
+        # `tests/guards/workflow-action-pins.test.mjs` (PINNED), which runs in ci.yml's
+        # `Starter` job — `pull_request`-triggered and a required context. This
+        # workflow runs on schedule + workflow_dispatch only — no `pull_request`
+        # trigger — so that assertion is the ONLY thing a bump PR
+        # runs against it. Changing this line without updating PINNED turns the PR red.
+        #
+        # The label lives on the `uses:` line, not above it: `7be170e` bumped this pin
+        # v6.1.0 -> v8.1.1 (a major) and left the full-line comment above untouched,
+        # which is how it stayed mislabelled until 2026-08-20 (v6.1.0 is c5a7806).
+        # ⚠️ That commit shows Dependabot ignores the line ABOVE; it does not show it
+        # rewrites a trailing label — the old line had no trailing label to rewrite.
+        # Dependabot's trailing-comment rewrite is known-flaky (dependabot-core #7912,
+        # #8011, #14716), so treat the label as documentation, not as verified truth.
+        # PINNED is what actually holds the sha; keep the two in step by hand.
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          # Reuse CHANGESETS_TOKEN: the org blocks the default GITHUB_TOKEN from
+          # opening PRs, and this secret already carries PR-creation perms for the
+          # changesets release workflow. A dedicated token would be cleaner if the
+          # coupling ever bites, but reusing it avoids adding another secret.
+          token: ${{ secrets.CHANGESETS_TOKEN }}
+          branch: ${{ env.REVENDOR_BRANCH }}
+          delete-branch: true
+          commit-message: "chore(sdk): re-vendor canonical app-block manifest schema"
+          title: "chore(sdk): re-vendor canonical app-block manifest schema"
+          body: |
+            Automated re-vendor of the App Block manifest schema mirror at
+            `packages/civitai-app-sdk/schemas/app-block/v1.json` to restore
+            byte-parity with the server-published canonical
+            (https://civitai.com/schemas/app-block/v1.json).
+
+            The vendored copy MUST stay byte-identical to the canonical — the
+            `check-canonical-schema.sh` CI guard enforces that with `diff -u`.
+            This PR was opened because the scheduled re-vendor job (every 6
+            hours) detected drift.
+
+            Validated in-job before opening this PR: `@civitai/app-sdk`
+            typecheck + test + build all passed against the re-vendored schema
+            (the schema-parity / `defineBlock` tests read the vendored bytes, so
+            a canonical change that broke an SDK assertion would have failed the
+            job and no PR would have opened).
+
+            **Reviewer heads-up — this bot re-vendors the schema bytes AND makes
+            a semver decision.** It writes a `patch` changeset for
+            `@civitai/app-sdk`, because the vendored schema is published and bytes
+            merged without a changeset reach no consumer. It copies bytes and
+            cannot tell which direction the schema moved, so:
+
+            🔴 **Read the schema diff. `patch` is correct only if the change is
+            permissive-only** — if it TIGHTENS anything, a manifest that validated
+            yesterday starts failing, and the bump is a `minor`.
+            **`RELEASING.md` ("vendored-schema parity") is the single source for
+            what counts as tightening** — read it rather than guessing. Three
+            re-vendors in this repo have tightened, and **two of them did it only
+            by DECLARING a new property**: the schema root has no
+            `additionalProperties`, so a newly-declared key starts validating
+            manifests that already carried it. No bounds-and-enums checklist
+            catches that, which is why the list lives in one place and this body
+            does not restate it.
+            ⚠ The SDK validation step above does NOT catch these either — see the
+            comment on that step for which assertions it does and does not make.
+
+            **To downgrade: commit the changed changeset to THIS branch and
+            merge.** That is safe as of the `Refuse to clobber an open re-vendor
+            PR` step at the top of this workflow — while this PR is open the cron
+            skips, so your commit is not force-pushed away. Merge or close it and
+            the next run re-vendors.
+
+            A semantic canonical addition — e.g. a new manifest field like
+            `scopeJustifications` (civitai #3195) — may also warrant adding the
+            matching field to the `BlockManifestV1` TS type in
+            `packages/civitai-app-sdk/src/blocks/types.ts`. Note this repo's
+            practice is to type the field FIRST, ahead of the bytes, so that the
+            nested-property ledger passes when the bytes arrive.
+
+            _JS twin of the civitai/cli schema re-vendor automation._
+
+  # The storage-contract twin of the job above: the same steps, guard and action
+  # pins (the rationale for each is on the schema job), its own branch and PR.
+  revendor-storage-contract:
+    name: Re-vendor storage contract + open PR on drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Refuse to clobber an open re-vendor PR
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          n="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$CONTRACT_REVENDOR_BRANCH" \
+                 --state open --json number --jq '.[0].number // empty')"
+          echo "open=$n" >> "$GITHUB_OUTPUT"
+          if [[ -n "$n" ]]; then
+            echo "::notice::PR #${n} is already open on ${CONTRACT_REVENDOR_BRANCH}. Skipping this run so a reviewer's commits on that branch are not force-pushed away. Merge or close it and the next run will re-vendor."
+          fi
+
+      - uses: pnpm/action-setup@v6
+        if: steps.guard.outputs.open == ''
+
+      - uses: actions/setup-node@v7
+        if: steps.guard.outputs.open == ''
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Re-vendor storage contract
+        if: steps.guard.outputs.open == ''
+        run: ./scripts/revendor-storage-contract.sh
+
+      - name: Detect changes
+        id: changed
+        if: steps.guard.outputs.open == ''
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The contract runs against `createFakeStorage` and the client in this suite,
+      # so a contract change the fake does not satisfy fails HERE and no PR opens —
+      # the fake needs a code change first, and that PR re-vendors the bytes too.
+      - name: Validate the fake and client against the re-vendored contract
+        if: steps.guard.outputs.open == '' && steps.changed.outputs.changed == 'true'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @civitai/sdk typecheck
+          pnpm --filter @civitai/sdk test
+
+      - name: Open PR if the contract changed
+        if: steps.guard.outputs.open == '' && steps.changed.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.CHANGESETS_TOKEN }}
+          branch: ${{ env.CONTRACT_REVENDOR_BRANCH }}
+          delete-branch: true
+          commit-message: "chore(sdk): re-vendor the app-block storage contract"
+          title: "chore(sdk): re-vendor the app-block storage contract"
+          body: |
+            Automated re-vendor of the App Blocks document-store contract mirror at
+            `packages/civitai-sdk/schemas/app-block/storage-contract.v1.json` to
+            restore byte-parity with
+            https://civitai.com/schemas/app-block/storage-contract.v1.json — the
+            `check-storage-contract.sh` CI guard enforces it with `diff -u`.
+
+            Validated in-job before opening this PR: `@civitai/sdk` typecheck +
+            test passed against the re-vendored bytes, i.e. `createFakeStorage` and
+            the client still satisfy every contract case.
+
+            No changeset: the contract is not published (it is outside the
+            package's `files` and read only by the package's own tests).
+
+  # File a report when either re-vendor job fails, and close it when a later run is
+  # green. Modelled on civitai/cli's `revendor-canonical-schema.yml` `signal` job, and
+  # it calls civitai/cli's reusable `failure-issue.yml` directly (pinned to a commit
+  # sha; both repos are public), which owns WHEN to open, edit, comment or close.
+  # To take a later fix to that mechanism, bump the sha.
+  #
+  # Why it exists: a red scheduled run notifies almost nobody (only whoever last
+  # edited the `cron` line, through their own Actions setting). This workflow was
+  # red on 10 of its 20 runs up to 2026-11-14 — by design, when a canonical change
+  # needs a hand-written type first and the in-job validation refuses to open a PR —
+  # and nothing told anyone.
+  #
+  # `always()` so a red job still reports; a cancelled job is not filed as a defect.
+  signal:
+    needs: [revendor, revendor-storage-contract]
+    if: always() && needs.revendor.result != 'cancelled' && needs.revendor-storage-contract.result != 'cancelled'
+    uses: civitai/cli/.github/workflows/failure-issue.yml@50b6355fa092d5b0efb888dbabf8692fcd2004bd # v0.1.140
+    permissions:
+      contents: read
+      issues: write
+    with:
+      marker: "[revendor-canonical-schema-bot]"
+      failing: ${{ needs.revendor.result != 'success' || needs.revendor-storage-contract.result != 'success' }}
+      # A change of state (which job is red) posts the one notifying comment.
+      state: "schema=${{ needs.revendor.result }},contract=${{ needs.revendor-storage-contract.result }}"
+      title: "[revendor-canonical-schema-bot] a scheduled re-vendor job failed (schema: ${{ needs.revendor.result }}, storage contract: ${{ needs.revendor-storage-contract.result }})"
+      body: |
+        The scheduled `Re-vendor canonical schema` workflow failed, so a server-side change was **not**
+        mirrored into this repo automatically.
+
+        | Job | Result |
+        |---|---|
+        | `revendor` (manifest schema, `packages/civitai-app-sdk/schemas/app-block/v1.json`) | `${{ needs.revendor.result }}` |
+        | `revendor-storage-contract` (`packages/civitai-sdk/schemas/app-block/storage-contract.v1.json`) | `${{ needs.revendor-storage-contract.result }}` |
+
+        **The usual cause, and the fix.** The re-vendored bytes failed the in-job validation (typecheck +
+        tests), so no PR was opened. For the schema, that is by design when the canonical adds a field that
+        needs a hand-written type: add it to `BlockManifestV1` in
+        `packages/civitai-app-sdk/src/blocks/types.ts` (type the field FIRST, ahead of the bytes) in a PR of
+        your own, merge it, and the next scheduled run re-vendors. For the contract, `createFakeStorage` needs
+        the code change first. Reproduce locally with `./scripts/revendor-canonical-schema.sh` or
+        `./scripts/revendor-storage-contract.sh`; the run log names the failing step.
+
+        **Closing condition:** this issue closes itself on the first later run in which both jobs are green
+        (checked by this `signal` job in that run). Nothing else closes it; closing it by hand while the job is
+        still red only means the next failing run opens a new one.

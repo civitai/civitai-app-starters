@@ -1,0 +1,330 @@
+import { act, renderHook } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
+
+import { useCheckpointPicker } from '../src/hooks/useCheckpointPicker.js';
+import { HUMAN_INTERACTION_TIMEOUT_MS } from '../src/transport/requestTimeouts.js';
+import { getTransport } from '../src/transport/singleton.js';
+import { resetTransport } from '../src/testing.js';
+
+/**
+ * Checkpoint picker hook — two host-mediated flows:
+ *   - `open`   → OPEN_CHECKPOINT_PICKER → CHECKPOINT_PICKER_RESULT
+ *   - `persist`→ SET_USER_CHECKPOINT   → USER_CHECKPOINT_SET
+ * Mirrors the useResourcePicker scaffold (postMessage-driven iframe transport).
+ */
+
+const PARENT_ORIGIN = 'https://civitai.com';
+
+function buildInit(): BlockInitPayload {
+  return {
+    blockInstanceId: 'i',
+    blockId: 'b',
+    appId: 'app_test',
+    token: { raw: 'jwt', scopes: [], expiresAt: new Date(Date.now() + 60_000).toISOString() },
+    context: { slotId: 's' },
+    settings: { publisherSettings: {}, userSettings: {} },
+    viewer: null,
+    theme: 'light',
+    renderMode: 'iframe',
+  };
+}
+
+describe('useCheckpointPicker', () => {
+  let postMessageMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    postMessageMock = vi.fn();
+    Object.defineProperty(window, 'parent', {
+      value: { postMessage: postMessageMock },
+      configurable: true,
+      writable: true,
+    });
+    getTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: 'BLOCK_INIT', payload: buildInit() },
+        origin: PARENT_ORIGIN,
+      }),
+    );
+    postMessageMock.mockClear();
+  });
+
+  afterEach(() => {
+    resetTransport();
+  });
+
+  function lastSent() {
+    return postMessageMock.mock.calls[postMessageMock.mock.calls.length - 1][0] as {
+      type: string;
+      payload: {
+        requestId: string;
+        baseModelGroup?: string;
+        currentVersionId?: number;
+        versionId?: number | null;
+      };
+    };
+  }
+
+  function reply(type: string, requestId: string, extra: Record<string, unknown>) {
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type, payload: { requestId, ...extra } },
+          origin: PARENT_ORIGIN,
+        }),
+      );
+    });
+  }
+
+  describe('open()', () => {
+    it('sends OPEN_CHECKPOINT_PICKER with the family hint + currentVersionId', () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      act(() => {
+        result.current.open({ baseModelGroup: 'SDXL', currentVersionId: 128713 }).catch(() => {});
+      });
+      const sent = lastSent();
+      expect(sent.type).toBe('OPEN_CHECKPOINT_PICKER');
+      expect(sent.payload.baseModelGroup).toBe('SDXL');
+      expect(sent.payload.currentVersionId).toBe(128713);
+      expect(typeof sent.payload.requestId).toBe('string');
+    });
+
+    it('omits currentVersionId from the message when not provided', () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      act(() => {
+        result.current.open({ baseModelGroup: 'Flux1' }).catch(() => {});
+      });
+      const sent = lastSent();
+      expect(sent.payload.baseModelGroup).toBe('Flux1');
+      expect(sent.payload).not.toHaveProperty('currentVersionId');
+    });
+
+    // ── Unconstrained pick (baseModelGroup optional) ────────────────────────
+    //
+    // The host has always tolerated an absent baseModelGroup: its
+    // resolveCheckpointPickerRequest treats the field as optional, and an
+    // absent/unresolved group produces the bare `type = Checkpoint` clause —
+    // ALL generation-covered checkpoints, not none. Requiring it was an
+    // SDK-side restriction only, and it made every ecosystem but the caller's
+    // current one unreachable.
+    //
+    // 🔴 What the wire must NOT carry is a string. On the model-slot host
+    // (IframeHost) any string is passed straight through to
+    // `getBaseModelGroup`, which collapses an unrecognised value to the real
+    // ecosystem key 'Other' — so an empty string NARROWS the picker to that one
+    // family instead of widening it. On the PAGE host the resolver drops a
+    // zero-length value before that lookup, so `''` is already equivalent to
+    // omission there; a WHITESPACE-ONLY string narrows on both, since that guard
+    // is `length > 0`. Absence is the only spelling that means "unconstrained" on
+    // both surfaces.
+    //
+    // These cases assert the key is ABSENT rather than present-and-undefined.
+    // That is a wire-SHAPE contract, not a behavioural one: no host distinguishes
+    // the two (both hosts' branches are a `typeof … === 'string'` or truthiness
+    // test, which `undefined` fails either way), and the earlier claim that the
+    // distinction was load-bearing has been retracted.
+    it('omits baseModelGroup from the message when not provided (unconstrained pick)', () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      act(() => {
+        result.current.open({}).catch(() => {});
+      });
+      const sent = lastSent();
+      expect(sent.type).toBe('OPEN_CHECKPOINT_PICKER');
+      expect(sent.payload).not.toHaveProperty('baseModelGroup');
+      expect(typeof sent.payload.requestId).toBe('string');
+    });
+
+    it('omits baseModelGroup but keeps currentVersionId on an unconstrained pick', () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      act(() => {
+        result.current.open({ currentVersionId: 128078 }).catch(() => {});
+      });
+      const sent = lastSent();
+      expect(sent.payload).not.toHaveProperty('baseModelGroup');
+      expect(sent.payload.currentVersionId).toBe(128078);
+    });
+
+    it('treats an empty-string baseModelGroup as unconstrained — never puts "" on the wire', () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      act(() => {
+        result.current.open({ baseModelGroup: '' }).catch(() => {});
+      });
+      const sent = lastSent();
+      expect(sent.payload).not.toHaveProperty('baseModelGroup');
+    });
+
+    // 🔴 THE CASE THAT MAKES `.trim()` LOAD-BEARING. `''` alone cannot see it:
+    // an empty string is already falsy, so the conditional spread would drop it
+    // with or without the trim. A whitespace-only string is truthy — delete the
+    // `.trim()` and `'  '` reaches the wire, where `getBaseModelGroup('  ')`
+    // resolves to the real ecosystem key 'Other' and NARROWS the picker to the
+    // Other family: exactly the failure this whole change exists to remove,
+    // arrived at from the opposite direction. This is the spelling that narrows
+    // on BOTH hosts — the page host drops `''` for being zero-length, but `'  '`
+    // passes that guard — so it is the one case `.trim()` is the only defence for.
+    it('treats a whitespace-only baseModelGroup as unconstrained — never puts "  " on the wire', () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      act(() => {
+        result.current.open({ baseModelGroup: '  ' }).catch(() => {});
+      });
+      const sent = lastSent();
+      expect(sent.payload).not.toHaveProperty('baseModelGroup');
+    });
+
+    it('still resolves with { selected } on an unconstrained pick', async () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      let pick!: Promise<{ selected?: unknown }>;
+      act(() => {
+        pick = result.current.open({});
+      });
+      const sent = lastSent();
+      // A pick from a DIFFERENT family than the caller started in — the whole
+      // point of the unconstrained open.
+      const selected = {
+        versionId: 691639,
+        modelId: 618692,
+        baseModel: 'Flux.1 D',
+        modelName: 'FLUX',
+        versionName: 'dev',
+      };
+      reply('CHECKPOINT_PICKER_RESULT', sent.payload.requestId, { selected });
+      await expect(pick).resolves.toEqual({ selected });
+    });
+
+    it('resolves with { selected } on the matching CHECKPOINT_PICKER_RESULT', async () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      let pick!: Promise<{ selected?: unknown }>;
+      act(() => {
+        pick = result.current.open({ baseModelGroup: 'SDXL' });
+      });
+      const sent = lastSent();
+      const selected = {
+        versionId: 9001,
+        modelId: 700,
+        baseModel: 'SDXL 1.0',
+        modelName: 'DreamModel',
+        versionName: 'v2',
+      };
+      reply('CHECKPOINT_PICKER_RESULT', sent.payload.requestId, { selected });
+      await expect(pick).resolves.toEqual({ selected });
+    });
+
+    it('resolves with selected=undefined when the user dismissed (no `selected`)', async () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      let pick!: Promise<{ selected?: unknown }>;
+      act(() => {
+        pick = result.current.open({ baseModelGroup: 'SDXL' });
+      });
+      const sent = lastSent();
+      reply('CHECKPOINT_PICKER_RESULT', sent.payload.requestId, {});
+      await expect(pick).resolves.toEqual({ selected: undefined });
+    });
+
+    it('does NOT reject at the default ~30s timeout (a picker is human-interactive)', async () => {
+      vi.useFakeTimers();
+      try {
+        const { result } = renderHook(() => useCheckpointPicker());
+        let pick!: Promise<{ selected?: unknown }>;
+        act(() => {
+          pick = result.current.open({ baseModelGroup: 'SDXL' });
+        });
+        const sent = lastSent();
+        let settled = false;
+        void pick.then(
+          () => {
+            settled = true;
+          },
+          () => {
+            settled = true;
+          },
+        );
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(60_000);
+        });
+        expect(settled).toBe(false);
+
+        const picked = { versionId: 1, modelId: 2, baseModel: 'SDXL 1.0' };
+        reply('CHECKPOINT_PICKER_RESULT', sent.payload.requestId, { selected: picked });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        await expect(pick).resolves.toEqual({ selected: picked });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('exports a human-interaction timeout well above the default request timeout', () => {
+      expect(HUMAN_INTERACTION_TIMEOUT_MS).toBe(10 * 60_000);
+    });
+  });
+
+  describe('persist()', () => {
+    it('sends SET_USER_CHECKPOINT with a numeric versionId and resolves on ok:true', async () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      let done!: Promise<void>;
+      act(() => {
+        done = result.current.persist(4242);
+      });
+      const sent = lastSent();
+      expect(sent.type).toBe('SET_USER_CHECKPOINT');
+      expect(sent.payload.versionId).toBe(4242);
+      reply('USER_CHECKPOINT_SET', sent.payload.requestId, { ok: true });
+      await expect(done).resolves.toBeUndefined();
+    });
+
+    it('forwards an explicit null versionId (clear the override)', async () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      let done!: Promise<void>;
+      act(() => {
+        done = result.current.persist(null);
+      });
+      const sent = lastSent();
+      expect(sent.payload.versionId).toBeNull();
+      reply('USER_CHECKPOINT_SET', sent.payload.requestId, { ok: true });
+      await expect(done).resolves.toBeUndefined();
+    });
+
+    it('throws the host error message when the persist is rejected (ok:false)', async () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      let done!: Promise<void>;
+      act(() => {
+        done = result.current.persist(7);
+      });
+      const sent = lastSent();
+      reply('USER_CHECKPOINT_SET', sent.payload.requestId, {
+        ok: false,
+        error: 'wrong-ecosystem',
+      });
+      await expect(done).rejects.toThrow('wrong-ecosystem');
+    });
+
+    it('throws a default message when ok:false carries no error', async () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      let done!: Promise<void>;
+      act(() => {
+        done = result.current.persist(7);
+      });
+      const sent = lastSent();
+      reply('USER_CHECKPOINT_SET', sent.payload.requestId, { ok: false });
+      await expect(done).rejects.toThrow('failed to persist checkpoint');
+    });
+
+    // `error: ''` is FALSY but PRESENT. The reply validator early-accepts on
+    // presence and therefore SKIPS the `ok` check, so a hook testing only
+    // `!ok` — which this one did — would sail past and RESOLVE a failed
+    // persist. This site tested `!ok` ALONE; the `error` clause is new.
+    it('throws on a falsy-but-PRESENT error (ok:true, error:"")', async () => {
+      const { result } = renderHook(() => useCheckpointPicker());
+      let done!: Promise<void>;
+      act(() => {
+        done = result.current.persist(7);
+      });
+      const sent = lastSent();
+      reply('USER_CHECKPOINT_SET', sent.payload.requestId, { ok: true, error: '' });
+      await expect(done).rejects.toThrow('failed to persist checkpoint');
+    });
+  });
+});

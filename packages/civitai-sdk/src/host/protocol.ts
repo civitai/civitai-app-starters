@@ -1,0 +1,186 @@
+import type { WrappedToken } from '../core/handshake.js';
+
+export type ResourcePickerType = 'Checkpoint' | 'LORA';
+
+/**
+ * Which SPACE a `navigate()` path is resolved in.
+ *
+ *  - `'app'` — under this app's own route, as a sub-path of it. The DEFAULT.
+ *  - `'site'` — at the site root, leaving the app. The host grants this
+ *    per-surface and refuses it where the surface does not hold the capability.
+ *
+ * Omitting it means `'app'`, which is what keeps this field additive: a block
+ * that never sets it behaves as it did before the field existed. A leading slash
+ * carries no meaning — the host normalises it away in both scopes, so
+ * `'/settings'` and `'settings'` are one request within the scope you chose.
+ */
+export type NavigateScope = 'app' | 'site';
+
+/** The one resource the viewer picked. Discovery only: nothing here is an entitlement. */
+export interface PickedResource {
+  versionId: number;
+  modelId: number;
+  modelName: string;
+  versionName: string;
+  baseModel: string;
+  modelType: string;
+  strength?: number;
+  minStrength?: number;
+  maxStrength?: number;
+  trainedWords?: string[];
+  clipSkip?: number | null;
+}
+
+export interface DownloadRequest {
+  /** An own-output URL. The host allowlists the origin it will fetch. */
+  url: string;
+  filename?: string;
+}
+
+/** Why consent can never be granted in this environment. */
+export type ConsentRefusal = 'ungrantable';
+
+/** What a dev-session `BLOCK_ERROR` caught: a window `error`, an `unhandledrejection`, or `console.error`. */
+export type DevErrorSource = 'error' | 'unhandledrejection' | 'console';
+
+/**
+ * An uploaded image the host has finished moderating. `nsfwLevel` and
+ * `contentRating` are the host's verdict, so a block renders by them rather
+ * than judging the image itself.
+ */
+export interface UploadedImage {
+  imageId: number;
+  /** The host's browsing-level bitmask for this image. */
+  nsfwLevel: number;
+  contentRating: 'g' | 'pg' | 'pg13' | 'r' | 'x';
+  url: string;
+}
+
+/**
+ * A private img2img source. It carries no moderation verdict and belongs in a
+ * generation step, not on a surface other viewers can see.
+ *
+ * `imageId` and `ready` are set when the host kept the source as a private,
+ * scanned image: as on `BlockUploadedGenerationSource` (`@civitai/app-sdk/blocks`).
+ * Without them the source is unscanned, and the orchestrator scans it when the
+ * workflow runs.
+ *
+ * A step takes the url and the dimensions separately: `sourceImage` is the url,
+ * and `width`/`height` are the step's own.
+ */
+export interface SourceImage {
+  url: string;
+  width: number;
+  height: number;
+  imageId?: number;
+  ready?: boolean;
+}
+
+/**
+ * The host's moderation verdict on an upload, reached after the upload itself
+ * has already resolved.
+ *
+ * 🔴 `scanned` is the ONLY value that clears an image for a surface other
+ * viewers can see. `blocked` is the host refusing it, and `error` is the host
+ * declining to answer — neither is a pass, and a caller that reads "not
+ * blocked" as clean has inverted the guarantee.
+ */
+export type ImageScanResult =
+  | { status: 'scanned'; image: UploadedImage }
+  | { status: 'blocked'; reason?: string }
+  | { status: 'error'; message?: string };
+
+export type HostRequests = {
+  SAVE_IMAGE: { params: DownloadRequest; result: { ok?: boolean } };
+  OPEN_RESOURCE_PICKER: {
+    params: { resourceType: ResourcePickerType; baseModelGroup?: string };
+    result: { selected?: PickedResource };
+  };
+  OPEN_BUZZ_PURCHASE: {
+    params: { suggestedAmount?: number };
+    result: { purchased: boolean; newBalance?: number };
+  };
+  /**
+   * The host's own upload modal; the frame never handles the bytes.
+   *
+   * `purpose` is sent ONLY for `'generationSource'`. The host normalises an
+   * absent — or unrecognised — purpose to `'display'`, so omitting it keeps the
+   * display call byte-identical to the wire hosts have answered all along.
+   *
+   * `asyncScan` makes the host resolve on persist and stream the verdict as an
+   * `IMAGE_SCAN_RESOLVED` push. The host ignores it for `'generationSource'`,
+   * which has no scan at all.
+   */
+  OPEN_IMAGE_UPLOAD: {
+    params: { purpose?: 'generationSource'; asyncScan?: true };
+    result: {
+      selected?: UploadedImage | SourceImage | { status: 'pending'; imageId: number; url: string };
+    };
+  };
+  /**
+   * Publish outputs of ONE of this app's own workflows as scanned public
+   * images, behind the host's own confirmation.
+   *
+   * 🔴 `imageIndexes` INDEX the workflow's outputs, and there is no url on this
+   * message — there must never be one. The host re-derives ownership of
+   * `workflowId` from the token and resolves the orchestrator urls itself,
+   * which is what stops a frame at an opaque origin from naming an arbitrary
+   * blob to publish. A shape that accepted a url would be a different, weaker
+   * feature wearing this one's name.
+   */
+  PUBLISH_GENERATION_OUTPUTS: {
+    params: { workflowId: string; imageIndexes?: number[] };
+    result: { imageIds: number[] };
+  };
+  REQUEST_TOKEN: { params: { blockInstanceId: string }; result: { token: WrappedToken } };
+};
+
+export type HostNotifications = {
+  RESIZE_IFRAME: { height: number };
+  /**
+   * `host.reportError()` sends `{ message, fatal }` only. In a dev-tunnel preview,
+   * and in a review preview whose host lists `blockErrors:v1`, `initialize()` also forwards uncaught errors, unhandled rejections and
+   * `console.error` calls as `fatal: false` with `source`, `stack` (when there is
+   * one) and `at` (epoch ms); see `reportDevErrors`.
+   */
+  BLOCK_ERROR: {
+    message: string;
+    fatal: boolean;
+    source?: DevErrorSource;
+    stack?: string;
+    at?: number;
+  };
+  NAVIGATE: { path: string; scope?: NavigateScope; target: 'current' | 'new_tab' };
+  REQUEST_SIGN_IN: { returnUrl?: string };
+  /** `from`: the viewer's publish grant in ANOTHER app (an import's source); see `requestGrants`. */
+  REQUEST_CONSENT: { scopes?: string[]; from?: string };
+  TRACK_EVENT: { eventName: string; properties?: Record<string, unknown> };
+  /**
+   * The viewer pressed, typed, scrolled or focused something in the frame. Sent by
+   * `initialize()` itself, at most once a minute; no payload.
+   */
+  VIEWER_ACTIVITY: undefined;
+};
+
+export type HostPushes = {
+  /** The page is hidden; stop timers and polling until `RESUME`. */
+  SUSPEND: undefined;
+  RESUME: undefined;
+  /** `scopes` is advisory and may be empty; the message itself is the refusal. */
+  CONSENT_UNAVAILABLE: { reason: ConsentRefusal; scopes: string[] };
+  /**
+   * The host re-minted this app's token unasked: after a consent Allow, or on its own
+   * schedule. The transport has already applied the token to the snapshot when this is
+   * delivered; never a `TOKEN_REFRESH_RESPONSE` (the answer to a `getToken`).
+   */
+  TOKEN_REFRESH: { token: unknown };
+  /**
+   * The verdict on an `asyncScan` upload, once per upload the host accepted.
+   * It arrives long after that upload's own reply, which is why it is a push.
+   *
+   * `requestId` echoes the `OPEN_IMAGE_UPLOAD` it belongs to, but the transport
+   * owns request ids and hands none out, so this client correlates on
+   * `imageId` — the id it was given in the reply.
+   */
+  IMAGE_SCAN_RESOLVED: { requestId: string; imageId: number; result: ImageScanResult };
+};

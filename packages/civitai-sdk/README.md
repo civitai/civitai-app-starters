@@ -1,0 +1,1483 @@
+# `@civitai/sdk`
+
+The Civitai SDK: one client for the public API, the orchestrator and, inside a
+civitai.com page, the host. The same code serves a block app and an app of your
+own. New block apps start here. `@civitai/app-sdk/blocks` remains the contract
+underneath (the workflow body types, the manifest types, the host message
+shapes) and `@civitai/blocks-react` the React hook binding over it; both are
+still supported and release from this repo as separate codebases.
+
+```ts
+import { initialize } from '@civitai/sdk';
+
+const app = await initialize();
+
+const picked = await app.host.openResourcePicker({ resourceType: 'Checkpoint' });
+if (picked && (await app.requestGrants(['ai:write:budgeted']))) {
+  const { air } = await app.site.get<{ air: string }>(`model-versions/mini/${picked.versionId}`);
+
+  const submitted = await app.orchestration.submitWorkflow({
+    steps: [
+      {
+        $type: 'textToImage',
+        input: { model: air, prompt: 'A lighthouse at dusk', cfgScale: 7, seed: 1234 },
+      },
+    ],
+  });
+  const workflow = await app.orchestration.waitForWorkflow(submitted.id!);
+  render(workflow);
+}
+```
+
+> 🔴 **If you are a BLOCK, do not copy the `app.orchestration` call above.** That
+> reaches the orchestrator directly and carries none of the controls the block
+> path applies — the per-call Buzz budget, the per-viewer and per-app daily caps,
+> the maturity clamp, and the `app-block:<appId>` attribution tag. Generate with
+> **`app.workflows`** instead: `estimate`, `submit` and `wait` go through the
+> host's `/api/v1/blocks/workflows/*` routes, which apply all of them — see
+> [Multi-step workflows](#multi-step-workflows). The substitution type-checks and
+> passes tests, which is why it is worth saying here: the snippet above is written
+> for an app that is its own principal, not for a block. `BREAKING.md` §*What a
+> direct orchestrator call loses* has the detail.
+
+An app calls the Civitai API and the orchestrator as the viewer, with a token.
+Reading images, creating posts, running a workflow — all of it is an API call.
+A block additionally asks its host page to show the host's own UI.
+
+## `initialize()`
+
+| Call | Where | Resolves |
+|---|---|---|
+| `initialize()` | A block on civitai.com | Once the host hands over the viewer, the slot and a token. Rejects with `BridgeError` `unavailable` if no host answers within `timeoutMs` (10s) |
+| `initialize({ token, refresh?, requestGrants? })` | Anywhere else, typically your server | At once, with the OAuth access token you hold |
+| `initialize(await createSignIn(...))` | A web app outside civitai.com | At once, as the viewer who signed in; see below |
+
+Both give you:
+
+| Member | What it is |
+|---|---|
+| `app.site` | The public REST API at `/api/v1`: `get`, `post`, `request` |
+| `app.workflows` | Generation for a **block**, through the host's `blocks/workflows/*` routes: `estimate`, `submit`, `get`, `watch`, `wait`, `cancel`, `list`. Needs the block token: an OAuth access token is answered `401`, and a block holding one generates through `app.orchestration`. See [Multi-step workflows](#multi-step-workflows) |
+| `app.orchestration` | The orchestrator itself, for an app holding an OAuth access token: `submitWorkflow`, `estimateWorkflow`, `getWorkflow`, `watchWorkflow`, `waitForWorkflow`, `cancelWorkflow`, `queryWorkflows` |
+| `app.storage` | Document storage: `collection(name)` and `info()` over the collections the manifest declares. Needs the block token. See [Document storage](#document-storage). Its legacy `get`/`set`/`delete`/`list`/`getQuota` are `@deprecated` and reject with `410` |
+| `app.sharedStorage` | `@deprecated`: the legacy shared store, removed on 2026-11-10, so every call rejects with `410`. Use a `shared` collection. See [Shared storage](#shared-storage) |
+| `app.subListings` | The viewer's own App Store items for this app: `upsert`, `withdraw`, `mine`. Needs the block token and `apps:store:items:write`. See [Store sub-listings](#store-sub-listings) |
+| `app.requestGrants(scopes)` | Asks for more scopes; resolves `false` when they cannot be granted |
+| `app.getToken()` | For a call this client does not make |
+
+The `AppClient` interface in `src/app/index.ts` (and the published types) is the
+authority for this list.
+
+A block's `app` also has `host`, `viewer`, `context`, `settings`, `theme` and
+`onChange(listener)`. Outside a block they do not exist, and the types say so.
+
+`context` and `theme` are LIVE, not mount-time snapshots: the host pushes
+`THEME_CHANGE` when the viewer toggles dark mode and `ROUTE_CHANGED` when a page
+block's sub-path moves, and both are folded into the same snapshot — so
+`app.context.subPath` tracks `app.host.navigate(path)` (and the viewer's own back
+button) and `onChange` tells you when. Read them on each render rather than
+copying them once; there is deliberately no `onRouteChange`, because one value
+observed two ways is two values that can disagree.
+
+A block opts in by declaring `auth: "oauth"` in its `block.manifest.json`. The
+host then hands it a real OAuth access token that `/api/v1`, the orchestrator
+and the MCP accept, and consent — including `requestGrants` — goes through the
+host's consent dialog. The manifest must also declare `user:read:self`, which
+every OAuth token carries: on civitai.com the host never mints one without it
+and hands back the block token. The dev tunnel mints one regardless, so a
+missing `user:read:self` only shows up after approval. And `auth: "oauth"` cannot be declared alongside any
+`apps:storage:*` scope: such a manifest is refused at submit.
+
+### When the token is the block-scoped one
+
+`initialize()` starts either way. A block-scoped token for a signed-in viewer is
+**not** an error in itself: the host's OAuth mint is flag-gated, so an opted-in
+block can legitimately receive the block token, and that token serves the
+`/api/v1/blocks/*` routes it was minted for, `GET /api/v1/models/{id}`, and
+`app.storage` and `app.sharedStorage` — which an OAuth token cannot reach at all.
+What it does not reach is the rest of `/api/v1`, the orchestrator or the MCP. So
+the refusal sits at the surface, not at startup:
+
+| You call | Holding a block token, signed in |
+|---|---|
+| `app.storage.*` | Works for document storage (`app.storage.collection(name)`). This is the token app storage requires. The legacy `get`/`set`/`delete`/`list`/`getQuota` reject with `410` `legacy_store_removed`: civitai.com removed that store on 2026-11-10 |
+| `app.sharedStorage.*` | Rejects with `410` `legacy_store_removed`: civitai.com removed the legacy shared store on 2026-11-10. Use a `shared` document-storage collection |
+| `app.subListings.*` | Works for a signed-in viewer when the token carries `apps:store:items:write` — never in a dev-token, dev-tunnel or review session |
+| `app.site` on `blocks/…` | Works. These are the routes the token was minted for |
+| `app.site.get('me')` and the rest of `/api/v1` | The API's own 401/403, with `auth: "oauth"` named in the message. `status` and `body` are untouched, so a caller can still branch on them |
+| `app.workflows.*` | Works. Generation for a block goes here, with the `ai:write:budgeted` scope |
+| `app.orchestration.*` | Rejects **before** the request with a `CivitaiError` naming `auth: "oauth"` — the orchestrator accepts no block token on any route, so there is nothing to learn from making the call |
+| `app.requestGrants(...)` | Works. Goes to the host's consent dialog, so a `consent_required` fallback can still prompt |
+
+Anonymous viewers are untouched: no OAuth token is minted for one whatever the
+manifest says, so the manifest is not their fix — `host.requestSignIn()` is. A
+host that predates the `kind` field sends none, and behaves as it always did.
+
+> ⚠ Two limits on that middle row, and neither is a bug to be tuned away.
+>
+> **The SDK does not know which `/api/v1` routes accept the token**, so its
+> message does not say. The route is a string this client never interprets, and
+> which routes are dual-auth is the server's to change without a release here —
+> so the message names `blocks/*` (the token's own mint namespace) and states
+> plainly that the rest is not known from here, leaving the advice conditional:
+> *if* this path needs an OAuth token, declare it. `GET /api/v1/models/{id}` is
+> in fact accepted — it is the one dual-auth route today — so a refusal there
+> gets the same conditional annotation; `BREAKING.md` records the route map as it
+> stood when this version was published, and the `models:read:self` binding that
+> route applies.
+>
+> **"Does not reach" is not always "refuses."** A *public* route such as
+> `/api/v1/images` ignores an unusable token and answers **anonymously** instead
+> of erroring. Nothing at the client seam tells that apart from a successful
+> authenticated read, so prefer the `blocks/*` twin.
+
+## Signing in outside civitai.com
+
+A browser app signs the viewer in with Civitai itself: PKCE against
+`auth.civitai.com`, no server and no client secret. Register the app as a
+public OAuth client with its origins and redirect URL.
+
+```ts
+import { createSignIn, initialize } from '@civitai/sdk';
+
+const auth = await createSignIn({ clientId, scopes: ['user:read:self', 'ai:write:budgeted'] });
+if (!auth.signedIn) {
+  button.onclick = () => auth.signIn();
+  if (auth.returning) auth.signIn();
+} else {
+  const app = await initialize(auth);
+}
+```
+
+`createSignIn` finishes the return from Civitai when the page has just come
+back from it, and takes `code` and `state` out of the address bar. Tokens live
+in memory only and refresh themselves; storage holds only the sign-in in flight
+and a flag that the viewer signed in before (`returning`). Signing in again is
+a quick round trip, since Civitai remembers the consent. `requestGrants` goes
+back to Civitai for anything not yet granted.
+
+### Without leaving the page
+
+A page that must not be navigated away from, such as one with a chat or an
+editor embedded in it, signs in in a popup instead:
+
+```ts
+import { createSignIn, initialize } from '@civitai/sdk';
+
+const auth = await createSignIn({ clientId, scopes: ['ai:write:budgeted'] });
+button.onclick = async () => {
+  await auth.signInWithPopup(); // from the click itself: browsers only open a popup there
+  const app = await initialize(auth);
+};
+```
+
+Civitai returns the popup to `redirectUri`, the same page by default. That page
+calls `createSignIn()` as on any visit; in the popup it hands the result back to
+the page that opened it and closes. The result travels over a same-origin
+`BroadcastChannel`, not `window.opener`, because signing in through Google cuts
+the opener. A blocked popup rejects with `SignInError` `code: 'popup-blocked'`;
+pass a `signal` to give up, which rejects with `code: 'canceled'`.
+`requestGrants` still leaves the page.
+
+Only scopes with an OAuth equivalent can be asked for: `user:read:self`,
+`models:read:self`, `ai:write:budgeted`, `buzz:read:self`, `posts:write:self`
+and `social:tip:self`. The storage and collection scopes belong to blocks.
+`/api/v1` and the orchestrator both accept these tokens from any origin.
+
+## The API
+
+Routes are addressed by path, so a route `/api/v1` gains needs no release here:
+
+```ts
+const images = await app.site.get('images', { query: { limit: 20, username: 'civitai' } });
+```
+
+A `401` is retried once with a fresh token — except one whose body's `code` is
+`sign_in_required`, which is about the viewer, not the token. Any failure the server answered is an
+`ApiError` carrying `status`, the parsed `body`, and the server's own message —
+while a request the browser never delivered (CORS, DNS, offline) surfaces as a
+fetch `TypeError` with no `status`, so test `error instanceof ApiError` before
+reading one.
+
+## Document storage
+
+An app declares its **collections** in its manifest, and `app.storage.collection(name)`
+reads and writes their JSON documents. `private` collections hold one key space per
+viewer; `shared` ones one key space every viewer reads, written under the policy the
+collection declares (`own`: viewers create, only the author edits or deletes;
+`none`: nobody writes documents, viewers only increment counters and set marks).
+
+```json
+"scopes": ["apps:storage", "apps:storage:publish"],
+"storage": { "collections": {
+  "prefs":    { "visibility": "private" },
+  "requests": { "visibility": "shared", "write": "own", "marks": ["vote"],
+                "indexes": { "status": "string" }, "showAuthor": true },
+  "plays":    { "visibility": "shared", "write": "none", "counters": ["plays"] }
+}}
+```
+
+```ts
+interface Request {
+  title: string;
+  status: 'open' | 'done';
+}
+
+const requests = app.storage.collection<Request>('requests');
+
+const created = await requests.create({ title: 'More lighting presets', status: 'open' });
+const doc = await requests.get(created.key); // null when there is none
+await requests.put(created.key, { title: 'More lighting presets', status: 'done' }, { ifVersion: doc?.version });
+await requests.update(created.key, { $mark: 'vote' }); // { marked: true, count }
+
+const page = await requests.list({ where: { status: 'open' }, sort: '-mark:vote', limit: 20 });
+for (const item of page.items) {
+  console.log(item.data.title, item.marks.vote, item.author, item.viewer?.marks);
+}
+const mine = await requests.list({ author: 'me' });
+const voted = await requests.list({ markedBy: 'me', mark: 'vote' });
+
+await app.storage.collection('plays').update('model-123', { $inc: { plays: 1 } }); // { value }; creates the doc in a `none` collection
+const { limits, usage } = await app.storage.info();
+```
+
+- **Documents** are `{ key, data, version, createdAt, updatedAt, author, counters,
+  marks, viewer }`. `createdAt`/`updatedAt` are `Date`s. `author` is
+  `{ kind: 'user', isViewer, username? }` (the username only in a `showAuthor`
+  collection), `{ kind: 'counter' }` for a document a counter created, or
+  `{ kind: 'app' }` — never a numeric user id. `viewer` is `null` for an anonymous
+  viewer.
+- **Counters and marks are update operators.** `update(key, op)` sends ONE operator,
+  `PATCH /api/v1/blocks/storage/:collection/:key`: `{ $inc: { [counter]: by } }`
+  resolves `{ value }` (the new total; `by` is required, an integer from 1 to 100),
+  `{ $mark: name }` resolves `{ marked: true, count }` and `{ $unmark: name }`
+  `{ marked: false, count }` (`count` is absent for the built-in `report`, which
+  cannot be withdrawn). A tally never changes `data` or `version`. A second operator,
+  an unknown one, a mark name that is not a string and a `by` that is not a number
+  do not type-check; a body that still reaches the server as anything but one
+  operator is refused `invalid_request` with a `details.reason`: `empty_patch`,
+  `unknown_operator`, `multiple_operators`, `merge_patch_unsupported` (plain fields:
+  a merge-patch of `data` is reserved) or `malformed_operator`. `update` needs a
+  civitai.com that serves the PATCH route (civitai/civitai#8292).
+- **`increment`, `mark` and `unmark` are deprecated** for `update`. They are
+  unchanged: same signatures, replies and routes (`POST …/counters/:name`,
+  `PUT`/`DELETE …/marks/:name`, which civitai.com answers with a `Deprecation`
+  header), so they keep working against a civitai.com without the PATCH route.
+- **Conditional writes:** `put(key, data, { ifVersion })` and
+  `delete(key, { ifVersion })` write only at that version (`0` = only if absent);
+  a mismatch rejects `version_conflict` with `details.currentVersion`.
+- **Lists** take ONE equality on a declared index (`where`), one `sort`
+  (`[-]key|createdAt|updatedAt|<index>|counter:<n>|mark:<n>`), `author: 'me'`,
+  `markedBy: 'me'` with `mark`, `keyPrefix`, `limit` and `cursor`. `nextCursor` is
+  `null` exactly on the last page; pass it back with the same query.
+- **A refusal in the storage envelope is a `StorageError`** (an `ApiError`) with
+  the server's `code`, `status` and `details`; `retryAfter` is set when the server
+  named a wait. So is a name or key the client refuses before sending (an invalid
+  collection name is `collection_not_declared`; a key of `''`, `.` or `..` is
+  `invalid_request`). Anything else arrives as it would from any route: a response
+  without the envelope (a proxy error page, a site without these routes) is a plain
+  `ApiError` with its `status`, a request that never got an answer (offline, CORS,
+  DNS) is the `fetch` `TypeError`, and a 2xx the client cannot read is a
+  `CivitaiError`. `get` reads only `not_found` as "no document". Branch on `code`:
+
+```ts
+import { StorageError } from '@civitai/sdk';
+
+try {
+  await requests.put('r1', { title: 'Renamed', status: 'open' }, { ifVersion: 3 });
+} catch (error) {
+  if (error instanceof StorageError && error.code === 'version_conflict') reloadAndRetry();
+  else if (error instanceof StorageError && error.code === 'consent_required') askForPublishConsent();
+  else throw error;
+}
+```
+
+A counter or mark through `update`, with a refused body told apart by its reason:
+
+```ts
+import { StorageError, type StorageCollection } from '@civitai/sdk';
+
+declare const board: StorageCollection<{ title: string }>;
+
+const { value } = await board.update('r1', { $inc: { views: 1 } });
+const { marked, count } = await board.update('r1', { $mark: 'vote' });
+console.log(value, marked, count);
+
+try {
+  await board.update('r1', { $unmark: 'vote' });
+} catch (error) {
+  // Absent for a wrong value inside a well-formed operator, and for other codes.
+  if (error instanceof StorageError && error.code === 'invalid_request' && error.details?.reason) {
+    console.error('not one update operator:', error.details.reason);
+  }
+  throw error;
+}
+```
+
+Anonymous viewers may read `shared` collections and nothing else
+(`sign_in_required`). Creating or editing a document in a viewer-written shared
+collection needs the consent-gated `apps:storage:publish`; deleting your own, marks
+and counters need only `apps:storage`. Shared writes pass a minimum-trust gate and
+moderation. A shared `write: "own"` collection whose manifest declares
+`ownedModelVersions` (pointers such as `/workflow/modelVersionId`) refuses a create
+or `put` whose `data` holds, at one of those fields, anything but a model version
+the viewer owns: `resource_not_owned` (403), `details.pointer` naming the field,
+before moderation and before any write budget. An absent field is allowed;
+ownership is checked only when the document is written. Only phase-one operations exist: no batch writes, change feed, TTL or
+owner-written documents yet (server-side publish, below, is the one multi-document write).
+
+### Publishing private documents in one call
+
+`collection(to).publish({ from, keys, prune? })` asks the server to copy
+the viewer's own documents at `keys` (1 to 500) from this app's PRIVATE collection
+`from` into the SHARED collection `to`, authored by the viewer, in one transaction:
+every copy lands or none does, and the data never travels through the app. It is
+for "make this public" flows that would otherwise cost one shared write per document.
+
+- **Only what changed is written.** A copy whose content equals its private document
+  is reported `unchanged` and costs nothing.
+- **Each copy is checked like a `put`** (publish consent, trust, schema,
+  `ownedModelVersions`, moderation, the viewer's and the app's ceilings, and copies
+  count against the viewer's document cap). Any refusal refuses the whole publish;
+  `details.key` names the document where it applies.
+- **Skipped, never refused:** `missing` (no private document at that key),
+  `not_author` (another viewer's copy holds the key; it is never touched), `hidden`
+  (your own copy, hidden by a moderator; never rewritten).
+- **`prune: true`** also deletes your own copies in `to` whose key has no document
+  in `from`, at most 500 per call (`pruneIncomplete: true` means call again).
+  Copies whose private documents still exist in `from` are never pruned. **Prune is
+  scoped by `from`, not by where a copy came from:** if several private collections
+  feed one shared collection, a prune from one of them deletes the copies you
+  published from the others.
+- **Its own budget**, about 10 publishes per viewer per app per day, never the shared
+  write budget. A refusal is `rate_limited` with `details.bucket: 'publish'` and
+  `error.retryAfter`. Every call, even one that changes nothing, also spends one token
+  of the private-write window (120 a minute; `details.bucket: 'write'` when empty). A
+  private document changed mid-publish is `version_conflict` with `details.reason:
+  'source_changed'`, a shared copy that changed with `'target_changed'`: publish again.
+- `collection(to).unpublish(keys)` deletes your own copies in one transaction.
+
+**Older hosts.** civitai.com ships publish behind a per-app flag. A host that does not
+serve it answers as an unknown route; the client rejects with the LOCAL code
+`publish_unavailable`. Fall back to one `put` per document, waiting out each
+`rate_limited` for its `retryAfter` (this client never retries by itself), and write
+the listing last:
+
+```ts
+import { StorageError, type StorageCollection } from '@civitai/sdk';
+
+declare const clips: StorageCollection;
+declare const keys: string[];
+declare function putEachWithBackoff(keys: string[]): Promise<void>;
+
+try {
+  const r = await clips.publish({ from: 'my_clips', keys, prune: true });
+  console.log(r.created.length, r.updated.length, r.unchanged.length, r.skipped);
+} catch (error) {
+  if (error instanceof StorageError && error.code === 'publish_unavailable') await putEachWithBackoff(keys);
+  else if (error instanceof StorageError && error.code === 'rate_limited') console.log('retry in', error.retryAfter, 's');
+  else throw error;
+}
+```
+
+### Another app's collections: imports
+
+An app can reach a viewer's data in ANOTHER app — a fork reading and writing its
+parent's — by declaring the import in its manifest and passing `from` (the source
+app's blockId). This needs civitai.com to serve imports (civitai/civitai#7494); until it
+does, every call with a `from` is refused 400 `invalid_request` (`unknown query parameter
+from`).
+
+```json
+"scopes": ["apps:storage", "apps:storage:import"],
+"scopeJustifications": { "apps:storage:import": "Reads and edits your notes from the app this one was forked from." },
+"storage": {
+  "imports": [{ "from": "parent-app", "collections": ["notes", "board"], "access": "readwrite" }]
+}
+```
+
+```ts
+import { storageImportRefusal } from '@civitai/sdk';
+
+const parentNotes = app.storage.collection<{ text: string }>('notes', { from: 'parent-app' });
+
+try {
+  const page = await parentNotes.list({ limit: 20 });
+  await parentNotes.put('n1', { text: 'edited from the fork' });
+} catch (error) {
+  const refusal = storageImportRefusal(error);
+  if (refusal?.kind === 'import_consent') {
+    // Re-mint first: a token that already carries the scope may not cover this version's import.
+    await app.getToken({ fresh: true });
+    if (await app.requestGrants(['apps:storage:import'])) {
+      await parentNotes.put('n1', { text: 'edited from the fork' }); // retry once
+    }
+  } else if (refusal?.kind === 'source_publish_consent') {
+    // The client already asked the host for it and the viewer did not allow it (or this
+    // host cannot ask). Ask again only on the viewer's own action, never in a loop.
+    showMessage(`Publishing in ${refusal.from} needs your permission there.`);
+  } else {
+    throw error;
+  }
+}
+```
+
+- **Every call carries `?from=<blockId>`**: `get`, `getMany`, `put`, `create`,
+  `delete`, `list`, `update` (and the deprecated `increment`, `mark` — a report
+  included — and `unmark`), with the same
+  path, body and reply as without it. `collection(name)` without `from` is this app's
+  own collection, even when it has the same name. `info()` takes no `from` — a source
+  app's limits and usage cannot be read through an import — and a `from` passed to it
+  (or a `from` key that is not a string, such as `{ from: undefined }`) is refused
+  before sending, `invalid_request`, rather than quietly reaching this app's own data.
+- **The call runs in the source app, as the viewer.** A private collection holds the
+  viewer's own documents there; a shared one reads as the source shows it; writes follow
+  the source collection's write policy and `schema`; usage counts against the source's
+  ceilings. Each call is also charged to THIS app's read rate limit first.
+- **Consent is per viewer, per source.** The viewer grants `apps:storage:import` through
+  the host's prompt (which lists what this app reads, and changes, in each source app)
+  and can remove it under Apps → Permissions; a new version that imports more is prompted
+  for again.
+- **Publishing in the source is the source's permission, and the client asks for it.**
+  A create, put, counter, mark or unmark in one of the source's SHARED collections also
+  needs the viewer's `apps:storage:publish` grant IN THE SOURCE APP (the import grant is
+  not it, and neither is this app's own `apps:storage:publish`). When the source refuses
+  for want of it, `app.storage` asks the host by itself —
+  `REQUEST_CONSENT { scopes: ['apps:storage:publish'], from }`, which opens "<this app>
+  needs permission in <source>" — and on the next token refresh the host PUSHES
+  (`TOKEN_REFRESH`) sends the same call ONCE more. The token's scopes do not change (the
+  grant is recorded for the source, which can then publish as the viewer too, and the
+  viewer revokes it from the source's card under Apps → Permissions), so that push is
+  the only signal — and it is not proof: the host also pushes its routine re-mint, and
+  "Not now" sends nothing, so a re-mint while the prompt is open costs one retry that the
+  source refuses again. The retried write's result is the authority. "Not now" (no push
+  within 60 s) and a `CONSENT_UNAVAILABLE` surface the first `source_publish_consent`
+  refusal; a refused retry surfaces ITS refusal, and nothing is asked or retried again.
+  A `TOKEN_REFRESH_RESPONSE` to a `getToken({ fresh: true })` never counts. Only the app
+  page (`/apps/run/<slug>`) prompts; every other host refuses at once. A delete, and any
+  write to a private source collection, never needs it. To ask yourself:
+  `app.requestGrants(['apps:storage:publish'], { from })` — it resolves `true` on that
+  push (the same caveat: check the write you retry), `false` on `CONSENT_UNAVAILABLE` or
+  after 60 s.
+- **Refusals** — `storageImportRefusal(error)` reads each one, typed: `import_consent`
+  (403 `consent_required`, `details: { scope: 'apps:storage:import', from }`),
+  `source_publish_consent` (403 `consent_required`,
+  `details: { scope: 'apps:storage:publish', from }`), `read_only` (403 `write_policy`,
+  `reason: 'import_read_only'`: the import's `access` is `read`), `not_declared` (403
+  `import_not_declared`, `details: { from, collection }`), `not_exportable` (403, the
+  source set `exportable: false` on it), `source_collection_not_declared` (404
+  `collection_not_declared` with a `from`), and `not_eligible` (403 with
+  `details.reason` `import_dev_token`, `import_hub_token`, `import_in_review`,
+  `import_namespace`, `source_not_approved` or `import_source_rating` — every reason the
+  server's import check gives today). The reason type is open-ended: a reason a newer
+  server adds, on a call through an import, is returned as it is, so keep a `default`
+  branch. It returns `null` for every other error, including the same codes on this
+  app's own collections and the `not_eligible` reasons about this app or viewer
+  themselves (`app_not_approved`, `account_too_new`, …).
+- **Only an ordinary block token imports.** A dev token, a hub OAuth bearer and a review
+  reach no other app. So in a [dev-tunnel preview](#in-a-dev-tunnel-preview-local-to-the-tab)
+  an import is refused locally with the server's own answer to a dev token,
+  `not_eligible` / `import_dev_token` (403, nothing sent), while this app's own
+  collections keep working in the tab. To exercise a fork reading its parent, use
+  [the fake](#a-fake-document-store) with `sources`.
+
+### In a dev-tunnel preview: local to the tab
+
+A dev-tunnel preview (`civitai app dev-tunnel`, the App Assistant's live
+preview) has **no server-side storage**: an app that is not approved has no storage
+namespace, and unreviewed code must not write into a published app's data. So when
+the host marks the frame `storageMode: 'local-preview'` in `BLOCK_INIT`,
+`initialize()` serves `app.storage.collection(name)` and `app.storage.info()` from an
+**in-memory store in this tab** — [`createFakeStorage`](#a-fake-document-store), the
+real client over a seam that enforces the server's rules — and sends **no request**
+to `blocks/storage/*`. Your code does not change; show a badge so nobody mistakes the
+data for real:
+
+```ts
+if (app.storage.mode === 'local-preview') {
+  showBadge('Preview data is local to this tab');
+}
+```
+
+- **Your LOCAL manifest decides the collections**, not the server's copy:
+  `blockManifestPlugin()` from `@civitai/app-sdk/vite` hands its `scopes` and
+  `storage` to the page on the dev server (never in a build); that is the only way
+  the manifest reaches the SDK. It does so from the `@civitai/app-sdk` release that
+  includes this change (the one whose CHANGELOG entry reads "`blockManifestPlugin()`
+  exposes the manifest's `scopes` and `storage` to `@civitai/sdk` on the dev server
+  only"); a `^0.x` range never moves to a newer minor, so raise that pin by hand.
+  Not every scaffold registers the plugin (the CLI's `page-money` template does
+  not); add it there. Without it, every document-store call rejects
+  `local_preview_no_manifest` (a `StorageError`, status 404, sent nowhere); a
+  declaration the local store cannot serve rejects `local_preview_invalid_manifest`
+  (also 404), and a local store that failed to load rejects
+  `local_preview_unavailable` (also 404; reload the preview). None is a status this
+  SDK treats as retryable, and none falls back to the real routes.
+- **Model-version ownership is not checked locally.** A collection's
+  `ownedModelVersions` fields accept any well-formed model version id in a preview;
+  the server checks that the writer owns it. A malformed value is still refused.
+- **One viewer, one tab, gone on reload.** It cannot show other people's entries,
+  real vote totals, ranking across users, the minimum-trust gate on shared writes,
+  or moderation of real content.
+- **No imports.** `collection(name, { from })` is refused locally with the server's own
+  answer to a dev token, 403 `not_eligible` (`import_dev_token`); nothing is sent. Test
+  a fork reading its parent with [the fake's `sources`](#a-fake-document-store).
+- **Only the document store.** The deprecated `app.storage.get/set/…` and
+  `app.sharedStorage` keep calling the real routes, which refuse a preview.
+- **Only on the host's signal.** `app.storage.mode` is latched when `initialize()`
+  resolves, and never inferred from the token: a published app whose manifest forgot
+  `apps:storage` holds a token that looks the same, and keeps getting the real
+  route's `insufficient_scope`. That refusal's message says what to do —
+  declare `apps:storage` under `scopes`; it is granted once the app is approved — and
+  that in a preview this SDK would have kept the data locally had the host marked the
+  frame.
+
+The legacy stores below were removed on 2026-11-10: civitai.com answers their routes
+`410` with `{ error: 'legacy_store_removed', message, docs }`, and their methods are
+`@deprecated`. Nothing is copied from them into collections. Moving an app off them:
+https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores.
+
+## App storage
+
+> **Deprecated** in favour of [document storage](#document-storage): declare a
+> `private` collection and use `app.storage.collection(name)`.
+
+🔴 **Removed on 2026-11-10**, with the shared store. A request to any of its five
+routes that passes the block-token and scope checks is answered **`410`** with
+`{ error: 'legacy_store_removed', message, docs }`, so `get`, `set`, `delete`,
+`list` and `getQuota` reject. Move the app to the document store:
+https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores. The rest of this
+section describes the store as it behaved before the removal.
+
+`app.storage`'s `get`/`set`/`delete`/`list`/`getQuota` are the viewer's own key/value store, scoped to this app and this
+block instance. It needs the block token the host mints — an app holding an
+OAuth access token has no per-viewer app storage — and an anonymous viewer is
+refused, so gate on `app.viewer` rather than reading an empty page as "nothing
+stored".
+
+```ts
+await app.storage.set('draft:latest', { prompt, steps: 30 });
+const draft = await app.storage.get<Draft>('draft:latest'); // null when unset
+const { keys, nextCursor } = await app.storage.list({ prefix: 'draft:' });
+const quota = await app.storage.getQuota();
+```
+
+Three properties the surface is built around:
+
+- **Every failure rejects.** Nothing here resolves to mean "not written", and
+  nothing resolves to mean "could not read". A malformed success throws a
+  `CivitaiError`; a refusal is an `ApiError` carrying `status`. A caller that
+  must not act on a partial view branches on the rejection, never on an empty
+  result.
+- **`nextCursor` is present exactly when there may be more rows**, and is passed
+  through untouched. Its absence is your proof a scan completed. Page it
+  yourself, with a bound — the client adds no iterator, because the truncation
+  policy is the caller's to choose.
+- **`set`'s `sizeBytes` is the wire unit; `getQuota`'s `usedBytes` is the stored
+  unit.** They are not a fixed multiple — measured, a numeric-heavy value stores
+  up to 44.4x its wire size — so summing `sizeBytes` under-counts your quota.
+  `getQuota()` is the authority, and it reports neither the key-length cap nor
+  the per-value cap.
+
+A write refused for size or quota arrives as `413`, whichever ceiling fired — the
+server names which one only in prose, so test the status, not the message:
+
+```ts
+try {
+  await app.storage.set('draft:latest', huge);
+} catch (error) {
+  if (error instanceof ApiError && error.status === 413) askTheUserToFreeSpace();
+  else throw error;
+}
+```
+
+## Shared storage
+
+> **Deprecated** in favour of [document storage](#document-storage): declare a
+> `shared` collection, which has authorship, counters and marks built in.
+
+🔴 **Removed on 2026-11-10.** civitai.com shut off the legacy shared store on that
+date. A request to any of its eleven routes that passes the block-token and scope
+checks is answered **`410`** with `{ error: 'legacy_store_removed', message, docs }`,
+so every `app.sharedStorage` call rejects with an `ApiError` whose `status` is
+`410`. Move the app to the document store:
+https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores. The rest of this
+section describes the store as it behaved before the removal.
+
+`app.sharedStorage` is this app's **cross-user** key/value store — one namespace
+every viewer reads and writes, unlike `app.storage`, which is private per viewer.
+Five methods: `list`, `get`, `append`, `update`, `withdraw`.
+
+```ts
+const { items, nextCursor } = await app.sharedStorage.list({ limit: 20 }); // newest first
+const { key } = await app.sharedStorage.append({ title: 'My deck', data: { cards } });
+const row = await app.sharedStorage.get(key);        // null when hidden or absent
+await app.sharedStorage.update(key, { title: 'Renamed' });
+const { deleted } = await app.sharedStorage.withdraw(key);
+```
+
+🔴 **Generic key/value on purpose — and deliberately smaller than the route
+table.** The platform serves eleven shared-storage routes; this client wraps the
+five that are key/value operations. `vote`, `unvote`, `counts`, `top`,
+`increment` and `report` are **intentionally absent**: an app that needs voting,
+counters or reporting builds them at its own layer on top of these five, and the
+platform surface expands only if demand shows up. The routes existing is not a
+reason to expect a method here.
+
+Reading a tally still works — `SharedItem` carries `count` and `viewerVoted` as
+the server projects them, which is exactly what makes an app-layer vote feature
+possible. You just cast the vote yourself.
+
+🔴 **Reads and writes have different audiences, and one does not imply the
+other.** This is the opposite of `app.storage`, so do not carry that gate over:
+
+- **An anonymous viewer MAY read** (`list`, `get`) — signed-out browsing is a
+  supported path — and may **never** write. An anon write is a `403` from the
+  scope binding, not the `401` a missing token gives.
+- **A signed-in viewer is not automatically a permitted writer.** Writes clear a
+  server-side minimum-trust gate (account age, completed onboarding, verified
+  email or a linked OAuth account, not banned or muted). Treat a write refusal
+  as a normal outcome with a real message in the UI, not an unexpected error.
+
+So gate the write affordances on `app.viewer`, and render the reads regardless.
+
+Four shape differences from `app.storage`, each of which would otherwise be a bug
+that type-checks:
+
+- **The two reads are `GET`**; the three writes are `POST`. A read sent as `POST`
+  is a `405`.
+- **`list` returns `items` with values included** — so one request renders a page
+  rather than needing a `get` per key — and its `nextCursor` arrives nested under
+  the reply's `metadata`. The client lifts it for you; the rule is the same as
+  `app.storage`'s, absence proves the scan completed.
+- **`append` takes no key.** The server mints a ULID and returns it, so one
+  viewer cannot overwrite another's row. Use `update` for an in-place edit of a
+  row this viewer authored. It also means `list`'s `prefix` is no namespace of
+  yours: a prefix you choose (`'deck:'`) matches none of the rows `append`
+  creates. Put what you filter by in `data` and filter the page yourself.
+- **`value` is `unknown` on the way out.** The row was written by some other
+  viewer's copy of your app, possibly an older version, so its shape is a fact
+  about the data rather than a promise the client can make. Narrow it yourself.
+
+⚠ **`limit` is validated, not normalised.** Out of range, non-integer, `NaN` and
+`Infinity` are each a `400` and a rejected promise — not a silently adjusted page.
+Pass a value inside the server's range, or omit it and take the server's default.
+🔴 The sharp edge: `Number(searchParams.get('n'))` on a missing param is `NaN`, so
+a pattern that used to fall through to a default is now a failed request.
+
+The `400` body is `{ error: 'Invalid query', details }` and the SDK reads `error`
+first, so `ApiError.message` says only "Invalid query" — the field-level reason is
+in `ApiError.body.details`.
+
+**Writes are rate-limited per (viewer, app)**; the limits are listed once, in
+[the `@civitai/blocks-react` README](https://github.com/civitai/civitai-app-starters/blob/main/packages/civitai-blocks-react/README.md#shared-storage-write-limits). A write refused for a limit is an `ApiError` with
+`status === 429`, a `Retry-After` header the client does not expose, and a body
+of `{ code: 'TOO_MANY_REQUESTS', message, error, rateLimit: { retryAfterSeconds,
+retryAt } }`. This client does not validate `body.rateLimit`, so check it before
+you render it:
+
+```ts
+import { ApiError } from '@civitai/sdk';
+
+try {
+  await app.sharedStorage.append({ title: 'My deck' });
+} catch (error) {
+  const rateLimit =
+    error instanceof ApiError && error.status === 429
+      ? (error.body as { rateLimit?: { retryAt?: unknown } } | null)?.rateLimit
+      : undefined;
+  if (typeof rateLimit?.retryAt === 'string') showRetryAt(new Date(rateLimit.retryAt));
+  else throw error;
+}
+```
+
+`withdraw` answers `{ ok: true, deleted: false }` identically for another
+author's key, an already-withdrawn row and a key that never existed — it is not
+an existence oracle, so do not report that as "someone else owns this". Put every
+string other viewers will read in `title`/`body`, which the server moderates;
+`data` is unmoderated app structure.
+
+## Store sub-listings
+
+`app.subListings` publishes an item a viewer made in your app — a document they
+authored in a `shared` [document-storage](#document-storage) collection whose
+`write` is `own` or `anyone` — as its **own App Store card**,
+under the viewer's name, badged "in ‹your app›". Three methods over
+`/api/v1/blocks/sub-listings/*`: `upsert`, `withdraw`, `mine`.
+
+```ts
+import { SubListingError } from '@civitai/sdk';
+
+try {
+  const { id, status, pendingEdit } = await app.subListings.upsert({
+    itemKey: 'preset-7f3a',   // the key of a document the viewer authored
+    title: 'Moody film portraits',
+    subPath: 'p/preset-7f3a', // opens /apps/run/<your-app-slug>/p/preset-7f3a
+    tagline: null,            // a left-out optional is CLEARED: re-send what you want to keep
+  });
+} catch (error) {
+  if (error instanceof SubListingError && error.code === 'insufficient_scope') {
+    // dev-token, dev-tunnel and review sessions never carry the scope: hide the control
+  } else throw error;
+}
+
+const { withdrawn } = await app.subListings.withdraw('preset-7f3a');
+const { items } = await app.subListings.mine(); // oldest first, with review status
+```
+
+- **`itemKey` is the document's key, not its collection**, at most 64
+  characters. The server looks it up in every `shared` `own`/`anyone` collection
+  your approved manifest declares, in the production namespace only (a dev or
+  review document never resolves), so the key must be unique across those
+  collections: one held by two of them reads as not found (`item_not_found`), as
+  does a hidden or missing document, and a document someone else authored is
+  `not_your_item`. Deleting the document withdraws its card; a moderator hiding
+  it hides the card. An app whose approved manifest declares no such collection
+  is still on legacy [shared storage](#shared-storage): its keys resolve old
+  shared-storage rows, which can no longer be created.
+- **`upsert` replaces the whole item, it does not patch it.** An optional that is
+  `null` or `undefined` is left out of the request, and the server stores a
+  left-out optional as empty — so an edit that sends only `title` clears the
+  item's tagline and image and resets its rating to the app's. Re-send every
+  field you want to keep.
+- **The server body is strict** — an unknown key is `400 invalid_body` — so the
+  client sends only `itemKey`, `title`, `subPath`, `tagline`, `imageId` and
+  `contentRating`, whatever else the object you pass carries. Every other rule (lengths, the `subPath` shape, the rating floor, the image
+  checks) is the server's and comes back as a refusal.
+- **A refusal is a `SubListingError`** — an `ApiError` with a typed `code`
+  (`not_enabled`, `untrusted`, `item_not_found`, `not_your_item`, `text_rejected`,
+  `image_not_public`, `image_not_yours`, `rating_too_loose`, `rate_limited`,
+  `author_cap`, `conflict`, `unavailable`, …). Branch on `code`; the message is a
+  server sentence, not UI copy. A refusal with no `code` stays a plain `ApiError`.
+  A `429`'s `Retry-After` header is not exposed.
+- **Every item waits for a moderator.** `status` is `pending`, `approved`,
+  `hidden` or `withdrawn`; an `upsert` answered `hidden` changed nothing, and the
+  app cannot lift it. Editing an approved item stages the edit
+  (`pendingEdit: true`) while the card keeps serving the approved version.
+- `withdraw` answering `withdrawn: false` is a success: nothing of the viewer's was
+  active under that key, or a moderator has hidden it.
+
+🔴 It needs the scope `apps:store:items:write` in the manifest (with a
+`scopeJustifications` entry), and that scope is consent-exempt, refused to an
+anonymous viewer, and **never minted for dev-token, dev-tunnel or review
+sessions** — so these calls only succeed from an approved version of your app,
+and Civitai must also enable your app for sub-listings (`not_enabled` until then).
+Build the publish path to degrade quietly.
+
+## Multi-step workflows
+
+`app.workflows` is how a **block** generates. It goes through the host's
+`/api/v1/blocks/workflows/*` routes, so the host prices the work, holds it to
+the viewer's and the app's budgets, tags it as this app's and submits it — the
+block never calls the orchestrator. It needs the block token the host mints and
+the `ai:write:budgeted` scope in the manifest.
+
+> **These routes take the block token only.** A block that declares
+> `auth: "oauth"` and is handed an OAuth access token is answered `401` on every
+> call here, and the `ApiError` message says so. Such a block generates through
+> [`app.orchestration`](#the-orchestrator) instead, as its own principal and
+> without the controls above; a block that wants `app.workflows` does not
+> declare `auth: "oauth"`. `initialize({ token })` is given no token kind, so
+> there the `401` arrives unexplained.
+
+A `kind: 'workflow'` body runs several steps as **one** workflow, and a later
+step can consume an earlier step's result through a `{ $ref, path }` reference:
+
+```ts
+import { estimatedCost, initialize, type WorkflowBody } from '@civitai/sdk';
+
+const app = await initialize();
+
+const body: WorkflowBody = {
+  kind: 'workflow',
+  arguments: { prompt: 'a lighthouse at dusk' },
+  steps: [
+    {
+      name: 'draw',
+      $type: 'imageGen',
+      input: {
+        engine: 'google',
+        model: 'nano-banana-2',
+        prompt: { $ref: '$arguments', path: 'prompt' },
+      },
+      suppressOutput: true, // an intermediate: its output is not surfaced
+    },
+    {
+      name: 'cutout',
+      $type: 'imageBackgroundRemoval',
+      input: { image: { $ref: 'draw', path: 'output.images[0].url' } },
+    },
+  ],
+};
+
+// 1. Price it. Nothing is charged or reserved.
+const estimate = await app.workflows.estimate(body);
+// A priced estimate is not 'succeeded' ('pending' in practice): read the price, not the status.
+const price = estimatedCost(estimate);
+if (price === null) {
+  // A refusal RESOLVES — see below.
+  throw new Error(estimate.error ?? 'This workflow could not be priced.');
+}
+if (!(await confirmSpend(price))) throw new Error('Not confirmed.');
+
+// 2. Run it. One key per press of the button, reused on every retry.
+const idempotencyKey = crypto.randomUUID();
+const submitted = await app.workflows.submit(body, { idempotencyKey });
+if (submitted.status === 'failed') {
+  throw new Error(submitted.error ?? 'This workflow failed.');
+}
+
+// 3. Follow it to a final status.
+const done = await app.workflows.wait(submitted.workflowId);
+if (done.status === 'succeeded') render(done.imageUrls);
+```
+
+Every body kind the host accepts goes through the same seven calls — a single
+`textToImage` generation is `{ kind: 'textToImage', … }` in place of the body
+above. The body and reply types (`WorkflowBody`, `WorkflowBodyWorkflow`,
+`WorkflowStepRef`, `WithWorkflowStepRefs`, `BlockWorkflowSnapshot`, …) are
+exported from `@civitai/sdk`; no other package is needed to write one.
+
+A `kind: 'training'` body, and a step body carrying a `quoteId`, also need a
+quote the viewer has confirmed in the host's own dialog before they are
+submitted. `app.workflows` has no call for that confirmation step.
+
+| Call | Does |
+|---|---|
+| `estimate(body)` | Prices the body. `estimatedCost(snapshot)` is the price in whole Buzz, or `null` when there is none |
+| `submit(body, { idempotencyKey })` | Runs it, spending the viewer's Buzz |
+| `get(workflowId)` | The workflow as it stands now. A read the host could not serve (rate-limited) comes back as `{ workflowId, status: 'processing', throttled: true }`: check `throttled` before rendering it |
+| `watch(workflowId)` | An async iterator: the workflow now, then each time it changes, until a final status. A `throttled: true` reply is not an update: it is never yielded and does not end the watch, which reads again |
+| `wait(workflowId)` | The last value of `watch` — the final snapshot, whichever status it is (never a throttled reply) |
+| `cancel(workflowId)` | Stops it on the orchestrator and resolves the workflow as it now stands |
+| `list({ cursor?, limit? })` | A page of the workflows this app ran for this viewer, as `{ workflows, cursor }` |
+
+**Restricted outputs.** A snapshot's `outputs` (and each `list` row's) has every
+available output in order. An entry is `{ url, nsfwLevel? }`,
+`{ restricted: true, reason: 'pool' | 'ceiling' | 'unrated' }`, `{ pending: true }`
+(not rated yet; the snapshot carries `ratingPending: true`) or `{ blocked: true }`,
+and only the first has a url. Show a locked state for the others and do not try to
+fetch them. They are not in `imageUrls` or a row's `images`, which are therefore not
+for indexing: `imageIndexes` are positions in `outputs`, and naming a restricted one
+is refused with `output N is restricted`. `watch` / `wait` keep reading for up to two
+minutes after a final status while `ratingPending` is set. The types are
+`BlockWorkflowOutput`, `BlockWorkflowAvailableOutput`, `BlockWorkflowRestrictedOutput`,
+`BlockWorkflowPendingOutput` and `BlockWorkflowBlockedOutput`.
+
+### A refusal is an answer, not a throw
+
+When the host declines to price or run a body it answers **`200` with a
+snapshot whose `status` is `'failed'`**. Every call above *resolves* with it, so
+branch on the snapshot rather than wrapping the call in `try`:
+
+```ts
+const estimate = await app.workflows.estimate(body);
+if (estimatedCost(estimate) === null) {
+  estimate.error; // a sentence for the viewer, e.g. which step is at fault
+  estimate.errorCode; // a stable code to branch on, when the refusal defines one
+}
+```
+
+`estimatedCost` is the check to use: the price when the estimate has one, else
+`null`. An estimate is priced when its `status` is not `'failed'` and it carries
+a numeric `cost.total`. 🔴 **Do not require `'succeeded'`**: nothing runs on an
+estimate, so a priced one comes back with a status that has not finished
+(`'pending'` in practice), and a check for `'succeeded'` treats every price as
+missing. `0` is a price.
+
+Three things follow from that shape:
+
+- **A refused estimate has no `cost`.** An estimate the host could not price
+  does not predict a refused submit: the same body can still be submitted, and
+  is then reserved at the app's per-generation budget for each step.
+- **A `failed` snapshot from `submit` is one of two things, told apart by
+  `workflowId`.** The placeholder id `'failed'` means the host refused *this
+  request* before submitting it; a budget or spending-cap refusal carries the
+  `cost.total` it would not charge. On the first attempt for a press, that
+  means nothing was charged. It says nothing about an earlier attempt for the
+  same press that ended unknown (below). A real id means a run was created and
+  came back failed, and Buzz may have been spent.
+- **A `failed` workflow from `wait` can still have `cost` and `imageUrls`.**
+  Steps that finished before the failing one stay charged and keep their output.
+
+The estimate is an estimate, not a ceiling: when a step's input references an
+earlier step, the orchestrator re-prices it once that value is known.
+
+What *does* reject is an `ApiError` with the HTTP `status`, a `CivitaiError`
+when a `2xx` carried no snapshot, or whatever `fetch` threw when no answer
+arrived. A `400` is a body or key the host cannot parse; a `403` on `get` or
+`cancel` is a workflow that is not this viewer's or not this app's.
+
+🔴 **For `submit`, a rejection does not mean "not started".** Read the next two
+sections before writing its `catch`.
+
+### When a submit rejects: the outcome is unknown
+
+A rejected `submit` has **not** told you the run does not exist. The host
+checks the request (its shape, the token, the scope, the budget on the token)
+before it submits anything, and a rejection from one of those checks is a plain
+refusal — but the same status codes can also come back after the orchestrator
+was called, and nothing in the reply says which it was. So treat every rejected
+`submit` as unknown. Three cases are worth knowing by name:
+
+- **A `5xx`.** The host answers with a server error both when nothing was
+  started and when its call to the orchestrator failed after the orchestrator
+  may already have created the run. On that second path the host undoes its
+  own budget reservations and forgets the key, so nothing on the host side
+  records the run — but a workflow may exist.
+- **A `409`.** The host answers `409` while an earlier submit with the same key
+  is still in flight (or its record was lost). The earlier attempt may yet
+  succeed.
+- **No answer at all** — a dropped connection, a timeout, an aborted request.
+
+Do **one of two things, and never mint a new key for that press**:
+
+1. **Retry `submit` with the same `idempotencyKey`.** Except for the two body
+   kinds named below, the host derives the run's identity on the orchestrator
+   from the key, so that a repeat can be matched to a run the first attempt
+   created. A new key cannot be matched to anything. After a `409`, wait before
+   retrying: the first attempt is still running. A request the host cannot
+   parse simply answers `400` again.
+2. **Or look for the run** with `app.workflows.list()` before treating the
+   press as failed.
+
+🔴 **For a `kind: 'training'` body and a step body carrying a `quoteId`, the
+key is not the run's identity.** The host does not use the client key on those
+two; the run is identified by the confirmed quote (a step) or by the training
+run itself. So after an unknown outcome on one of these, check
+`app.workflows.list()` **before** asking the viewer to confirm another quote.
+
+What this client can promise stops there. Matching a repeated key to an
+existing run is done by the host and the orchestrator, not here; it is not
+guaranteed to match, and the host remembers a key only for a limited time.
+`list()` does not settle it either: a listed workflow carries no idempotency
+key, so it cannot be tied to a press for certain, and a run missing from it is
+not proof that nothing ran.
+
+```ts
+import { ApiError, SubmissionUnconfirmedError } from '@civitai/sdk';
+
+// One key for this press. It outlives the call: a retry reuses it.
+const idempotencyKey = crypto.randomUUID();
+// Has any attempt for this press ended without a known outcome?
+let outcomeUnknown = false;
+
+async function submitOnce() {
+  try {
+    const submitted = await app.workflows.submit(body, { idempotencyKey });
+    if (submitted.status !== 'failed') {
+      track(submitted.workflowId); // started: follow it with wait()
+    } else if (submitted.workflowId !== 'failed') {
+      showMessage('This run failed. Check your history before trying again.');
+    } else if (outcomeUnknown) {
+      // THIS attempt was refused, but an earlier one may have started a run.
+      const { workflows } = await app.workflows.list(); // look for it first
+      showMessage('We could not confirm this started. Check your history.');
+    } else {
+      showMessage('This could not start. Nothing was charged.'); // first attempt only
+    }
+  } catch (error) {
+    outcomeUnknown = true;
+    if (error instanceof SubmissionUnconfirmedError) {
+      // The run MAY be running and MAY have been charged. Do not resubmit.
+      showMessage('We could not confirm this run. It may still be running.');
+      const { workflows } = await app.workflows.list(); // look for it
+    } else {
+      // An ApiError (a 5xx, a 409, …) or no answer: UNKNOWN. Keep
+      // `idempotencyKey`; the retry button calls submitOnce() again with the
+      // SAME key. Never a fresh key, and never "failed, nothing charged".
+      console.error(error instanceof ApiError ? error.status : error);
+      showRetry('We could not confirm this started.', submitOnce);
+    }
+  }
+}
+```
+
+### When a submit could not be confirmed
+
+One reply is neither a refusal nor a failed request. For a run the viewer
+confirmed a quote for — a `kind: 'training'` body, or a step body carrying a
+`quoteId` — the host can end up not knowing whether the run was created. It
+then answers with a refusal-shaped snapshot and a `submissionUnconfirmed` flag
+beside it, and `submit` **rejects** with `SubmissionUnconfirmedError` rather
+than hand back a snapshot that reads as "not started". The example above
+handles it.
+
+Here the host has **kept** the budget it reserved for the run, so this is not
+one to retry as a reflex: a second submit reserves that budget again and may
+start a second run. Do not tell the viewer nothing was spent. Look for the run
+with `app.workflows.list()` first. `error.snapshot`, when
+the host sent one, carries the `cost.total` that was reserved; its `workflowId`
+is a placeholder, not something to poll. `snapshot.error` on any reply is
+server text — log it and show your own copy.
+
+### The idempotency key
+
+`submit` spends Buzz, so it requires an `idempotencyKey` and refuses to send
+without one. The key is what lets the host recognise a submit that was sent
+twice — a retry after a dropped connection, a double press — as one request
+(for a `kind: 'training'` body or a step with a `quoteId`, see the note above:
+there the key is not the run's identity).
+
+- Mint it **once per thing the viewer asked for**, keep it until that press has
+  a known outcome, and reuse it on every retry. A key minted inside the retry
+  loop, or a fresh key for "try again" after an error, protects nothing: to the
+  host that is a new generation.
+- Letters, digits, `_` and `-`, 1 to 64 characters, **no colons**.
+  `crypto.randomUUID()` fits. The host answers `400` for anything else, and this
+  client sends the key exactly as given.
+- `submit` does not retry a failed request. (Like every call here it re-sends
+  once after refreshing an expired token, which the host had refused unread.)
+  After a `5xx`, a `409` or no answer the workflow may or may not exist: see
+  [When a submit rejects](#when-a-submit-rejects-the-outcome-is-unknown).
+
+Step limits, the reference rules and every `errorCode` are in the
+[workflows guide](https://developer.civitai.com/apps/guide/workflows).
+
+`app.orchestration`, next, is a different client for a different caller: it
+reaches the orchestrator directly with an OAuth access token and applies none of
+the controls above, which is why it refuses a block token outright.
+
+## The orchestrator
+
+Steps are typed by `$type`: `input` is checked against that step's own input,
+and narrowing a returned step on `$type` types its `output`. The union is
+generated from `@civitai/orchestration-client` (`npm run gen:steps`), so a step
+type the orchestrator gains arrives with a client update and no code here.
+
+An output is listed before it exists — check `available` before showing it.
+
+```ts
+for await (const workflow of app.orchestration.watchWorkflow(id)) {
+  render(workflow); // now, then each time it changes, until a final status
+}
+```
+
+`watchWorkflow` reads the workflow, then holds each further read open on the
+orchestrator until something changes (`?until=change`), and yields only when
+it did. `waitForWorkflow` is its last value — a failed workflow resolves, it
+does not throw. Both wait out a brief outage and give up on a refusal; break out
+of the loop or pass a `signal` to stop.
+
+> An orchestrator without `until=change` holds each read until the workflow
+> finishes or 20s pass, so mid-run progress arrives up to 20s late.
+
+[`examples/generate.ts`](./examples/generate.ts) runs all of it from a server:
+`pnpm build && CIVITAI_TOKEN=… node examples/generate.ts [modelVersionId] [prompt]`,
+with `ORCHESTRATION_URL` / `CIVITAI_SITE_URL` to point it at a local stack.
+
+## Grants
+
+Scopes are typed (`Scope`, and the list as `SCOPES`), so a misspelt scope fails
+to compile rather than being quietly refused.
+
+In a block, `requestGrants` opens the host's consent dialog and resolves once
+the re-minted token carries the scopes. A viewer who closes the dialog sends
+nothing, so pass a `signal` to bound the wait. Given a token, `requestGrants`
+is yours to supply — typically re-running your OAuth authorize flow with the
+wider scope — and refuses without one.
+
+## The host
+
+| Call | What the host does |
+|---|---|
+| `resize(height)` | Resizes the frame, clamped to the manifest |
+| `autoResize(element?)` | Keeps the frame as tall as the body (or `element`); returns a stop function |
+| `reportError(message, { fatal })` | `fatal` swaps the block for the host's fallback |
+| `navigate(path, { scope, target })` | Deep-links within this app's own sub-paths; `scope: 'site'` asks to leave the app for a civitai.com page instead. `scope` defaults to `'app'` |
+| `onVisibilityChange(handler)` | Reports the page hiding and returning |
+| `requestSignIn({ returnUrl })` | Starts sign-in; the block re-initialises signed in |
+| `track(eventName, properties)` | Sends a custom event to your app's analytics, fire-and-forget. Only events and properties declared under `analytics.events` in the manifest are recorded — see *Custom events* below |
+| `download({ url, filename })` | Saves to the viewer's device — a sandboxed frame cannot |
+| `openResourcePicker({ resourceType })` | civitai's own picker; resolves the one pick, or `null` |
+| `openBuzzPurchase({ suggestedAmount })` | The purchase flow; resolves `{ purchased }` |
+| `openImageUpload()` | The upload modal; resolves a `PendingImage`, or `null` |
+| `openImageUpload({ purpose: 'generationSource' })` | The same modal for a private img2img source; resolves `{ url, width, height }` |
+| `publishGenerationOutputs({ workflowId, imageIndexes })` | Publishes your own workflow's outputs, behind the host's confirmation; resolves the new image ids |
+
+Host failures reject with a `BridgeError` carrying a `code` (`forbidden`,
+`unauthenticated`, `rate-limited`, …). `unauthenticated` includes a viewer whose
+session ended (signed out in another tab) — offer `requestSignIn()`. A session
+that now belongs to a different account is `forbidden`; its `message` asks the
+viewer to reload the page. Timeouts are the host's to set; pass a
+`signal` to cancel. `ApiError` and `BridgeError` both extend `CivitaiError`, so
+one `catch` can tell a refusal from a bug.
+
+### Uploading an image
+
+The host owns the upload: it opens its own modal, takes the file through the
+viewer's session and hands back what it stored. The frame never sees the bytes.
+
+A **public** image is moderated *after* it is stored, so `openImageUpload()`
+resolves as soon as the image exists and the verdict comes from `scan()`:
+
+```ts
+const app = await initialize();
+
+const image = await app.host.openImageUpload();
+if (image) {
+  showTheAuthorTheirOwnPreview(image.url);
+
+  const verdict = await image.scan({ signal: AbortSignal.timeout(600_000) });
+  if (verdict.status === 'scanned') publish(verdict.image);
+  else if (verdict.status === 'blocked') tellThemWhy(verdict.reason);
+  else offerToTryAgain(verdict.message);
+}
+```
+
+🔴 `scanned` is the only verdict that clears the image for anyone but its
+author. `blocked` is the host refusing it; `error` is the host not answering —
+neither is a pass, so branch on `scanned`, never on "not blocked". `scan()`
+waits as long as the host takes and this package imposes no deadline of its
+own, which is why the snippet passes a signal.
+
+A **generation source** is private and unscanned here — the orchestrator scans
+it when the workflow runs — so it needs no verdict, and comes back as a url and
+the image's real dimensions. A step takes the two separately: `sourceImage` is
+the url, and the dimensions are the step's own:
+
+```ts
+const app = await initialize();
+
+const source = await app.host.openImageUpload({ purpose: 'generationSource' });
+if (source) {
+  await app.orchestration.submitWorkflow({
+    steps: [
+      {
+        $type: 'textToImage',
+        input: {
+          model: 'urn:air:sdxl:checkpoint:civitai:101055@128078',
+          prompt: 'the same lighthouse, at dawn',
+          cfgScale: 7,
+          seed: 1234,
+          sourceImage: source.url,
+          width: source.width,
+          height: source.height,
+        },
+      },
+    ],
+  });
+}
+```
+
+### Publishing a generation
+
+Outputs of a workflow your app ran can become public images, and the host asks
+the viewer first. Needs `ai:write:budgeted` — an app trusted to spend their
+Buzz on a generation is trusted to publish what it produced.
+
+```ts
+const app = await initialize();
+
+const imageIds = await app.host.publishGenerationOutputs(
+  { workflowId, imageIndexes: [0, 2] },
+  { signal: AbortSignal.timeout(600_000) },
+);
+```
+
+🔴 **Outputs are named by index, never by url.** The host re-derives that this
+viewer and this app own the workflow and resolves the urls itself — a frame at
+an opaque origin naming its own blob to publish would be a different feature
+entirely. Omit `imageIndexes` to publish every output; an unusable list is
+refused here rather than sent, because the host reads one it cannot parse as
+*publish everything*.
+
+The host holds its confirmation in front of a person, so this waits as long as
+they take and nothing here cuts it short — pass a `signal`, as above, for the
+bound your app wants. A viewer who declines rejects the call.
+
+⚠ Publishing is best-effort per image: an output that fails is skipped rather
+than failing the call, so `imageIds` can be **shorter** than what you selected
+and nothing says which index dropped. Compare lengths; do not pair ids to
+indexes.
+
+### Custom events
+
+```ts
+app.host.track('generate_clicked', { mode: 'txt2img', batch: 4 });
+```
+
+🔴 **Only what the manifest declares is recorded.** Declare each event, and each
+property it carries, under `analytics.events` in `block.manifest.json`; events
+are accepted against the approved manifest:
+
+```json
+"analytics": {
+  "events": {
+    "generate_clicked": {
+      "properties": {
+        "mode": { "type": "enum", "values": ["txt2img", "img2img"] },
+        "batch": { "type": "number" }
+      }
+    }
+  }
+}
+```
+
+- An undeclared event is counted as dropped; its name and properties are not stored.
+- A declared event keeps only its declared properties, each only when the value
+  has the declared type. Types are `enum`, `number` and `boolean`; there is no
+  free-text string, so a string is kept only when it is one of the enum's values.
+- Each mount may send 10 events a second and 500 in all, in bodies of at most
+  32 KiB. An event over a limit is dropped in the browser and counted nowhere.
+- Fire-and-forget: there is no reply. Owners see aggregates in the app's
+  analytics panel, never individual events.
+
+### Errors in a dev or review preview
+
+In a dev session or a moderator's review preview only, `initialize()` forwards
+what would otherwise vanish inside the frame: an uncaught error (`window`
+`error`), an unhandled promise rejection, and every `console.error` call. Each
+goes to the host as a `BLOCK_ERROR` with `fatal: false`, `source` (`'error'`,
+`'unhandledrejection'` or `'console'`), `stack` when there is one, and `at`
+(epoch ms), so the person or the assistant building the app, or the moderator
+reviewing it, can see it.
+
+- A dev session is one the host mounted as a dev-tunnel preview, App Assistant's
+  live preview included: the same `BLOCK_INIT` `storageMode: 'local-preview'`
+  that switches the document store.
+- A review preview is one whose host lists `blockErrors:v1` in
+  `BLOCK_INIT.capabilities`. It does not switch the document store.
+- A published app's frame carries neither and sends nothing new.
+- `console.error` still reaches the console, first and unchanged. Nothing is
+  swallowed and no listener cancels the browser's default.
+- Before anything leaves the frame, JWT-shaped strings, `Bearer …` credentials
+  and the token this frame holds are redacted. Then `message` is cut to 2,000
+  characters and `stack` to 4,000.
+- At most 20 reports a minute; the same `message` again within 10 s of its last
+  report is dropped.
+- An error thrown before `initialize()` resolves is not forwarded.
+
+`host.reportError()` is unchanged: it sends `{ message, fatal }` and nothing else.
+
+## Parent origins
+
+Messages are accepted only from an allowlisted parent origin. The allowlist is
+read from `VITE_` / `NEXT_PUBLIC_` / `PUBLIC_BLOCK_ALLOWED_PARENT_ORIGINS` at
+build time, falling back to the canonical civitai.com origins when there is no
+build step. To override at runtime, call `getTransport({ allowedParentOrigins })`
+before `initialize()`; options apply on first use only.
+
+Wildcards take the form `https://*.example.com` and match subdomains on a dot
+boundary. A port never matches a wildcard — list a ported parent as an exact
+entry.
+
+## Testing
+
+`@civitai/sdk/testing` has `createFakeTransport()`: pass it as
+`initialize({ transport })` and script the host's answers.
+
+### A fake document store
+
+`createFakeStorage({ manifest })` is an in-memory document store behind the same
+`Http` seam the client uses, enforcing the server's rules: scopes and consent, write
+policies, the minimum-trust gate, anonymous readers, keys, limits and quotas,
+moderation, error codes and statuses. This package runs the platform's own storage
+contract against it, so where the contract speaks the fake and the server agree.
+
+```ts
+import { createFakeStorage } from '@civitai/sdk/testing';
+
+const fake = createFakeStorage({ manifest, viewer: { username: 'alice' } });
+const prefs = fake.storage.collection('prefs'); // the real client, against the fake
+await prefs.put('theme', { mode: 'dark' });
+
+const bob = fake.as({ viewer: { username: 'bob', trusted: false } }).storage;
+const anon = fake.as({ viewer: null }).storage;
+```
+
+**Rate limits are OFF by default**, so your own tests are never throttled. Pass
+`enforceRateLimits: true` to apply the server's — the per-minute and per-day windows
+for reads, private writes and deletes, marks and counters, and reports, plus the
+shared write budget — when you want to test how the app handles `rate_limited`
+(drive the clock with `now`).
+
+`publish` and `unpublish` are OFF by default, as on civitai.com, where they sit
+behind a per-app flag: both answer as an unknown route, which the client reports as
+`publish_unavailable`, so your default tests exercise the fallback. Pass
+`publish: true` to serve them with the server's rules and budget.
+
+Where it differs from the server on purpose:
+
+- A declaration using a feature the platform has not shipped — `write: "owner"` or
+  `"anyone"`, `kind: "log"`/`maxEntries`, `ttlSeconds`, `dailyWritesPerAuthor` —
+  makes `createFakeStorage` throw, naming it, instead of failing per request. It is
+  not a manifest validator otherwise; `civitai app validate` is.
+- A list `nextCursor` is an opaque token, refused for any other collection, sort or
+  filter than the query that issued it. Treat it as opaque against the server too.
+- It has no model versions of its own, so a collection's `ownedModelVersions` rule
+  checks writes against the viewer's `modelVersions` — the ids that viewer owns,
+  none by default (so every id is refused, as the server refuses one that is not
+  the writer's):
+  `fake.as({ viewer: { username: 'bob', modelVersions: [4317] } })`. It does not
+  model the server's ownership lookup failing (a retryable 503
+  `service_unavailable`).
+
+**Imports: a fork and its parent in one fake.** `sources` adds other apps by blockId,
+each with its own manifest, data, `status` and `consent`; `as({ app })` acts as one of
+them, so a test can seed the parent's data the fork then reads through
+`collection(name, { from })`. The fake checks what the server checks, in its order:
+the manifest's `storage.imports`, `access`, the source's approval, declaration and
+`exportable`, `apps:storage:import` on the token, and the viewer's grant
+(`importGrants`; by default exactly the manifest's imports, as if every prompt had been
+allowed — pass `{}` or a narrower grant to test the prompt). Revoke
+`apps:storage:publish` in a source's `consent` to reach the publish-in-source refusal,
+and pass `requestGrants` to answer the client's prompt for it: return `true` (Allow —
+the fake records the grant in that source and the client's one retry lands) or `false`
+("Not now").
+A `token: 'dev'` caller is refused every import, as the server refuses a dev token —
+which is why a dev-tunnel preview cannot show a fork its parent's data, and this is
+where a fork author tests that path instead.
+
+```ts
+import { createFakeStorage } from '@civitai/sdk/testing';
+
+const fake = createFakeStorage({
+  blockId: 'my-fork',
+  manifest: forkManifest, // declares storage.imports from 'parent-app'
+  sources: { 'parent-app': { manifest: parentManifest } },
+  viewer: { username: 'alice' },
+});
+await fake.as({ app: 'parent-app' }).storage.collection('notes').put('n1', { text: 'from the parent' });
+const doc = await fake.storage.collection('notes', { from: 'parent-app' }).get('n1'); // the parent's document
+```
+
+`fake.calls` records every request and answer. Options also cover smaller `limits`,
+`consent` (revoked scopes, or `'unavailable'`), `appStatus`, `disabled` and a custom
+`moderate`; by default the scanner refuses the words in `FAKE_STORAGE_MODERATION`.
+That default is the server's enforced moderation. The host picks each app's
+moderation mode for shared data, and enforce is not the default there: expect
+shadow (scanned after the write) or off, where neither a hit nor a scanner outage
+refuses a write. So never rely on a refusal to keep content out of shared data:
+a write the fake refuses may land on the server, and other viewers read it. Pass
+`moderate: () => null` to test what such an app sees. The fake does not model
+moderator hides or the review-preview namespace, and at the `Http` seam there is no
+URL resolution — the client refuses the segments a URL would
+rewrite (`''`, `.`, `..`) before sending.
+
+### The legacy key/value stores
+
+There is no published fake for app storage, on purpose. The seam is `fetch`, so
+pass your own `fetch` to `initialize({ token, fetch })` and the client's URLs,
+bodies, statuses and date revival are all real — which a fake replacing the
+`storage` client would not be. Two things to get right in one you write:
+
+- **Make the page size small** (2 or 3, not the server's 50). A page that holds
+  every fixture is exactly how a caller that never forwards `cursor` passes a
+  whole green suite.
+- **Put `updatedAt` on the wire as an ISO string**, as `res.json()` does. Hand
+  the client a `Date` and its revival becomes unobservable, since
+  `new Date(aDate)` is a `Date`.
+
+This SDK's own suite keeps one at
+[`test/support/fake-app-storage.ts`](./test/support/fake-app-storage.ts); it is
+not exported, because four of the five fleet apps that store per-viewer state
+need knobs it does not have (injected latency, prefix-targeted refusals, quota
+overrides, a cursor it ignores, a read that never settles). Copy it if it helps.
+
+## Web storage in a block
+
+A block is framed at an **opaque origin**: civitai's `intersectSandbox` adds
+`allow-same-origin` only for the `internal` and `verified` trust tiers, and in
+v1 every approved block is `unverified`. There, `localStorage` and
+`sessionStorage` do not merely come back empty — *reading the property throws*:
+
+```
+SecurityError: Failed to read the 'localStorage' property from 'Window':
+The document is sandboxed and lacks the 'allow-same-origin' flag.
+```
+
+Guarding your own call sites is not enough, because a dependency that touches
+storage while its module body evaluates takes the app down before any of your
+code runs — and libraries routinely mislabel the failure as something else.
+
+So the package ships a repair behind its own subpath. Importing
+`@civitai/sdk/safe-storage` installs a spec-shaped in-memory `Storage` over any
+web-storage global that is present but unusable. It is inert where storage works
+and where there is none at all (Node/SSR/workers), and it never replaces a
+healthy store.
+
+🔴 **This is not automatic. Add the import yourself, as the first import in your
+entry module** — `import '@civitai/sdk'` on its own installs nothing:
+
+```
+import '@civitai/sdk/safe-storage'; // side-effect import; keep it FIRST
+import 'some-library-that-reads-localStorage';
+```
+
+The import *is* the install, so for most blocks that line is the whole of it.
+There is nothing to configure. The subpath does export two functions, for the
+cases the import alone cannot cover:
+
+- `installSafeStorage(scope?)` — run the repair at a *specific moment* rather
+  than at module-evaluation time. The one that matters: immediately before an
+  `await import('some-lib')` that reads storage while evaluating. A hoisted
+  static import cannot be placed "after" anything, so a dynamic import is the
+  case the side-effect line does not solve. Returns which globals it replaced.
+- `createMemoryStorage()` — the spec-shaped in-memory `Storage` itself, if you
+  want one without touching any global.
+
+Two things about that line:
+
+- **First is the whole point.** ES imports are hoisted and evaluated in order,
+  so a storage-touching dependency imported *above* this one still evaluates
+  first and nothing can reach it in time. Put it above every other import,
+  including your framework's.
+- **It is a side-effect-only import, so bundlers must be told to keep it.** The
+  package declares a `sideEffects` allowlist naming
+  `./dist/safe-storage/index.js` for exactly that reason; `sideEffects: false`
+  would license every bundler to drop it. The package root
+  (`./dist/index.js`) is deliberately *not* in that allowlist — it is pure
+  re-exports and stays fully tree-shakeable.
+
+### Two things "inert where storage works" hides
+
+Both only ever happen at a **real** origin — neither can occur in the block
+sandbox this subpath exists for.
+
+- **It writes a probe key.** Classifying a store means a real round trip, so at
+  import each of `localStorage` and `sessionStorage` gets one
+  `setItem('__civitai_app_sdk_storage_probe__', '1')` followed immediately by
+  `removeItem`. Net contents are unchanged and neither store object is replaced
+  — but per the Web Storage spec each write queues a `storage` event in the
+  other documents sharing the store, so a cross-tab listener that does not
+  filter by key will see spurious events.
+- **A FULL store counts as broken.** The write probe cannot tell "quota
+  exhausted" from "storage disabled" — a `QuotaExceededError` classifies the
+  store as unusable, and the repair swaps in the in-memory fallback, seeded
+  first from every entry it could still read. Nothing readable is lost, but the
+  store stops persisting: writes after that point are session-scoped and gone
+  on reload. In a block that is the honest semantic regardless. In an app at a
+  real origin with a full `localStorage`, it is a downgrade from persistent to
+  session-scoped that you opted into by importing this subpath.
+
+A block built on `@civitai/app-sdk/blocks` already gets this: that entry imports
+its own copy (`@civitai/app-sdk/safe-storage`). A block that has finished porting
+to `@civitai/sdk` imports neither, which is why this line exists.
+
+The fallback is session-scoped — nothing survives a reload, which is the honest
+semantic at an opaque origin, since there is no origin to persist against. Treat
+web storage in a block as a cache, never a source of truth. The durable
+per-viewer store is [app storage](#app-storage).
+
+## Checks
+
+- `npm run api` regenerates [`api/public-api.md`](./api/public-api.md) from the
+  compiler's own declarations; CI fails when it is stale.
+- `npm run check:parity` fails when a message sent here has no handler in the
+  host, checked against a committed snapshot of civitai's handler inventory.
+  Refresh it with `npm run snapshot:host`.
+- `npm run check:layering` keeps `core` free of any domain.
+- `npm run check:steps` fails when the step unions no longer match the
+  installed `@civitai/orchestration-client`.
+- `src/workflows/types.generated.ts` is a generated copy of the block workflow
+  types `@civitai/app-sdk/blocks` defines. The repo's guard suite
+  (`pnpm test:guards`) fails when it no longer matches its source; refresh it
+  with `npm run gen:workflow-types`.
+
+See [`BREAKING.md`](./BREAKING.md) for what an app gives up moving from
+`@civitai/app-sdk` 0.x and `@civitai/blocks-react`.
+
+## License
+
+MIT

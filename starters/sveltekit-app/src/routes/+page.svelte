@@ -1,4 +1,5 @@
 <script lang="ts">
+  import DesignSystemDemo from '$lib/components/DesignSystemDemo.svelte';
   import GenerateForm from '$lib/components/GenerateForm.svelte';
   import LogoutControls from '$lib/components/LogoutControls.svelte';
   import type { PageData } from './$types';
@@ -12,6 +13,8 @@
     <LogoutControls />
   {/if}
 </header>
+
+<DesignSystemDemo />
 
 {#if data.error}
   <div
@@ -55,15 +58,19 @@
       <p class="text-sm">
         Signed in as <strong>{data.me?.username ?? 'unknown'}</strong>
       </p>
-      <p class="mt-1 text-sm">
-        Buzz balance: <strong>{data.me?.balance ?? '—'}</strong>
-      </p>
+      <!-- Hidden entirely when the balance is unknown (no `BuzzRead` -> 403).
+           A dash here is what the pre-fix bug looked like. -->
+      {#if data.buzzBalance != null}
+        <p class="mt-1 text-sm">
+          Buzz balance: <strong>{data.buzzBalance}</strong>
+        </p>
+      {/if}
       <p class="mt-2 text-xs text-zinc-500">
         Granted scopes: <code class="font-mono">{data.grantedScopes?.join(', ')}</code>
       </p>
     {/if}
   </section>
-  <GenerateForm initialBalance={data.me?.balance} />
+  <GenerateForm initialBalance={data.buzzBalance} />
 {/if}
 
 <footer class="mt-auto text-xs text-zinc-500">

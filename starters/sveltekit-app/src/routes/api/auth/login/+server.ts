@@ -13,7 +13,7 @@ export const POST: RequestHandler = async ({ cookies }) => {
   writeOAuthState(cookies, { state, verifier: pkce.verifier, scope: REQUESTED_SCOPES }, !dev);
 
   const authorizeUrl = buildAuthorizeUrl({
-    baseUrl: config.CIVITAI_BASE_URL,
+    baseUrl: config.CIVITAI_AUTH_URL,
     clientId: config.CIVITAI_CLIENT_ID,
     redirectUri: REDIRECT_URI,
     scope: REQUESTED_SCOPES,

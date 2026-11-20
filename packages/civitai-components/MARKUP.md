@@ -1,0 +1,582 @@
+# `@civitai/components` — markup contract
+
+These components are **framework-agnostic**: the styling is driven entirely by
+`data-*` attributes, so any HTML that follows the contract below picks up the
+design system without a framework. This document is the source of truth for
+external HTML authors.
+
+This sheet is one of **two independent** ways to consume the design system. The
+other is the `<civitai-*>` custom elements — self-styling in shadow DOM, so they
+need neither this sheet nor this contract — which are what
+`@civitai/components-react` binds for React. Use this document when you write
+the markup yourself; use the elements when you want the behaviour (keyboard
+handling, ARIA wiring, state) supplied for you.
+
+## Setup
+
+Load the tokens **and** the component CSS (order-independent, but load both):
+
+```html
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/theme/styles.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@civitai/components/styles.css" />
+```
+
+These URLs are **deliberately unversioned** — they track each package's `latest`
+dist-tag, so the CSS you load always matches the contract documented below. A
+pinned URL is the failure mode this document has already shipped twice: jsDelivr
+serves every published version forever, so a stale pin returns **200 with an old
+stylesheet** and every attribute documented since renders as an unstyled bare
+element — no console error, no failed request. To pin anyway (reproducible
+builds), append the version **you read from each package's own npm page** —
+`…/npm/@civitai/theme@<theme-version>/styles.css` — and re-check it when you
+upgrade. The two packages version **independently**: never copy one version
+across both links, because a version a package never published is a hard 404,
+and a 404'd stylesheet renders unstyled with no error either.
+
+Or, from JS: `import { injectStyles } from '@civitai/components'; injectStyles();`
+(injects both tokens and component CSS, idempotently).
+
+## Theming
+
+Set `data-theme="light"` or `data-theme="dark"` on any ancestor (typically
+`<html>` or the block root). All tokens re-resolve from that scope. Default
+(no attribute) is the **dark** palette, and nothing consults the OS preference:
+since `@civitai/theme@0.5.0` the dark values live on `:root` and the stylesheet
+declares no `prefers-color-scheme` block in either direction. Only `light` and
+`dark` select a token block — any other value selects none and inherits the dark
+base. ⚠️ Before that release the default was light-with-an-OS-dark-override; if
+you set `data-theme` only to stop the browser deciding, you can drop it.
+
+## Cascade / overriding
+
+Every shipped rule lives in `@layer civitai.components`. Your own **unlayered**
+CSS always beats it — no `!important`, no specificity war.
+
+🔴 **That applies to this package's rules, NOT to the tokens — and the
+difference will cost you a rebrand if you miss it.** `@civitai/theme`'s token
+sheet carries no cascade layer: its `:root` and `[data-theme='…']` blocks are
+unlayered at specificity `0-1-0`. So an app's own `:root { --civitai-color-…: }`
+does not outrank them, it **ties** — and the winner is whichever stylesheet
+comes last.
+
+**Scope a token override; never declare one at `:root`.** Each of these was
+measured to win in **either** stylesheet order:
+
+```html
+<!-- on the element, or any ancestor of what you want recoloured -->
+<div style="--civitai-color-primary: #a259ff"> … </div>
+```
+```css
+/* or a class on your block root — not :root */
+.my-block { --civitai-color-primary: #a259ff; }
+```
+
+A scoped override reaches **inside** component shadow roots — custom properties
+cross the boundary — so `<civitai-button variant="filled">` repaints from it.
+
+⚠️ **Why `:root` is the trap rather than merely the weaker option: it fails
+SILENTLY, and it fails in the order the framework itself produces.**
+`@civitai/blocks-react`'s `useBlocksStyles()` injects the token sheet from a
+`useEffect`, so the tokens land **after** your bundler-injected CSS is already
+in `<head>`. Measured in Chromium: in that order a `:root` brand override
+resolves to civitai's own `#1971C2`, with no error and no warning — and it does
+so with or without `data-theme` present, so the host theme stamp is not the
+cause. Pinned in `test/token-override-order.browser.test.ts`, which asserts
+every route above in both orders.
+
+---
+
+## Components
+
+Legend: **bold** = required attribute/element for correct styling + a11y.
+
+### Text — `data-civitai-ui="text"`
+Headings, paragraphs and inline copy. This is the one component that prescribes
+no element of its own — **you write the tag the meaning calls for** and this
+styles it:
+
+- Element: **`<h1>`–`<h6>`** for a heading, **`<p>`** for a paragraph,
+  **`<span>`** for inline text inside a sentence. A heading MUST be a real
+  heading element: that is what puts it in the document outline and in a screen
+  reader's heading list, and a styled `<div>` (or `<span>`) is not a substitute.
+- `data-size`: `xs` · `sm` · `md` (default) · `lg` · `xl` · `2xl` · `3xl` ·
+  `4xl` · `5xl`
+- `data-weight`: `normal` (default) · `medium` · `semibold` · `bold`
+- **Colour is a utility, not an attribute here** — `ci-muted` for secondary copy,
+  `ci-text-info` / `-success` / `-warning` / `-error` for the intent set,
+  `ci-text-default` for the body colour. `color` inherits, so these reach
+  `<civitai-text>`'s shadow content too. See *Not in this component* below.
+
+**Size and heading level are independent, on purpose.** `data-size` never
+changes what the element means, and the element never changes the size — so an
+`<h2>` can be the small print of a card (`data-size="xs"`) and a `<p>` can be the
+lede (`data-size="xl"`). Pick the level from the page's structure and the size
+from its design.
+
+**The scale — one scale, in two halves.** `xs`–`lg` is the UI ramp:
+`sm`/`md`/`lg` are the same three sizes Button uses, so a size name means one
+size across the pack. `xl`–`5xl` is the heading ramp, and **every value from
+`lg` up is one the `ci-fs-*` utilities already ship** — so the pack has one type
+scale under two spellings, not two that disagree:
+
+| `data-size` | `font-size` | `line-height` | same value as |
+|---|---|---|---|
+| `xs` | 12px | 1.5 | — |
+| `sm` | 13px | 1.5 | — |
+| `md` (default) | 14px | 1.5 | — |
+| `lg` | 16px | 1.5 | `ci-fs-6` |
+| `xl` | 20px | 1.25 | `ci-fs-5` |
+| `2xl` | 24px | 1.25 | `ci-fs-4` |
+| `3xl` | 28px | 1.25 | `ci-fs-3` |
+| `4xl` | 32px | 1.25 | `ci-fs-2` |
+| `5xl` | 40px | 1.25 | `ci-fs-1` |
+
+Two caveats worth knowing, both deliberate. **The names do not encode the
+`ci-fs-N` number, and the two sequences run in opposite directions** (`5xl` is
+`ci-fs-1`) — the right-hand column above is the mapping, and it is the price of
+keeping one naming convention across the whole ramp instead of switching to
+`fs-N` halfway up. **The unit differs**: this ramp is px (Button's unit),
+`ci-fs-*` is rem. They are equal at the default 16px root and diverge if a
+consumer changes it; mixing units inside one ramp would make it non-monotonic
+there, which is worse. Nothing above `ci-fs-1` (40px) is invented — that is the
+top of both ladders.
+
+**Margins are reset to `0`.** The browser's default heading/paragraph margins are
+em-relative, so they would move with every `data-size`; vertical rhythm in this
+pack belongs to `stack` / `group`. Space your text by wrapping it in one of those,
+not by relying on a UA margin.
+
+**Not in this component, deliberately** — each already has an implementation one
+layer down, and the same predicate decides all three:
+
+- **colour** → `ci-muted` (secondary copy), `ci-text-info` / `-success` /
+  `-warning` / `-error` (the intent set Alert / Badge / Toast share),
+  `ci-text-default` (the body colour). `color` inherits, so a utility on this
+  element — or on any ancestor — reaches `<civitai-text>`'s shadow content as
+  well; its inner element is `color: inherit`.
+  **Text sets `color: inherit`, not the text token**, on both tracks, and that is
+  what makes the ancestor half of the sentence above true: a *specified* value
+  beats an *inherited* one at any specificity, so a token on the element itself
+  would cancel every ancestor utility.
+
+  ⚠️ **THE TRADE, and it applies to pages that DO set a colour — not only to
+  pages that set none.** Text does not paint `--civitai-color-text` on its own,
+  so it renders in whatever colour it inherits: wherever an ancestor `color` and
+  the token disagree, Text follows the ancestor. An ancestor `color` is the
+  common case, not the exception. Measured on both tracks, on a
+  `[data-theme="dark"]` root carrying `color: #e6e6e6` — the shape this repo's
+  blocks had when the measurement was taken (none sets that colour today; see
+  below). Text computes `rgb(230, 230, 230)` — the root's colour — against a
+  dark token of `rgb(193, 194, 197)`. Restoring the removed declaration on that
+  same fixture puts both tracks back at `rgb(193, 194, 197)` while the plain
+  `<p>` beside them stays `rgb(230, 230, 230)`; that pair is the trade. Dark is
+  where it reads, the token being a soft grey next to a near-white page
+  colour. Light theme behaves
+  the same way: with `color: rgb(24, 24, 27)` on `<body>` Text computes
+  `rgb(24, 24, 27)` where it computed the token `rgb(34, 34, 34)` before.
+
+  In this repo the trade lands on four starters, which set their own colour on
+  `<body>` with Tailwind (`text-zinc-900 dark:text-zinc-100` —
+  `starters/next-app/src/app/globals.css`, `starters/react-pwa/index.html`,
+  `starters/svelte-pwa/index.html`, `starters/sveltekit-app/src/app.html`); none
+  of them renders Text today, so it would bite the first one that does. No page
+  here sets `#1a1a1a` / `#e6e6e6` any more. Every Civitai App page sets the
+  token itself instead — every `starters/examples/*/src/index.css` on `:root`,
+  and `starters/civitai-block-starter/src/index.css` on `body`, all as
+  `color: var(--civitai-color-text)` — as do the package's own `demo/` and
+  `playground/`. Those pages show the token in Text by inheriting it, not
+  because Text names it; of them, the block starter and the demo/playground
+  actually render Text. With no colour anywhere on the
+  page Text lands on the UA default `rgb(0, 0, 0)`, since `@civitai/theme` ships
+  tokens only and sets no `color`.
+
+  Ask for the token explicitly with `ci-text-default`, the same utility route as
+  every other value — 🔴 **but that class lives in `utilities.css`, which is a
+  separate stylesheet this package does not inject.** `injectStyles()` ships the
+  tokens and `styles.css` and nothing else, and `@civitai/blocks-react`'s
+  `injectBlocksStyles()` — reached on mount by 20 of the 21 component modules in
+  that package's `/ui`, `SettingsForm` being the one exception and deliberately
+  unstyled — adds only its own interactive CSS on top. So on either of those
+  paths `ci-text-default`,
+  `ci-muted` and every `ci-text-*` is an **unknown class that silently does
+  nothing**. Measured: `<p data-civitai-ui="text" class="ci-text-default">`
+  under an ancestor `color: rgb(24, 24, 27)`, with `injectStyles()` alone,
+  computes `rgb(24, 24, 27)` — the class had no effect. Link or import
+  `@civitai/components/utilities.css` alongside `styles.css` if you colour,
+  align or truncate text; `demo/index.html` links all three for this reason.
+- **alignment** → `ci-text-start` / `ci-text-center` / `ci-text-end`.
+  `text-align` inherits, same as above.
+- **truncation** → `ci-truncate`. (This one does *not* reach shadow content —
+  `overflow` does not inherit — so truncation on the element track is a real
+  follow-up rather than an oversight.)
+
+A `data-color`, `data-align` or `data-truncate` here would be a second copy of a
+predicate that already exists. Adding any of them later is additive; taking one
+away would not be.
+
+```html
+<h2 data-civitai-ui="text" data-size="4xl" data-weight="bold">Generate an image</h2>
+<p data-civitai-ui="text">Pick a model, then press Generate.</p>
+<span data-civitai-ui="text" data-size="xs" class="ci-muted">Costs Buzz</span>
+```
+
+### Button — `data-civitai-ui="button"`
+- Element: **`<button>`** (or `<a role="button">` for links).
+- `data-variant`: `filled` (default) · `light` · `outline` · `subtle`
+- `data-size`: `sm` · `md` (default) · `lg`
+- `data-full-width="true"` — stretch to container width.
+- Loading: set **`aria-busy="true"`** and **`disabled`**; place a
+  `<span data-civitai-ui="loader" data-size="sm" aria-hidden="true"></span>`
+  as the first child.
+- Icon slots: `<span data-civitai-ui-section="left|right">…</span>`.
+- A11y: native `<button>` gives role/focus/keyboard for free. Icon-only buttons
+  MUST have an `aria-label`.
+
+```html
+<button data-civitai-ui="button" data-variant="filled" data-size="md">Generate</button>
+```
+
+### TextInput — `data-civitai-ui="text-input"`
+- Wrapper **`<div data-civitai-ui="text-input">`** containing, in order:
+  - **`<label data-civitai-ui-label for="ID">`** (+ optional
+    `<span data-civitai-ui-required aria-hidden="true">*</span>`)
+  - optional `<span id="ID-desc" data-civitai-ui-description>`
+  - **`<input data-civitai-ui-control id="ID">`**
+  - optional `<span id="ID-err" data-civitai-ui-error role="alert">`
+- Wire a11y: input `aria-describedby="ID-desc ID-err"`, and when invalid
+  `aria-invalid="true"` + `data-invalid="true"` on the wrapper.
+
+```html
+<div data-civitai-ui="text-input">
+  <label data-civitai-ui-label for="name">Name</label>
+  <input data-civitai-ui-control id="name" />
+</div>
+```
+
+### Textarea — `data-civitai-ui="textarea"`
+Identical to TextInput but the control is **`<textarea data-civitai-ui-control>`**
+(resizable vertically).
+
+### NumberInput — `data-civitai-ui="number-input"`
+Identical to TextInput; the control is **`<input type="number" data-civitai-ui-control>`**.
+
+### Select — `data-civitai-ui="select"`
+Identical field chrome to TextInput; the control is a native
+**`<select data-civitai-ui-control>`** (native disclosure caret retained). Wire
+a11y exactly like TextInput (label `for`, `aria-describedby`, `aria-invalid` +
+`data-invalid` when invalid). This is the framework-agnostic NATIVE select — not
+the interactive JS Select from `@civitai/blocks-react`.
+
+```html
+<div data-civitai-ui="select">
+  <label data-civitai-ui-label for="model">Model</label>
+  <select data-civitai-ui-control id="model">
+    <option value="sdxl">SDXL</option>
+    <option value="flux">Flux</option>
+  </select>
+</div>
+```
+
+### Checkbox — `data-civitai-ui="checkbox"`
+A themed native checkbox: the box and its label sit inline in a `-choice` row,
+with description/error below. `accent-color` carries the theme tint.
+- Wrapper **`<div data-civitai-ui="checkbox">`** containing, in order:
+  - **`<div data-civitai-ui-choice>`** wrapping:
+    - **`<input type="checkbox" id="ID">`** — the checkbox itself. The bare
+      `type="checkbox"` inside the wrapper is what the CSS targets; do **not**
+      put `data-civitai-ui-control` on it (that is the full-width field-input
+      chrome for text/select controls).
+    - **`<label data-civitai-ui-label for="ID">`** (+ optional
+      `<span data-civitai-ui-required aria-hidden="true">*</span>`)
+  - optional `<span id="ID-desc" data-civitai-ui-description>`
+  - optional `<span id="ID-err" data-civitai-ui-error role="alert">`
+- Wire a11y: input `aria-describedby="ID-desc ID-err"`, and when invalid
+  `aria-invalid="true"` + `data-invalid="true"` on the wrapper.
+- Disabled / checked / indeterminate are the native input states.
+
+```html
+<div data-civitai-ui="checkbox">
+  <div data-civitai-ui-choice>
+    <input type="checkbox" id="tos" />
+    <label data-civitai-ui-label for="tos">I agree</label>
+  </div>
+</div>
+```
+
+### Radio — `data-civitai-ui="radio"`
+Identical to Checkbox but the control is **`<input type="radio" id="ID">`**.
+Group several by giving them the same **`name`**. Wrap a set in a RadioGroup
+(below) for the `role=radiogroup` layout + group label.
+
+### RadioGroup — `data-civitai-ui="radio-group"`
+- **`role="radiogroup"`** on the wrapper.
+- Optional group label: **`<span data-civitai-ui-label id="GID">`** referenced by
+  the wrapper's **`aria-labelledby="GID"`** (+ optional description linked via
+  `aria-describedby`).
+- Options container: **`<div data-civitai-ui-radio-options>`** holding the
+  `data-civitai-ui="radio"` items. `data-orientation="horizontal"` lays them out
+  in a row (default is a vertical stack).
+- Optional **group-level** error (mirrors the field components): a
+  **`<span id="GID-err" data-civitai-ui-error role="alert">`** *after* the
+  options container. When present, wire a11y on the **wrapper**:
+  `aria-invalid="true"` + `data-invalid="true"`, and join the error id into the
+  wrapper's `aria-describedby="GID-desc GID-err"` (alongside the description id).
+  With no error, emit none of these attributes (backward-compatible).
+
+```html
+<div data-civitai-ui="radio-group" role="radiogroup" aria-labelledby="sampler-lbl">
+  <span data-civitai-ui-label id="sampler-lbl">Sampler</span>
+  <div data-civitai-ui-radio-options>
+    <div data-civitai-ui="radio"><div data-civitai-ui-choice>
+      <input type="radio" name="sampler" id="s-euler" />
+      <label data-civitai-ui-label for="s-euler">Euler</label>
+    </div></div>
+    <div data-civitai-ui="radio"><div data-civitai-ui-choice>
+      <input type="radio" name="sampler" id="s-ddim" />
+      <label data-civitai-ui-label for="s-ddim">DDIM</label>
+    </div></div>
+  </div>
+</div>
+```
+
+### Card — `data-civitai-ui="card"`
+- A card has a **subtle default hairline** in light mode (where `surface` ==
+  `body`, an otherwise-borderless card would be invisible). Dark differentiates
+  `surface` from `body`, so no default hairline is drawn there.
+- `data-with-border="true"` — the stronger, fully-opaque explicit border.
+- `data-padding`: `sm` · `md` · `lg`.
+- A11y: use a landmark/heading inside as appropriate; the card itself is a
+  presentational container (`<div>`/`<section>`/`<article>`).
+
+### Stack — `data-civitai-ui="stack"`
+Vertical flex. `data-gap`: `sm` · `md` · `lg` (default ~12px). Presentational
+`<div>`.
+
+### Group — `data-civitai-ui="group"`
+Horizontal flex, items center-aligned. `data-gap`: `sm` · `md` · `lg`.
+
+**Wraps by default** — a row of several controls reflows onto more rows rather
+than overflowing a narrow slot. Children may also shrink below their content
+width, so one long unbroken label narrows instead of pushing the whole row past
+the container. (That shrink applies to a child with the default
+`overflow: visible`; a child that sets any other `overflow` already gets it from
+the flexbox spec.)
+
+`data-nowrap="true"` keeps the row on one line. Use it only where a single line
+is load-bearing, and expect overflow at narrow widths.
+
+Both are plain attributes, so they are set the same way whoever writes the
+markup. The `<civitai-group>` element exposes the same choice as a `nowrap`
+property (reflected to the `nowrap` attribute), rather than `data-nowrap`.
+
+### Alert — `data-civitai-ui="alert"`
+- **`role="alert"`** (or `role="status"` for non-urgent).
+- `data-color`: `info` (default intent) · `success` · `warning` · `error`.
+- Structure: optional icon, then
+  **`<div data-civitai-ui-alert-body>`** with an optional
+  `<div data-civitai-ui-alert-title>` and the message. Optional dismiss:
+  `<button data-civitai-ui-alert-close aria-label="Dismiss">×</button>`.
+
+```html
+<div data-civitai-ui="alert" data-color="success" role="alert">
+  <div data-civitai-ui-alert-body>
+    <div data-civitai-ui-alert-title>Saved</div>
+    Your changes are live.
+  </div>
+</div>
+```
+
+### Loader — `data-civitai-ui="loader"`
+- `data-size`: `sm` · `md` (default) · `lg`.
+- A11y: decorative inside a button → `aria-hidden="true"`. Standalone busy
+  indicator → wrap/annotate with `role="status"` + an accessible label
+  (e.g. visually-hidden "Loading").
+
+### Badge — `data-civitai-ui="badge"`
+- `data-variant`: `filled` (default) · `light` · `outline`.
+- `data-size`: `sm` · `md` (default) · `lg`.
+- `data-color` (optional): `info` · `success` · `warning` · `error` — the same
+  intent set as Alert. Omit it for the default primary accent. Recolors the
+  `filled` / `light` / `outline` variants.
+- Presentational `<span>`. If it conveys status, add an `aria-label`.
+
+```html
+<span data-civitai-ui="badge" data-variant="light" data-color="success" data-size="md">ready</span>
+```
+
+### Slider — `data-civitai-ui="slider"`
+A themed native `<input type="range">`. `accent-color` carries the theme tint, so
+keyboard (arrow keys, Home/End, Page Up/Down) + ARIA come from the native control.
+- Wrapper **`<div data-civitai-ui="slider">`** containing, in order:
+  - optional header **`<div data-civitai-ui-slider-header>`** wrapping the
+    **`<label data-civitai-ui-label for="ID">`** and an optional current-value
+    read-out **`<output data-civitai-ui-slider-value for="ID">`**. Without a
+    value read-out, use a bare `<label data-civitai-ui-label for="ID">` instead
+    of the header.
+  - optional `<span id="ID-desc" data-civitai-ui-description>`
+  - **`<input type="range" id="ID">`** — the slider itself. Like checkbox/radio
+    it does **not** carry `data-civitai-ui-control` (that is the bordered
+    field-input chrome). Set `min`/`max`/`step`/`value` natively.
+  - optional `<span id="ID-err" data-civitai-ui-error role="alert">`
+- Wire a11y: input `aria-describedby="ID-desc ID-err"`, and when invalid
+  `aria-invalid="true"` + `data-invalid="true"` on the wrapper (tints the track
+  to the error token). Disabled is the native input state. When you render a
+  formatted value read-out (e.g. `20%`, `Large`), also set **`aria-valuetext`**
+  on the input to that same string so screen readers announce it instead of the
+  raw `aria-valuenow`. 🔴 Nothing does this for you on either track:
+  `<civitai-slider>`'s `show-value` renders a read-out of the RAW value and
+  sets no `aria-valuetext` (the attribute appears nowhere in this package's
+  element sources). The deleted React `<Slider>` DID set it, from its
+  `valueLabel` prop; that prop has no element equivalent, so a formatted
+  read-out now means setting `aria-valuetext` yourself.
+
+```html
+<div data-civitai-ui="slider">
+  <div data-civitai-ui-slider-header>
+    <label data-civitai-ui-label for="steps">Steps</label>
+    <output data-civitai-ui-slider-value for="steps">20</output>
+  </div>
+  <input type="range" id="steps" min="0" max="100" value="20" />
+</div>
+```
+
+### SegmentedControl / Tabs — `data-civitai-ui="segmented-control"`
+A row of segment buttons with **roving tabindex** + **arrow-key navigation**,
+in one of **two ARIA role modes**. The CSS is presentational; hand-HTML authors
+MUST implement the keyboard behavior themselves. Prefer an element for
+interactive use, which supplies it: `<civitai-segmented-control>` for the
+panel-less value switch (`radiogroup`/`radio`), and `<civitai-tabs>` when
+segments actually switch panels. They are two elements rather than one with a
+mode, because a `tab`'s `aria-controls` is an IDREF and an IDREF cannot reach a
+panel in the light DOM from inside a shadow root.
+
+**Common to both modes:**
+- Wrapper **`<div data-civitai-ui="segmented-control">`** with an accessible name
+  (**`aria-label`** or `aria-labelledby`). `data-size`: `sm` · `md` (default) ·
+  `lg`.
+- Each segment: **`<button data-civitai-ui-segment>`**, `disabled` for a disabled
+  one. Exactly one is selected: **`tabindex="0"` on the selected** segment,
+  **`tabindex="-1"` on the rest** (roving tabindex).
+- Keyboard (roving): `ArrowLeft`/`ArrowRight` (+ `ArrowUp`/`ArrowDown`) move to
+  the previous/next enabled segment (wrapping), `Home`/`End` jump to first/last;
+  selection follows focus. Move focus to the newly-selected segment.
+
+**Mode `toggle` (default) — a panel-less value switch (Mantine-style):**
+- Wrapper **`role="radiogroup"`**; each segment **`role="radio"`** with
+  **`aria-checked="true|false"`**. No `aria-controls`. Use this when the control
+  just picks a value (no panels).
+
+```html
+<div data-civitai-ui="segmented-control" role="radiogroup" aria-label="Layout" data-size="md">
+  <button data-civitai-ui-segment role="radio" aria-checked="true" tabindex="0">Grid</button>
+  <button data-civitai-ui-segment role="radio" aria-checked="false" tabindex="-1">List</button>
+</div>
+```
+
+**Mode `tabs` — a tab set that switches visible panels:**
+- Wrapper **`role="tablist"`**; each segment **`role="tab"`** with
+  **`aria-selected="true|false"`** + optional **`aria-controls="PANEL_ID"`** +
+  **`id`** linking its tab panel.
+- Tab panel: **`<div data-civitai-ui-tabpanel role="tabpanel" id="PANEL_ID"
+  aria-labelledby="TAB_ID" tabindex="0">`**, `hidden` when its tab is not
+  selected.
+
+```html
+<div data-civitai-ui="segmented-control" role="tablist" aria-label="View" data-size="md">
+  <button data-civitai-ui-segment role="tab" id="t-grid" aria-selected="true"
+          aria-controls="p-grid" tabindex="0">Grid</button>
+  <button data-civitai-ui-segment role="tab" id="t-list" aria-selected="false"
+          aria-controls="p-list" tabindex="-1">List</button>
+</div>
+<div data-civitai-ui-tabpanel role="tabpanel" id="p-grid" aria-labelledby="t-grid" tabindex="0">…</div>
+<div data-civitai-ui-tabpanel role="tabpanel" id="p-list" aria-labelledby="t-list" tabindex="0" hidden>…</div>
+```
+
+### Toast — `data-civitai-ui="toast-region"` + `data-civitai-ui="toast"`
+An `aria-live` notification host (`toast-region`) plus the individual `toast`
+card. `<civitai-toast-region>` owns the queue and auto-dismiss timers — call
+its `show(options)` method, which enqueues a toast and returns its id. (Until
+`@civitai/components-react@0.9.0` a React `ToastProvider` + `useToast()` pair
+did this; both were deleted with the hand-written layer.) Hand-HTML authors
+render into the region and add each toast so the live region announces it.
+- Host: **`<div data-civitai-ui="toast-region" role="region" aria-label="Notifications" aria-live="polite">`**
+  (fixed bottom-right stack). Use `aria-live="assertive"` for urgent errors.
+- Toast: **`<div data-civitai-ui="toast" role="status">`** (or `role="alert"` for
+  urgent). `data-color`: `info` · `success` · `warning` · `error` (colors the
+  left accent; same intent set as Alert). Omit for the neutral accent.
+  - **`<div data-civitai-ui-toast-body>`** with an optional
+    `<div data-civitai-ui-toast-title>` and the message.
+  - optional dismiss:
+    `<button data-civitai-ui-toast-close aria-label="Dismiss">×</button>`.
+
+```html
+<div data-civitai-ui="toast-region" role="region" aria-label="Notifications" aria-live="polite">
+  <div data-civitai-ui="toast" data-color="success" role="status">
+    <div data-civitai-ui-toast-body>
+      <div data-civitai-ui-toast-title>Saved</div>
+      Your changes are live.
+    </div>
+    <button data-civitai-ui-toast-close aria-label="Dismiss">×</button>
+  </div>
+</div>
+```
+
+### Tooltip — `data-civitai-ui="tooltip"`
+A hover/focus tooltip: a positioned `role="tooltip"` bubble revealed when the
+wrapper is hovered or contains focus. `<civitai-tooltip>` wires the trigger's
+`aria-describedby` to the bubble and Escape-to-dismiss for you.
+- Wrapper **`<span data-civitai-ui="tooltip">`** containing, in order:
+  - the **trigger** element (button/link/etc.), with **`aria-describedby="TIP_ID"`**.
+  - **`<span data-civitai-ui-tooltip-bubble role="tooltip" id="TIP_ID">`** — the
+    bubble. Revealed on `:hover`/`:focus-within`, or force-open with
+    `data-open="true"`. **`data-dismissed="true"` force-HIDES it** — it overrides
+    the hover/focus reveal, so Escape-to-dismiss works even while the pointer
+    still hovers / focus is still within (`<civitai-tooltip>` sets/clears this).
+- A11y: the trigger must be focusable so keyboard users can reveal the tooltip;
+  keep the tooltip text short (it is supplementary, not the accessible name).
+
+```html
+<span data-civitai-ui="tooltip">
+  <button data-civitai-ui="button" aria-describedby="tip-seed">Seed</button>
+  <span data-civitai-ui-tooltip-bubble role="tooltip" id="tip-seed">Randomize the seed</span>
+</span>
+```
+
+### Image — `data-civitai-ui="image"`
+A media container with a token placeholder background (visible while loading),
+`object-fit` control, and a broken-image fallback. Hand-HTML authors set
+`data-status` themselves. (`<civitai-image>` tracks this from the native
+`load`/`error` events, but reflects it as **`status`**, not `data-status` —
+its CSS keys off `:host([status='loading'])`. The two tracks spell this one
+differently; see the components README.)
+- Wrapper **`<div data-civitai-ui="image">`** (size it with `width`/`height`/
+  `aspect-ratio` inline or via your own class). `data-status`: `loading` ·
+  `loaded` · `error` (omitted ⇒ the image shows).
+  - **`<img data-civitai-ui-image-img>`** — `data-fit`: `cover` (default) ·
+    `contain`. Always provide `alt`.
+  - optional **`<div data-civitai-ui-image-fallback>`** — shown (overlay) only
+    when `data-status="error"`.
+
+```html
+<div data-civitai-ui="image" data-status="loaded" style="aspect-ratio: 16 / 9">
+  <img data-civitai-ui-image-img src="/img.jpg" alt="Preview" />
+  <div data-civitai-ui-image-fallback aria-hidden="true">Image unavailable</div>
+</div>
+```
+
+---
+
+## Relationship to the elements and to React
+
+`@civitai/components-react` binds the `<civitai-*>` custom elements, **not**
+this sheet: the elements style themselves in shadow DOM, so they do not consume
+the contract above and are not a second renderer of it. Consuming this document
+means writing the markup yourself, in whatever framework or none.
+
+Until `@civitai/components-react@0.9.0` that package also shipped a
+hand-written React layer which DID render this markup, and an
+`html-vs-react-parity` browser test asserted identical `getComputedStyle()`
+between the two arms. That layer was superseded by the elements and the test
+retired with it — there is no longer a second implementation to compare
+against. The contract here remains executable against the sheet itself: the
+`@civitai/components` suites assert the rules in `components.css` directly.

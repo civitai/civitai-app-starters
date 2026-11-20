@@ -18,12 +18,15 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 
   try {
     const tokens = await exchangeCode({
-      baseUrl: config.CIVITAI_BASE_URL,
+      baseUrl: config.CIVITAI_AUTH_URL,
       clientId: config.CIVITAI_CLIENT_ID,
       clientSecret: config.CIVITAI_CLIENT_SECRET,
       redirectUri: REDIRECT_URI,
       code,
       codeVerifier: expected.verifier,
+      // RFC 6749 §5.1 lets the server omit `scope` when the grant matches the
+      // request. Without this the session would record "no permissions".
+      fallbackScope: expected.scope,
     });
     writeSession(cookies, { tokens }, !dev);
   } catch (err) {
