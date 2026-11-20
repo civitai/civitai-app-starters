@@ -37,3 +37,20 @@ test('next-app GenerateForm gates Generate and stale replies through the module'
   assert.match(src, /setQuote\(\{ prompt: ticket\.prompt, cost: costOrNull\(json\.cost\) \}\)/);
   assert.doesNotMatch(src, /previewCost/, 'the unkeyed previewCost state must not come back');
 });
+
+test('next-app GenerateForm displays only the quote for the current prompt', () => {
+  const src = read('src/components/GenerateForm.tsx');
+  // The one place a displayed cost may come from: the quote keyed to the prompt.
+  assert.match(src, /const currentQuote = quoteFor\(quote, prompt\);/);
+  assert.match(src, /const currentCost = currentQuote\?\.cost \?\? null;/);
+  // Every rendered cost reads currentCost, never the unkeyed quote.
+  assert.match(src, /`Generate\$\{currentCost != null \? ` \(≈ \$\{currentCost\} Buzz\)` : ''\}`/);
+  assert.match(src, /\{currentCost != null && phase === 'previewed' && \(/);
+  assert.match(src, /This will cost <strong>\{currentCost\}<\/strong> Buzz\./);
+  assert.doesNotMatch(src, /quote\?\.cost|quote\.cost/, 'a rendered cost must not read the unkeyed quote');
+  // An estimate without a cost says so, accessibly.
+  assert.match(
+    src,
+    /\{currentQuote && currentCost == null && phase === 'previewed' && \(\s*<p role="status"[^>]*>\s*Estimate unavailable/,
+  );
+});
