@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { estimateGenerationCost, OrchestratorError, type GenerateInput } from '@/lib/civitai';
+import { estimateResponseBody } from '@/lib/estimate';
 import { getSession } from '@/lib/session';
 
 export async function POST(req: NextRequest) {
@@ -13,10 +14,9 @@ export async function POST(req: NextRequest) {
 
   try {
     const snapshot = await estimateGenerationCost(session, body);
-    return NextResponse.json({
-      cost: snapshot.cost?.total ?? 0,
-      snapshot,
-    });
+    // `cost` is null when the snapshot carries no numeric `cost.total` — never
+    // a made-up 0 (see `costOrNull`).
+    return NextResponse.json(estimateResponseBody(snapshot));
   } catch (err) {
     if (err instanceof OrchestratorError) {
       return NextResponse.json(

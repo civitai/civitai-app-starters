@@ -58,6 +58,23 @@ describe('createOrchestratorClient', () => {
     });
     expect(client.baseUrl).toBe('https://example.test');
   });
+
+  it('honors a custom logger', () => {
+    const logger = { error: vi.fn() };
+    const client = createOrchestratorClient({
+      accessToken: 'tok',
+      logger,
+    });
+    expect(client.logger).toBe(logger);
+  });
+
+  it('honors null logger for silent orchestrator clients', () => {
+    const client = createOrchestratorClient({
+      accessToken: 'tok',
+      logger: null,
+    });
+    expect(client.logger).toBeNull();
+  });
 });
 
 describe('callOrchestrator', () => {
@@ -93,6 +110,107 @@ describe('callOrchestrator', () => {
       status: 400,
       body: { error: 'bad_request' },
     });
+  });
+
+  it('logs failing responses to console.error by default', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'bad_request' }, 400));
+    await expect(
+      callOrchestrator(client, '/v2/consumer/workflows', {
+        method: 'POST',
+        body: JSON.stringify({ steps: [] }),
+      }),
+    ).rejects.toBeInstanceOf(OrchestratorError);
+
+    expect(console.error).toHaveBeenCalledWith(
+      '[orchestrator] POST /v2/consumer/workflows -> 400 ERR\n' +
+        '  raw body: {"error":"bad_request"}',
+    );
+  });
+
+  it('sends failing response logs to a custom logger', async () => {
+    const logger = { error: vi.fn() };
+    const clientWithLogger = createOrchestratorClient({
+      accessToken: 'secret-token',
+      baseUrl: 'https://orch.test',
+      logger,
+    });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'bad_request' }, 400));
+
+    await expect(
+      callOrchestrator(clientWithLogger, '/v2/consumer/workflows', {
+        method: 'POST',
+        body: JSON.stringify({ steps: [] }),
+      }),
+    ).rejects.toMatchObject({
+      name: 'OrchestratorError',
+      status: 400,
+      body: { error: 'bad_request' },
+    });
+
+    expect(logger.error).toHaveBeenCalledWith(
+      '[orchestrator] POST /v2/consumer/workflows -> 400 ERR\n' +
+        '  raw body: {"error":"bad_request"}',
+    );
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it('still throws OrchestratorError when the custom logger throws', async () => {
+    const logger = {
+      error: vi.fn(() => {
+        throw new Error('logger boom');
+      }),
+    };
+    const c = createOrchestratorClient({ accessToken: 't', baseUrl: 'https://orch.test', logger });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'insufficient_buzz' }, 402));
+
+    const err = await callOrchestrator(c, '/v2/consumer/workflows', { method: 'POST' }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(OrchestratorError);
+    expect(err).toMatchObject({ status: 402, body: { error: 'insufficient_buzz' } });
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+
+  it('attaches a rejection handler to what an async logger returns', async () => {
+    // Observed directly rather than through `unhandledRejection`: vitest
+    // intercepts that event itself, so a listener here never sees it and the
+    // test would pass with no handler attached (measured: it did). A thenable
+    // records whether anyone subscribed to its outcome.
+    const then = vi.fn((_onOk: unknown, onErr?: (e: unknown) => void) => {
+      onErr?.(new Error('sink down'));
+    });
+    const logger = { error: vi.fn(() => ({ then }) as unknown as void) };
+    const c = createOrchestratorClient({ accessToken: 't', baseUrl: 'https://orch.test', logger });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'bad_request' }, 400));
+
+    await expect(callOrchestrator(c, '/v2/consumer/workflows')).rejects.toBeInstanceOf(
+      OrchestratorError,
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(then).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not log failing responses when logger is null', async () => {
+    const silentClient = createOrchestratorClient({
+      accessToken: 'secret-token',
+      baseUrl: 'https://orch.test',
+      logger: null,
+    });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'bad_request' }, 400));
+
+    await expect(
+      callOrchestrator(silentClient, '/v2/consumer/workflows', {
+        method: 'POST',
+        body: JSON.stringify({ steps: [] }),
+      }),
+    ).rejects.toMatchObject({
+      name: 'OrchestratorError',
+      status: 400,
+      body: { error: 'bad_request' },
+    });
+
+    expect(console.error).not.toHaveBeenCalled();
   });
 
   it('throws OrchestratorError with the raw text when 5xx body is not JSON', async () => {

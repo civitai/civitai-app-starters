@@ -13,8 +13,8 @@ extend it.
 
 ## Stack
 
-- Vite 7 + React 19 + TypeScript strict
-- Tailwind 3.4
+- Vite 8 + React 19 + TypeScript strict
+- Tailwind 4 (via `@tailwindcss/vite`)
 - Hono BFF mounted at `/api/*` via `@hono/vite-dev-server` (dev) / `@hono/node-server` (prod)
 - `vite-plugin-pwa` for manifest + service worker
 - `@civitai/app-sdk` for all OAuth + orchestrator glue

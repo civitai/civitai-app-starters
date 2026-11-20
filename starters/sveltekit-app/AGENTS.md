@@ -14,7 +14,7 @@ Help them extend it.
 
 - SvelteKit 2, TypeScript strict
 - Svelte 5 with runes (`$state`, `$derived`, `$props`)
-- Tailwind 3.4
+- Tailwind 4 (via `@tailwindcss/vite`)
 - `@civitai/app-sdk` for all OAuth + orchestrator glue
 - `@sveltejs/adapter-auto` — deploys to Vercel / Cloudflare / Node out of the box
 - No DB, no Redis, no external session store — encrypted-cookie sessions only

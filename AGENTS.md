@@ -95,7 +95,7 @@ civitai-app-starters/
 │   ├── civitai-components-chat/ # <civitai-chat>: the assistant as one element (AI SDK + MCP, lazy)
 │   └── civitai-agent-runner/    # @civitai/agent-runner: the durable (DBOS + Postgres) runner behind its remote mode
 └── starters/
-    ├── next-app/                # Next.js 15 App Router (SSR)
+    ├── next-app/                # Next.js 16 App Router (SSR)
     ├── sveltekit-app/           # SvelteKit 2 (SSR)
     ├── react-pwa/               # Vite + React 19 (SPA + Hono BFF)
     ├── svelte-pwa/              # Vite + Svelte 5 (SPA + Hono BFF)
