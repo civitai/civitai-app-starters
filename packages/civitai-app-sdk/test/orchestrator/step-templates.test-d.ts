@@ -137,9 +137,11 @@ expectTypeOf<Exclude<keyof WorkflowStepTemplates, WorkflowStepType>>().toEqualTy
  * The two surfaces move independently and are allowed to disagree for a while:
  * the catalog tracks the LIVE orchestrator spec (`pnpm check:catalogs` and the
  * `sync-orchestrator-catalogs` automation keep it there), while these types
- * track whatever `@civitai/client` was last published from. `44a79dc` (#315)
- * synced `imageScanning`, `preprocessVideo` and `yuE2` into the catalog; the
- * client has not republished with them yet.
+ * come from `@civitai/client`, a frozen optional peer: deprecated in favour of
+ * `@civitai/orchestration-client`, last released as `0.2.0-beta.98`, and not
+ * getting another release. `44a79dc` (#315) synced `imageScanning`,
+ * `preprocessVideo` and `yuE2` into the catalog; the frozen client has no
+ * templates for them.
  *
  * `test/orchestrator/step-count-prose.test.ts` derives the same gap from
  * `WORKFLOW_STEP_TYPES` and `StepTemplateMap`'s AST and asserts it equals the
@@ -147,11 +149,12 @@ expectTypeOf<Exclude<keyof WorkflowStepTemplates, WorkflowStepType>>().toEqualTy
  * can the prose in `steps.ts` and the README that names the same three.
  *
  * So when the catalog syncs ahead of the client, list the not-yet-typed
- * `$type`s HERE in the same PR, and delete them when the client republishes.
+ * `$type`s HERE in the same PR. They leave only when `steps.ts` moves to a
+ * types source that has their templates, never through a client release.
  * Spelled as a ledger rather than dropped, because an unasserted gap is
  * indistinguishable from no gap — and spelled as a `never` rather than as a
  * hard equality, because coupling a REQUIRED check to an external package's
- * republish cadence is how a gate becomes permanently red.
+ * release state is how a gate becomes permanently red.
  *
  * 🔴 THE SYNC SCRIPT WRITES THIS LINE — AND THE PINS BELOW, AND THE PROSE.
  * `scripts/sync-orchestrator-catalogs.mjs` (and therefore the daily
