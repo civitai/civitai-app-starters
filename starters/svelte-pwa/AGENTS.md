@@ -12,7 +12,7 @@ user cloned this via `npx tiged` — there is **no monorepo around you**;
 
 ## Stack
 
-Vite 7 + Svelte 5 (runes) + TypeScript strict, Tailwind 3.4, Hono BFF via
+Vite 8 + Svelte 5 (runes) + TypeScript strict, Tailwind 4 (via `@tailwindcss/vite`), Hono BFF via
 `@hono/vite-dev-server` (dev) / `@hono/node-server` (prod), `vite-plugin-pwa`,
 `@civitai/app-sdk`. **No SvelteKit** — pure components mounted to `#app`.
 
