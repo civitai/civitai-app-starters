@@ -1,0 +1,180 @@
+/**
+ * Rendered tests for the Generate form: the real component, mounted into
+ * happy-dom and driven through its DOM, with the BFF replaced by a stubbed
+ * `fetch`. They check what a user sees and what the form sends: the prompt it
+ * prices, the prompt it submits, and the workflow it then polls.
+ *
+ * They assert on what the form sends and on a few things it shows: the button
+ * labels ("Preview Buzz cost", "Generate (≈ N Buzz)"), "Estimate
+ * unavailable", the quoted cost in its <strong>, and the image. Restyling does
+ * not break them; renaming those buttons or dropping those elements does, so
+ * update the matching lookup here when you change one on purpose.
+ */
+import { act, createElement } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { DEFAULT_MODEL_AIR } from '@civitai/app-sdk/orchestrator';
+import { GenerateForm } from '../src/components/GenerateForm';
+
+// Tells React this is a test environment, so `act` flushes updates and does
+// not warn.
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const PROMPT = 'a lighthouse on a basalt cliff at dusk, test prompt 7f3';
+const COST = 37;
+const BALANCE = 1234;
+const WORKFLOW_ID = 'wf-test-91';
+const IMAGE_URL = 'https://images.example.test/out-1.png';
+
+interface Call {
+  url: string;
+  method: string;
+  body: unknown;
+}
+
+let calls: Call[];
+let estimateReply: Record<string, unknown>;
+let container: HTMLElement;
+let root: Root;
+
+/** A stand-in for the BFF: answers the three routes the form calls, records every call. */
+function fakeBff(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  const method = init?.method ?? 'GET';
+  calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+  const reply = (body: unknown) =>
+    Promise.resolve(
+      new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+  if (method === 'POST' && url === '/api/generate/estimate') return reply(estimateReply);
+  if (method === 'POST' && url === '/api/generate') return reply({ workflowId: WORKFLOW_ID, snapshot: {} });
+  if (method === 'GET' && url.startsWith(`/api/workflow/${WORKFLOW_ID}?`)) {
+    return reply({
+      done: true,
+      snapshot: {
+        id: WORKFLOW_ID,
+        status: 'succeeded',
+        cost: { total: COST },
+        steps: [{ output: { images: [{ available: true, url: IMAGE_URL }] } }],
+      },
+    });
+  }
+  return Promise.reject(new Error(`unexpected request: ${method} ${url}`));
+}
+
+beforeEach(async () => {
+  calls = [];
+  estimateReply = { cost: COST };
+  vi.stubGlobal('fetch', vi.fn(fakeBff));
+  container = document.createElement('div');
+  document.body.append(container);
+  root = createRoot(container);
+  await act(async () => {
+    root.render(createElement(GenerateForm, { initialBalance: BALANCE }));
+  });
+});
+
+afterEach(async () => {
+  await act(async () => root.unmount());
+  container.remove();
+  vi.unstubAllGlobals();
+});
+
+const textarea = () => {
+  const el = container.querySelector('textarea');
+  if (!el) throw new Error('no prompt textarea');
+  return el;
+};
+
+function button(name: RegExp): HTMLButtonElement {
+  const found = [...container.querySelectorAll('button')].find((b) => name.test(b.textContent ?? ''));
+  if (!found) throw new Error(`no button matching ${name}`);
+  return found;
+}
+
+const text = () => container.textContent ?? '';
+
+/** Types into the textarea the way a browser does, so React's onChange fires. */
+async function typePrompt(value: string) {
+  await act(async () => {
+    const el = textarea();
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    setValue.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+async function click(el: HTMLElement) {
+  await act(async () => {
+    el.click();
+  });
+}
+
+/** Re-checks `assertion` until it passes, flushing React between tries. */
+async function until(assertion: () => void, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      assertion();
+      return;
+    } catch (err) {
+      if (Date.now() > deadline) throw err;
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+      });
+    }
+  }
+}
+
+test('renders the prompt, the model and both actions, with Generate locked until an estimate', () => {
+  expect(container.querySelector('label')?.textContent).toContain('Prompt');
+  expect(textarea().value).not.toBe('');
+  expect(text()).toContain(DEFAULT_MODEL_AIR);
+  expect(button(/^Preview Buzz cost$/).disabled).toBe(false);
+  expect(button(/^Generate/).disabled).toBe(true);
+  expect(calls).toEqual([]);
+});
+
+test('prices the typed prompt, then submits it and shows the finished image', async () => {
+  await typePrompt(PROMPT);
+  await click(button(/^Preview Buzz cost$/));
+
+  await until(() => expect(button(/^Generate/).textContent).toBe(`Generate (≈ ${COST} Buzz)`));
+  expect(calls).toEqual([{ url: '/api/generate/estimate', method: 'POST', body: { prompt: PROMPT } }]);
+  expect(button(/^Generate/).disabled).toBe(false);
+  expect(container.querySelector('strong')?.textContent).toBe(String(COST));
+  expect(text()).toContain(String(BALANCE));
+
+  await click(button(/^Generate/));
+
+  await until(() => expect(container.querySelector('img')?.getAttribute('src')).toBe(IMAGE_URL));
+  expect(calls.slice(1)).toEqual([
+    { url: '/api/generate', method: 'POST', body: { prompt: PROMPT } },
+    { url: `/api/workflow/${WORKFLOW_ID}?wait=25000`, method: 'GET', body: undefined },
+  ]);
+  expect(text()).toContain('succeeded');
+});
+
+test('an estimate with no cost says so and keeps Generate locked', async () => {
+  estimateReply = { cost: null };
+  await typePrompt(PROMPT);
+  await click(button(/^Preview Buzz cost$/));
+
+  await until(() => expect(container.querySelector('[role="status"]')?.textContent).toContain('Estimate unavailable'));
+  expect(button(/^Generate/).textContent).toBe('Generate');
+  expect(button(/^Generate/).disabled).toBe(true);
+  expect(container.querySelector('strong')).toBeNull();
+  expect(calls.map((c) => c.url)).toEqual(['/api/generate/estimate']);
+});
+
+test('editing the prompt after an estimate drops the price and locks Generate again', async () => {
+  await typePrompt(PROMPT);
+  await click(button(/^Preview Buzz cost$/));
+  await until(() => expect(button(/^Generate/).disabled).toBe(false));
+
+  await typePrompt(`${PROMPT}, edited`);
+
+  expect(button(/^Generate/).disabled).toBe(true);
+  expect(button(/^Generate/).textContent).toBe('Generate');
+  expect(container.querySelector('strong')).toBeNull();
+});

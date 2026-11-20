@@ -97,6 +97,7 @@ After any meaningful change, run the matching check before declaring done:
 | Anything in `src/` | `pnpm typecheck` (`svelte-check` + svelte-kit sync) |
 | `svelte.config.js`, env wiring, security headers | `pnpm build` |
 | `src/lib/estimate.ts`, `src/lib/refresh-tokens.ts` | `pnpm test` (needs Node ≥ 22.18: it imports the `.ts` modules with Node's built-in type stripping) |
+| `src/lib/components/GenerateForm.svelte` | `pnpm test`: `tests/GenerateForm.test.ts` renders the real form in happy-dom (Vitest) with `fetch` stubbed, and checks what it shows and what it sends |
 | `src/lib/session.ts`, `hooks.server.ts`, the estimate route, the sign-out routes | `pnpm build && PROBE_SKIP_BUILD=1 pnpm probe:expired-session` (no Civitai needed: a stand-in runs in the probe) |
 | Auth flow (`src/routes/api/auth/**`, `hooks.server.ts`, `$lib/session.ts`) | `pnpm test:e2e -- auth-flow` |
 | Generation flow (`src/routes/api/generate/**`, workflow polling) | `pnpm test:e2e -- generation` |

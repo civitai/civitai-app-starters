@@ -33,7 +33,7 @@
     "typecheck": "svelte-check --tsconfig ./tsconfig.json && tsc -p tsconfig.server.json --noEmit",
     "check:env": "node scripts/check-env.mjs",
     "preview": "vite preview",
-    "test": "node --test \"tests/**/*.test.mjs\"",
+    "test": "node --test \"tests/**/*.test.mjs\" && vitest run",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:install": "playwright install --with-deps chromium",
@@ -95,12 +95,14 @@
     "@tailwindcss/vite": "^4.0.0",
     "@tsconfig/svelte": "^5.0.4",
     "@types/node": "^25.9.1",
+    "happy-dom": "^20.9.0",
     "svelte": "^5.55.10",
     "svelte-check": "^4.4.0",
     "tailwindcss": "^4.3.0",
     "tslib": "^2.6.2",
     "typescript": "^5.9.2",
     "vite": "^8.0.14",
-    "vite-plugin-pwa": "^1.1.0"
+    "vite-plugin-pwa": "^1.1.0",
+    "vitest": "^4.1.11"
   }
 }
