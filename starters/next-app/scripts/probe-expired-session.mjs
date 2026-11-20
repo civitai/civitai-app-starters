@@ -41,14 +41,13 @@
  * the bug. At HEAD: C 1 request + the value present, D 1 request + no row + no
  * dash + no banner, E 0 requests + no row.
  *
- * AND THE REFRESH-FAILURE SCENARIOS (#855, #804). Only a DEFINITE rejection of
- * the credential may sign the browser out; everything else must leave the
- * cookie where it is so the next request can try again:
+ * AND THE REFRESH-FAILURE SCENARIOS (#855, #804). Only an `invalid_grant`
+ * verdict on the refresh token may sign the browser out (A pins that it still
+ * does); everything else must leave the cookie where it is so the next request
+ * can try again:
  *
- *   A2. refresh rejected with 401 -> cleared, like A's 400. An INVARIANT GUARD
- *       (base already clears on every failure); it pins the predicate's second
- *       status so a narrowing to 400-only goes red.
- *   F.  refresh fails TRANSIENTLY (503, 429, a reset connection) -> NO clearing
+ *   F.  refresh fails WITHOUT rejecting the refresh token (503, 429, a reset
+ *       connection, `invalid_client` as a 400 and as a 401) -> NO clearing
  *       Set-Cookie, and the next request with the SAME cookie refreshes and
  *       renders signed-in. The probe carries the cookie forward only if the
  *       first response did not clear it, i.e. it behaves like a browser.
@@ -143,8 +142,9 @@ process.on('SIGINT', () => {
 /**
  * `refreshMode`:
  *   'accept'    -> 200 + NEW_ACCESS_TOKEN
- *   'reject'    -> 400 invalid_grant (a definite rejection)
- *   'reject401' -> 401 invalid_client (also definite)
+ *   'reject'    -> 400 invalid_grant (the one definite rejection)
+ *   'client400' / 'client401' -> invalid_client: the APP was refused, not
+ *                  the user's refresh token, so NOT a reason to clear
  *   'status503' / 'status429' -> a transient server answer
  *   'reset'     -> the connection is destroyed: a network error, no status
  *   'rotate'    -> real rotation: a refresh token in `rotatingValid` is
@@ -198,8 +198,10 @@ const authHub = createServer(async (req, res) => {
       res.end(status === 503 ? 'Service Unavailable' : 'Too Many Requests');
       return;
     }
-    if (refreshMode === 'reject401') {
-      res.writeHead(401, { 'content-type': 'application/json' });
+    if (refreshMode === 'client400' || refreshMode === 'client401') {
+      res.writeHead(refreshMode === 'client400' ? 400 : 401, {
+        'content-type': 'application/json',
+      });
       res.end(JSON.stringify({ error: 'invalid_client' }));
       return;
     }
@@ -482,26 +484,6 @@ async function main() {
   check('A', loggedOut, 'response does not render the logged-out page');
   check('A', clears, 'response does not Set-Cookie clearing civ_session');
 
-  // ---- Scenario A2: refresh rejected with 401 ----------------------------
-  // Invariant guard (see the header): the second status of the definite-
-  // rejection predicate. A 401 from the token endpoint means the client
-  // credentials were refused, which no retry of this cookie can fix.
-  refreshMode = 'reject401';
-  refreshAttempts = 0;
-  {
-    const out = await loadPage(expiredSessionCookie('refresh-A2'));
-    const a2Clears = isClearing(out.cookies.session);
-    console.log('\n--- A2: refresh REJECTED (401) ---');
-    console.log('status            :', out.status);
-    console.log('refresh attempts  :', refreshAttempts, '(want 1)');
-    console.log('renders logged-out:', out.body.includes(LOGGED_OUT_MARKER), '(want true)');
-    console.log('clears civ_session:', a2Clears, '(want true)');
-    check('A2', out.status === 200, `expected 200, got ${out.status}`);
-    check('A2', refreshAttempts === 1, `expected 1 refresh attempt, got ${refreshAttempts}`);
-    check('A2', out.body.includes(LOGGED_OUT_MARKER), 'a 401 did not render logged out');
-    check('A2', a2Clears, 'a definite 401 rejection did not clear civ_session');
-  }
-
   // ---- Scenario B: refresh accepted --------------------------------------
   refreshMode = 'accept';
   refreshAttempts = 0;
@@ -659,12 +641,15 @@ async function main() {
   );
   check('E', !eHasRow, 'the balance row is rendered for a token that cannot read a balance');
 
-  // ---- F: a TRANSIENT refresh failure keeps the browser's cookie (#855) ---
+  // ---- F: a refresh failure that is not invalid_grant keeps the cookie ----
   //
-  // Three shapes of "the auth hub could not answer right now": a 503, a 429
-  // (a 4xx that is NOT a credential verdict — it catches a predicate widened
-  // to "any 4xx"), and a reset connection (no HTTP status at all, so the SDK
-  // throws a TypeError rather than an OAuthError).
+  // #855. Three shapes of "the auth hub could not answer right now": a 503, a
+  // 429 (a 4xx that is NOT a credential verdict — it catches a predicate
+  // widened to "any 4xx"), and a reset connection (no HTTP status at all, so
+  // the SDK throws a TypeError rather than an OAuthError). Then two shapes of
+  // "the APP was refused": `invalid_client` as a 400 — the SAME status as A's
+  // invalid_grant, so only a predicate that reads the error BODY passes both —
+  // and as a 401.
   //
   // Step 2 behaves like a browser: it sends the cookie again ONLY if step 1
   // did not clear it. So a clearing step 1 fails BOTH steps — the clear
@@ -673,6 +658,8 @@ async function main() {
     ['F503', 'status503'],
     ['F429', 'status429'],
     ['Fnet', 'reset'],
+    ['Fclient400', 'client400'],
+    ['Fclient401', 'client401'],
   ]) {
     const cookie = expiredSessionCookie(`refresh-${label}`);
 
@@ -690,7 +677,7 @@ async function main() {
     const secondToken = carriedAccessToken(second.cookies.session);
     const secondSignedIn = second.body.includes(SIGNED_IN_MARKER);
 
-    console.log(`\n--- ${label}: refresh fails TRANSIENTLY (${mode}), then recovers ---`);
+    console.log(`\n--- ${label}: refresh fails without invalid_grant (${mode}), then recovers ---`);
     console.log('1 status          :', first.status);
     console.log('1 refresh attempts:', firstAttempts, '(want 1)');
     console.log('1 Set-Cookie      :', JSON.stringify(first.cookies.all), '(want no civ_session)');
@@ -700,19 +687,19 @@ async function main() {
     console.log('2 cookie carries  :', secondToken, `(want ${NEW_ACCESS_TOKEN})`);
     console.log('2 renders signedin:', secondSignedIn, '(want true)');
 
-    check(label, first.status === 200, `a transient refresh failure broke the page (${first.status})`);
+    check(label, first.status === 200, `a non-verdict refresh failure broke the page (${first.status})`);
     check(
       label,
       firstAttempts === 1,
       `expected 1 refresh attempt on the failing load, got ${firstAttempts} — with 0 the ` +
-        `transient path was never exercised`,
+        `failure path was never exercised`,
     );
     check(
       label,
       first.cookies.session === undefined,
-      `a transient refresh failure (${mode}) wrote civ_session: ${first.cookies.session}`,
+      `a refresh failure that is not invalid_grant (${mode}) wrote civ_session: ${first.cookies.session}`,
     );
-    check(label, !firstClears, `a transient refresh failure (${mode}) cleared civ_session`);
+    check(label, !firstClears, `a refresh failure that is not invalid_grant (${mode}) cleared civ_session`);
     check(
       label,
       secondAttempts === 1,
