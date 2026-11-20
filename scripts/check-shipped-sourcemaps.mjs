@@ -245,6 +245,10 @@ function mapsOnDisk(pkgDir) {
  * (and `inspect()` then checks that map's `sources` like any other). The set
  * of specifiers is READ from the repo, not listed here, so documenting a new
  * setup module brings it under this rule with no edit to this file.
+ *
+ * CHANGELOGs are excluded: they are append-only history, so after a setup
+ * export is renamed the old entry would keep naming the dead path and leave
+ * this gate red with no fix short of rewriting release notes.
  */
 const SETUP_FILES_ARRAY = /setupFiles\s*:\s*\[([^\]]*)\]/g;
 const CIVITAI_SPECIFIER = /['"](@civitai\/[^'"]+)['"]/g;
@@ -253,7 +257,7 @@ const CIVITAI_SPECIFIER = /['"](@civitai\/[^'"]+)['"]/g;
 function documentedSetupSpecifiers() {
   const listed = execFileSync(
     'git',
-    ['ls-files', '-z', '--', '*vitest.config.*', '*vite.config.*', '*.md'],
+    ['ls-files', '-z', '--', '*vitest.config.*', '*vite.config.*', '*.md', ':(exclude)*CHANGELOG.md'],
     { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
   )
     .split('\0')
