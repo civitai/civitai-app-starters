@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { estimateGenerationCost, OrchestratorError, type GenerateInput } from '$lib/civitai';
+import { estimateResponseBody } from '$lib/estimate';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
@@ -13,7 +14,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
   try {
     const snapshot = await estimateGenerationCost(session, body);
-    return json({ cost: snapshot.cost?.total ?? 0, snapshot });
+    // `cost: null` when the snapshot carries no cost: absent is not free (#854).
+    return json(estimateResponseBody(snapshot));
   } catch (err) {
     if (err instanceof OrchestratorError) {
       return json({ error: 'orchestrator_error', detail: err.body }, { status: err.status });

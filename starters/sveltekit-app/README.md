@@ -53,7 +53,7 @@ auth hub (`.env.example` has the details).
 - `GET /api/auth/callback/civitai` — code exchange + session seal.
 - `POST /api/auth/logout` — clear session.
 - `POST /api/auth/revoke` — revoke tokens at Civitai then clear.
-- `POST /api/generate/estimate` — `whatif=true` cost preview.
+- `POST /api/generate/estimate` — `whatif=true` cost preview. Returns `cost: null` (not `0`) when the estimate carries no cost; the form then shows "Estimate unavailable" and keeps **Generate** disabled. **Generate** is enabled only once the current prompt has been previewed.
 - `POST /api/generate` — real submission.
 - `GET /api/workflow/[id]` — snapshot for client polling.
 

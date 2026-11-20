@@ -1,10 +1,18 @@
 /**
  * The pure decisions behind the Buzz cost preview, shared by the estimate route
- * (`src/app/api/generate/estimate/route.ts`) and `<GenerateForm>`.
+ * and the Generate form.
  *
- * Kept free of imports (no `@/` alias, no `server-only`, no React) so
+ * Kept free of imports (no path alias, no `server-only`, no UI framework) so
  * `tests/estimate.test.mjs` can run THIS file under plain `node --test` — the
  * tests exercise the code that ships, not a copy of it.
+ *
+ * 🔴 THE SAME FILE IN EVERY STANDALONE STARTER. next-app, sveltekit-app,
+ * react-pwa and svelte-pwa each carry a byte-identical copy (a starter is
+ * copied out on its own by `npx tiged`), and the repo guard
+ * `tests/guards/starter-shared-modules-parity.test.mjs` fails when one copy changes
+ * alone. In the two PWAs only the form imports it: their BFF's estimate route
+ * cannot (it compiles from `server/` alone), so it returns `cost: null` itself
+ * and the form re-checks it with {@link costOrNull}.
  */
 
 /**

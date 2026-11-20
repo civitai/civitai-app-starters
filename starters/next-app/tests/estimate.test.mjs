@@ -1,10 +1,11 @@
 /**
  * Regression tests for the Buzz cost preview (civitai/civitai-app-starters#853,
  * #854). Runs the SHIPPED module `src/lib/estimate.ts` under `node --test`
- * (Node 22.18+ / 24 strip the TypeScript types natively). That the route and
- * `<GenerateForm>` actually use the module is pinned by the repo-only guard
- * `tests/guards/starter-next-app-estimate-seam.test.mjs`, which is kept out of
- * this directory so it does not ship into scaffolded copies of the starter.
+ * (Node 22.18+ / 24 strip the TypeScript types natively). That the estimate
+ * route and the Generate form actually use the module is pinned by the
+ * repo-only guard `tests/guards/starter-estimate-seam.test.mjs`, which is kept
+ * out of this directory so it does not ship into scaffolded copies of the
+ * starter. The same file runs in every standalone starter.
  *
  * Fixture costs are 6 and 17 — distinct from each other and from 0, so a
  * hardcoded literal cannot pass.

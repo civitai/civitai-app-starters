@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 import { buildSetCookieHeader, sealCookie, unsealCookie } from '@civitai/app-sdk';
 import 'server-only';
 import { env } from './env';
+import { forgetRefreshesFor } from './refresh-tokens';
 import {
   needsRefresh,
   OAUTH_STATE_COOKIE,
@@ -74,8 +75,20 @@ export async function setSession(session: Session): Promise<void> {
   await writeCookie(SESSION_COOKIE, sealed, SESSION_MAX_AGE_SECONDS);
 }
 
-/** Clear the session cookie. Route Handlers and Server Actions only. */
+/**
+ * Sign out: forget this session's remembered refreshes, then clear the cookie.
+ * Route Handlers and Server Actions only.
+ *
+ * The first half matters because `src/proxy.ts` keeps a successful refresh
+ * for 60 s, keyed by the PREVIOUS refresh token, so a straggler with the old
+ * cookie gets the rotation. Without forgetting it, a request carrying the
+ * pre-rotation cookie inside that window was handed this session's tokens
+ * again after sign-out. Read from the raw cookie, not `getSession()`, which
+ * returns `null` for a token that needs a refresh.
+ */
 export async function clearSession(): Promise<void> {
+  const jar = await cookies();
+  forgetRefreshesFor(parseSession(jar.get(SESSION_COOKIE)?.value, env.SESSION_SECRET)?.tokens);
   await writeCookie(SESSION_COOKIE, '', 0);
 }
 

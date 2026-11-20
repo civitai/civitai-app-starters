@@ -285,7 +285,11 @@ app.post('/api/generate/estimate', async (c) => {
 
   try {
     const snapshot = await estimateGenerationCost(auth.session, parsed.input);
-    return c.json({ cost: snapshot.cost?.total ?? 0, snapshot });
+    // 🔴 ABSENT IS NOT ZERO (#854): a snapshot without `cost.total` was
+    // reported as 0 Buzz, which the user cannot tell from a free request. The
+    // form re-checks it with `costOrNull` from `src/lib/estimate.ts` (this
+    // file compiles from `server/` alone, so it cannot import that module).
+    return c.json({ cost: snapshot.cost?.total ?? null, snapshot });
   } catch (err) {
     return handleOrchestratorError(c, err);
   }
