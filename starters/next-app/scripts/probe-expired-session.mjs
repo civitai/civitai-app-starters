@@ -63,8 +63,9 @@
  *   S.  a load is WAITING on a refresh when another tab signs out with the
  *       same cookie, then the refresh succeeds -> the sign-out answers at once
  *       (the proxy does not refresh sign-out routes, so it does not join the
- *       wait), and the waiting load CLEARS the cookie and renders signed out
- *       instead of setting the refreshed session after the sign-out.
+ *       wait), and the waiting load renders signed out and writes NO session
+ *       cookie: neither the refreshed session, nor a clear that could wipe a
+ *       session signed in to again while it waited.
  *   L/R. sign out (`/api/auth/logout`, then `/api/auth/revoke`) right after a
  *       rotation, then load with the PRE-rotation cookie inside the 60 s
  *       window -> NOT signed in: the old refresh token goes back to the hub,
@@ -938,7 +939,7 @@ async function main() {
     }
     const late = await waiting;
     const lateToken = carriedAccessToken(late.cookies.session);
-    const lateClears = isClearing(late.cookies.session);
+    const lateWrote = late.cookies.session;
     const lateSignedIn = late.body.includes(SIGNED_IN_MARKER);
 
     console.log('\n--- S: a load waits on the refresh, another tab signs out, the refresh succeeds ---');
@@ -946,7 +947,7 @@ async function main() {
     console.log('sign-out ms       :', outMs, `(want < 5000; ${outError?.name ?? 'answered'})`);
     console.log('sign-out refreshes:', outAttempts, '(want 0)');
     console.log('sign-out clears   :', outClears, '(want true)');
-    console.log('waiter clears     :', lateClears, '(want true)');
+    console.log('waiter Set-Cookie :', JSON.stringify(lateWrote ?? null), '(want null)');
     console.log('waiter carries    :', lateToken, '(want null)');
     console.log('waiter signed in  :', lateSignedIn, '(want false)');
 
@@ -955,7 +956,7 @@ async function main() {
     check('S', outAttempts === 0, `the sign-out made ${outAttempts} refresh calls; a sign-out must not refresh`);
     check('S', outClears, 'the sign-out did not clear civ_session');
     check('S', lateToken === null, `the waiting load set the refreshed session after the sign-out (${lateToken})`);
-    check('S', lateClears, `the waiting load did not clear civ_session (${late.cookies.session})`);
+    check('S', lateWrote === undefined, `the waiting load wrote civ_session (${lateWrote})`);
     check('S', !lateSignedIn, 'the waiting load rendered signed-in after the sign-out');
   }
 

@@ -208,8 +208,10 @@ test('a caller already waiting on a refresh at sign-out gets signed out, not the
   for (const p of [tabA, tabB]) {
     await assert.rejects(
       p,
-      (err) => err?.name === 'SessionEndedError' && isDefiniteRejection(err),
-      'a waiter must get a result that clears its cookie, never the signed-out session\'s tokens',
+      // Not a definite rejection: the waiter must not clear the cookie, which
+      // could wipe a session signed in to again while it waited.
+      (err) => err?.name === 'SessionEndedError' && !isDefiniteRejection(err),
+      'a waiter must be signed out, never handed the signed-out session\'s tokens',
     );
   }
   assert.equal((await other).access_token, 'wt-other-access', 'another session must be untouched');
@@ -227,7 +229,7 @@ test('a caller waiting on a failing refresh at sign-out also gets signed out', a
   waiting.catch(() => {});
   forgetRefreshesFor({ refresh_token: 'wt-503' });
   release();
-  await assert.rejects(waiting, (err) => err?.name === 'SessionEndedError' && isDefiniteRejection(err));
+  await assert.rejects(waiting, (err) => err?.name === 'SessionEndedError' && !isDefiniteRejection(err));
 });
 
 test('forgetRefreshesFor ignores a session without a refresh token', () => {

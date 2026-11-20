@@ -37,8 +37,9 @@
  *   S.  a request is WAITING on a refresh when another tab signs out with the
  *       same cookie, then the refresh succeeds -> the sign-out answers at once
  *       (it does not refresh, so it does not join the wait), and the waiting
- *       request CLEARS the cookie and is signed out instead of setting the
- *       refreshed session after the sign-out.
+ *       request is signed out and writes NO session cookie: neither the
+ *       refreshed session, nor a clear that could wipe a session signed in to
+ *       again while it waited.
  *   L.  sign out (and R: revoke) right after a rotation, then a request with
  *       the PRE-rotation cookie inside the 60 s reuse window -> NOT signed in:
  *       the old refresh token goes back to the hub (which refuses it) instead
@@ -490,7 +491,7 @@ async function main() {
     console.log('sign-out ms       :', outMs, `(want < 5000; ${out.error?.message ?? 'answered'})`);
     console.log('sign-out refreshes:', outAttempts, '(want 0)');
     console.log('sign-out clears   :', isClearing(out.session), '(want true)');
-    console.log('waiter clears     :', isClearing(late.session), '(want true)');
+    console.log('waiter Set-Cookie :', JSON.stringify(late.session ?? null), '(want null)');
     console.log('waiter carries    :', carriedAccessToken(late.session), '(want null)');
     console.log('waiter signed in  :', late.signedIn, '(want false)');
 
@@ -503,7 +504,7 @@ async function main() {
       carriedAccessToken(late.session) === null,
       `the waiting request set the refreshed session after the sign-out (${carriedAccessToken(late.session)})`,
     );
-    check('S', isClearing(late.session), `the waiting request did not clear civ_session (${late.session})`);
+    check('S', late.session === undefined, `the waiting request wrote civ_session (${late.session})`);
     check('S', !late.signedIn, 'the waiting request rendered signed-in after the sign-out');
   }
 

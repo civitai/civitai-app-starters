@@ -40,15 +40,9 @@ import { OAuthError, refreshToken as oauthRefresh, type OAuthTokens } from '@civ
  * The cost of being wrong in this direction is a dead cookie that is retried
  * on each request until the user signs in again (the session reader already
  * treats that request as signed out), never a lost session.
- *
- * The one other answer that clears is not from the hub: a
- * {@link SessionEndedError}, which a caller gets when its session signed out
- * while it was waiting on the refresh. That cookie is dead by the user's own
- * choice.
+
  */
 export function isDefiniteRejection(err: unknown): boolean {
-  // The session signed out while this caller waited (see SessionEndedError).
-  if (err instanceof SessionEndedError) return true;
   if (!(err instanceof OAuthError)) return false;
   const body = err.body;
   return (
@@ -102,7 +96,13 @@ interface Flight {
 /**
  * What a caller sees when its session signed out ({@link forgetRefreshesFor})
  * while it was waiting on the refresh, whatever the refresh itself returned.
- * {@link isDefiniteRejection} counts it, so the caller clears its cookie.
+ *
+ * Deliberately NOT a {@link isDefiniteRejection}: the caller treats it like a
+ * transient failure, so that request is signed out and its response leaves
+ * the browser's cookie alone. The sign-out response already cleared it, and a
+ * clearing `Set-Cookie` from this request, which can land up to
+ * {@link REFRESH_WAIT_MS} later, would wipe a session the user had signed in
+ * to again in the meantime.
  */
 export class SessionEndedError extends Error {
   override readonly name = 'SessionEndedError';
@@ -287,7 +287,8 @@ export function refreshTokensOnce(opts: RefreshOpts): Promise<OAuthTokens> {
  * the map, so no later request can join it, and callers already waiting on it
  * get a {@link SessionEndedError} instead of its answer: otherwise a request
  * another tab sent just before the sign-out would set the refreshed session
- * cookie after it, signing the browser back in.
+ * cookie after it, signing the browser back in. That request is signed out
+ * and writes no cookie at all.
  */
 export function forgetRefreshesFor(tokens: { refresh_token?: string | null } | null | undefined): void {
   const refreshToken = tokens?.refresh_token;
