@@ -182,11 +182,52 @@ test('a refresh in flight at sign-out cannot be joined afterwards', async () => 
     return rotateTo((x) => `${x}-next`)(p);
   });
   const first = refresh('fl-1');
+  first.catch(() => {});
   forgetRefreshesFor({ refresh_token: 'fl-1' });
   const second = refresh('fl-1');
   release();
-  await Promise.all([first, second]);
+  assert.equal((await second).access_token, 'fl-1-access');
   assert.equal(calls.length, 2);
+});
+
+test('a caller already waiting on a refresh at sign-out gets signed out, not the tokens', async () => {
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const calls = fakeHub(async (p) => {
+    await gate;
+    return rotateTo((x) => `${x}-next`)(p);
+  });
+  // Two tabs waiting on the same refresh, and an unrelated session in flight.
+  const tabA = refresh('wt-1');
+  const tabB = refresh('wt-1');
+  const other = refresh('wt-other');
+  for (const p of [tabA, tabB]) p.catch(() => {});
+  // A third tab signs out while the refresh is still in flight.
+  forgetRefreshesFor({ refresh_token: 'wt-1' });
+  release();
+  for (const p of [tabA, tabB]) {
+    await assert.rejects(
+      p,
+      (err) => err?.name === 'SessionEndedError' && isDefiniteRejection(err),
+      'a waiter must get a result that clears its cookie, never the signed-out session\'s tokens',
+    );
+  }
+  assert.equal((await other).access_token, 'wt-other-access', 'another session must be untouched');
+  assert.deepEqual(calls.sort(), ['wt-1', 'wt-other']);
+});
+
+test('a caller waiting on a failing refresh at sign-out also gets signed out', async () => {
+  let release;
+  const gate = new Promise((r) => (release = r));
+  fakeHub(async () => {
+    await gate;
+    return new Response('Service Unavailable', { status: 503 });
+  });
+  const waiting = refresh('wt-503');
+  waiting.catch(() => {});
+  forgetRefreshesFor({ refresh_token: 'wt-503' });
+  release();
+  await assert.rejects(waiting, (err) => err?.name === 'SessionEndedError' && isDefiniteRejection(err));
 });
 
 test('forgetRefreshesFor ignores a session without a refresh token', () => {

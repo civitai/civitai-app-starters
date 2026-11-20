@@ -3,7 +3,8 @@
  * (civitai/civitai-app-starters#804, #855): each starter's session code must
  * refresh THROUGH its copy of `refresh-tokens.ts` (single flight, backoff,
  * wait cap), clear the cookie only behind `isDefiniteRejection`, and forget
- * the session's remembered refreshes on sign-out. `tests/refresh-tokens.test.mjs`
+ * the session's remembered refreshes on sign-out, and revoke the STORED tokens
+ * without refreshing first. `tests/refresh-tokens.test.mjs`
  * tests the module; this pins that the starter calls it.
  *
  * 🔴 STRUCTURAL, NOT BEHAVIOURAL. Each starter's `probe:expired-session` is the
@@ -32,6 +33,8 @@ const LAYOUT = {
     signOut: ['src/app/api/auth/logout/route.ts', 'src/app/api/auth/revoke/route.ts'],
     signOutCall: /await clearSession\(\);/,
     roots: ['src'],
+    revoke: { file: 'src/app/api/auth/revoke/route.ts', reads: /await getStoredSession\(\)/, notReads: /\bgetSession\(\)/ },
+    skipsSignOut: { file: 'src/proxy.ts', pattern: /if \(SIGN_OUT_PATHS\.has\(request\.nextUrl\.pathname\)\) return NextResponse\.next\(\);/ },
   },
   'sveltekit-app': {
     module: 'src/lib/refresh-tokens.ts',
@@ -42,6 +45,8 @@ const LAYOUT = {
     signOut: ['src/routes/api/auth/logout/+server.ts', 'src/routes/api/auth/revoke/+server.ts'],
     signOutCall: /clearSession\(cookies, !dev\);/,
     roots: ['src'],
+    revoke: { file: 'src/routes/api/auth/revoke/+server.ts', reads: /parseSession\(cookies\)\?\.tokens/, notReads: /locals\.session/ },
+    skipsSignOut: { file: 'src/hooks.server.ts', pattern: /SIGN_OUT_PATHS\.has\(event\.url\.pathname\)\s*\?\s*null/ },
   },
   'react-pwa': {
     module: 'server/refresh-tokens.ts',
@@ -52,6 +57,7 @@ const LAYOUT = {
     signOut: ['server/app.ts'],
     signOutCall: /clearSession\(c, production\);/,
     roots: ['src', 'server'],
+    revoke: { file: 'server/app.ts', route: "app.post('/api/auth/revoke'", reads: /parseSession\(c\)/, notReads: /readSession\(/ },
   },
   'svelte-pwa': {
     module: 'server/refresh-tokens.ts',
@@ -62,6 +68,7 @@ const LAYOUT = {
     signOut: ['server/app.ts'],
     signOutCall: /clearSession\(c, production\);/,
     roots: ['src', 'server'],
+    revoke: { file: 'server/app.ts', route: "app.post('/api/auth/revoke'", reads: /parseSession\(c\)/, notReads: /readSession\(/ },
   },
 };
 
@@ -114,5 +121,22 @@ for (const [starter, l] of Object.entries(LAYOUT)) {
       2,
       `expected exactly two sign-out call sites (logout, revoke) in ${l.signOut.join(', ')}`,
     );
+  });
+
+  test(`${starter}: revoke sends the STORED tokens upstream, and sign-out does not refresh`, () => {
+    // A refresh that fails without invalid_grant leaves the refreshed-session
+    // read null, which skipped the upstream revoke while the cookie was still
+    // cleared. Behaviour is pinned by probe:expired-session's RT and S arms.
+    // Comments name the old read on purpose; only code counts.
+    const src = read(starter, l.revoke.file).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    let body = src;
+    if (l.revoke.route) {
+      const at = src.indexOf(l.revoke.route);
+      assert.ok(at !== -1, `${l.revoke.file} must define ${l.revoke.route}`);
+      body = src.slice(at, src.indexOf('\n});', at));
+    }
+    assert.match(body, l.revoke.reads, 'revoke must read the stored session cookie');
+    assert.doesNotMatch(body, l.revoke.notReads, 'revoke must not read the refreshed session');
+    if (l.skipsSignOut) assert.match(read(starter, l.skipsSignOut.file), l.skipsSignOut.pattern);
   });
 }

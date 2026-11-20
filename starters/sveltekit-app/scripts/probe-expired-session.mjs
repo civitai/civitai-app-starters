@@ -34,10 +34,19 @@
  *       straggler with the OLD cookie reuses the rotation. (#804)
  *   H.  the token call HANGS -> the request still answers well inside 20 s
  *       with the cookie kept, and recovers once the call is released.
+ *   S.  a request is WAITING on a refresh when another tab signs out with the
+ *       same cookie, then the refresh succeeds -> the sign-out answers at once
+ *       (it does not refresh, so it does not join the wait), and the waiting
+ *       request CLEARS the cookie and is signed out instead of setting the
+ *       refreshed session after the sign-out.
  *   L.  sign out (and R: revoke) right after a rotation, then a request with
  *       the PRE-rotation cookie inside the 60 s reuse window -> NOT signed in:
  *       the old refresh token goes back to the hub (which refuses it) instead
- *       of being answered with the signed-out session's tokens.
+ *       of being answered with the signed-out session's tokens. R also pins
+ *       that revoke sends the session's refresh token upstream.
+ *   RT. revoke while the refresh is failing (503) -> the session's refresh
+ *       token is STILL revoked upstream (read from the stored cookie, with no
+ *       refresh attempt), and the cookie is cleared.
  *   E.  estimate whose snapshot has NO cost -> `cost: null`, never 0; an
  *       explicit 0 stays 0, and 17 stays 17. (#854)
  *
@@ -91,6 +100,8 @@ let refreshMode = 'reject';
 let refreshAttempts = 0;
 const rotatingValid = new Set();
 const hung = [];
+/** Every `token` the revocation endpoint was sent, in order. */
+const revoked = [];
 /** `'absent'` -> no `cost`; `'zero'` -> `cost.total: 0`; `'seventeen'` -> 17. */
 let estimateMode = 'absent';
 let estimateCalls = 0;
@@ -145,8 +156,12 @@ const hub = createServer(async (req, res) => {
         return send(400, { error: 'invalid_grant' });
     }
   }
-  // Revocation: refuse it, which the starters treat as best-effort anyway.
-  if (req.url?.startsWith('/api/auth/oauth/revoke')) return send(404, {});
+  // Revocation: record the token, then refuse it, which the starters treat as
+  // best-effort anyway.
+  if (req.url?.startsWith('/api/auth/oauth/revoke')) {
+    revoked.push(new URLSearchParams(raw).get('token'));
+    return send(404, {});
+  }
   // The real `/api/v1/me` fields; never a `balance` (it has none).
   if (req.url?.startsWith('/api/v1/me')) {
     return send(200, {
@@ -439,6 +454,59 @@ async function main() {
     check('H', carriedAccessToken(second.session) === NEW_ACCESS_TOKEN, 'the request after release did not recover');
   }
 
+  // ---- S: a request waiting on the refresh when another tab signs out ------
+  {
+    const cookie = expiredCookie('refresh-S');
+    refreshMode = 'hang';
+    refreshAttempts = 0;
+    const waiting = load(cookie);
+    const until = Date.now() + 5_000;
+    while (refreshAttempts === 0 && Date.now() < until) await sleep(20);
+    const waitingAttempts = refreshAttempts;
+
+    const t0 = Date.now();
+    const out = await send('/api/auth/logout', { method: 'POST', cookie, timeoutMs: 8_000 }).catch((err) => ({
+      error: err,
+    }));
+    const outMs = Date.now() - t0;
+    const outAttempts = refreshAttempts - waitingAttempts;
+    // The refresh the waiting request started now SUCCEEDS.
+    for (const res of hung.splice(0)) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          access_token: NEW_ACCESS_TOKEN,
+          refresh_token: 'refresh-S-rotated',
+          expires_in: 3600,
+          scope: 65537,
+          token_type: 'Bearer',
+        }),
+      );
+    }
+    const late = await waiting;
+
+    console.log('\n--- S: a request waits on the refresh, another tab signs out, the refresh succeeds ---');
+    console.log('waiting refreshes :', waitingAttempts, '(want 1)');
+    console.log('sign-out ms       :', outMs, `(want < 5000; ${out.error?.message ?? 'answered'})`);
+    console.log('sign-out refreshes:', outAttempts, '(want 0)');
+    console.log('sign-out clears   :', isClearing(out.session), '(want true)');
+    console.log('waiter clears     :', isClearing(late.session), '(want true)');
+    console.log('waiter carries    :', carriedAccessToken(late.session), '(want null)');
+    console.log('waiter signed in  :', late.signedIn, '(want false)');
+
+    check('S', waitingAttempts === 1, `expected the waiting request to start 1 refresh, got ${waitingAttempts}`);
+    check('S', !out.error && outMs < 5_000, `the sign-out took ${outMs} ms (${out.error?.message ?? 'answered'})`);
+    check('S', outAttempts === 0, `the sign-out made ${outAttempts} refresh calls; a sign-out must not refresh`);
+    check('S', isClearing(out.session), `the sign-out did not clear civ_session (${out.session})`);
+    check(
+      'S',
+      carriedAccessToken(late.session) === null,
+      `the waiting request set the refreshed session after the sign-out (${carriedAccessToken(late.session)})`,
+    );
+    check('S', isClearing(late.session), `the waiting request did not clear civ_session (${late.session})`);
+    check('S', !late.signedIn, 'the waiting request rendered signed-in after the sign-out');
+  }
+
   // ---- L / R: signing out ends the reuse window ---------------------------
   for (const [label, path] of [
     ['L', '/api/auth/logout'],
@@ -453,7 +521,9 @@ async function main() {
     const rotatedOk = carriedAccessToken(first.session) === ROTATED_ACCESS_TOKEN;
 
     // Sign out the way the browser would: with the cookie it now holds.
+    revoked.length = 0;
     const out = await send(path, { method: 'POST', cookie: cookieValue(first.session) });
+    const outRevoked = [...revoked];
     const before = refreshAttempts;
     // Another tab still holding the pre-rotation cookie, inside 60 s.
     const late = await load(old);
@@ -477,6 +547,34 @@ async function main() {
     );
     check(label, lateToken === null, `after ${path}, the pre-rotation cookie was handed a session (${lateToken})`);
     check(label, !late.signedIn, `after ${path}, the pre-rotation cookie rendered signed-in`);
+    if (label === 'R') {
+      console.log('revoked upstream  :', JSON.stringify(outRevoked), '(want it to include refresh-R-rotated)');
+      check('R', outRevoked.includes('refresh-R-rotated'), `revoke did not send the refresh token upstream (${outRevoked})`);
+    }
+  }
+
+  // ---- RT: revoke while the refresh is failing still revokes upstream -----
+  {
+    const cookie = expiredCookie('refresh-RT');
+    refreshMode = 'status503';
+    refreshAttempts = 0;
+    revoked.length = 0;
+    const out = await send('/api/auth/revoke', { method: 'POST', cookie });
+
+    console.log('\n--- RT: revoke while the token endpoint answers 503 ---');
+    console.log('status            :', out.status, '(want 200)');
+    console.log('refresh attempts  :', refreshAttempts, '(want 0 — a sign-out does not refresh)');
+    console.log('revoked upstream  :', JSON.stringify(revoked), '(want it to include refresh-RT)');
+    console.log('clears            :', isClearing(out.session), '(want true)');
+
+    check('RT', out.status === 200, `revoke answered ${out.status}`);
+    check('RT', refreshAttempts === 0, `revoke made ${refreshAttempts} refresh calls; a sign-out must not refresh`);
+    check(
+      'RT',
+      revoked.includes('refresh-RT'),
+      `the refresh token was not revoked upstream while the refresh was failing (${JSON.stringify(revoked)})`,
+    );
+    check('RT', isClearing(out.session), `revoke did not clear civ_session (${out.session})`);
   }
 
   // ---- E: an estimate without a cost is not free ---------------------------
