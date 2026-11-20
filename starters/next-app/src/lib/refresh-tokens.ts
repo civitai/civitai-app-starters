@@ -12,21 +12,37 @@ import { OAuthError, refreshToken as oauthRefresh, type OAuthTokens } from '@civ
  * 🔴 THE ONE PREDICATE FOR "THIS CREDENTIAL IS DEAD". Only this clears the
  * session cookie.
  *
- * `refreshToken()` throws an `OAuthError` carrying the HTTP status on any
- * non-2xx answer, and something else (a `TypeError` from `fetch`) when there
- * was no answer at all. Only two answers are a verdict on the credential:
+ * `refreshToken()` throws an `OAuthError` carrying the HTTP status and the
+ * parsed body on any non-2xx answer, and something else (a `TypeError` from
+ * `fetch`) when there was no answer at all. Exactly ONE answer is a verdict on
+ * the user's refresh token: an RFC 6749 §5.2 error body whose `error` is
+ * `invalid_grant` — Civitai's documented answer for a refresh token that is
+ * unknown, expired, revoked or already spent.
  *
- * - 400: RFC 6749 §5.2's error status — `invalid_grant` (refresh token
- *   revoked, expired, or already spent) and its siblings;
- * - 401: the token endpoint refused the client itself (`invalid_client`).
+ * Everything else leaves the cookie alone and the next request tries again:
  *
- * Everything else — a 5xx, a 429, a timeout, a reset connection — says the
- * auth service could not answer RIGHT NOW. Clearing the cookie on those turned
- * a blip into a forced sign-in (#855), so they leave the cookie alone and the
- * next request tries again.
+ * - a 5xx, a 429, a timeout, a reset connection — the auth service could not
+ *   answer RIGHT NOW. Clearing on those turned a blip into a forced sign-in
+ *   (#855);
+ * - `invalid_client` (400 or 401) — the APP's client id or secret was refused.
+ *   That is a deploy fault, not the user's, and it fails for every user at
+ *   once; clearing would throw away every still-valid refresh token for good,
+ *   even after the secret is fixed;
+ * - any other error body — `invalid_request` and the like are bugs in the
+ *   request, which no amount of signing the user out fixes.
+ *
+ * The cost of being wrong in this direction is a dead cookie that is retried
+ * on each request until the user signs in again (`getSession()` already treats
+ * the render as signed out), never a lost session.
  */
 export function isDefiniteRejection(err: unknown): boolean {
-  return err instanceof OAuthError && (err.status === 400 || err.status === 401);
+  if (!(err instanceof OAuthError)) return false;
+  const body = err.body;
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    (body as { error?: unknown }).error === 'invalid_grant'
+  );
 }
 
 /**

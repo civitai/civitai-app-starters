@@ -38,9 +38,10 @@ import {
  * Changing only the response would leave this render still holding the dead
  * cookie; changing only the request would make the browser re-send it forever.
  *
- * ONE DELIBERATE EXCEPTION: a TRANSIENT refresh failure (5xx, 429, network
- * error) edits only the request. There the browser re-sending the cookie is
- * the point — the refresh token is still good, and the next request retries.
+ * ONE DELIBERATE EXCEPTION: a refresh failure that is NOT a verdict on the
+ * refresh token (a 5xx, a 429, a network error, a refused client secret)
+ * edits only the request. There the browser re-sending the cookie is the
+ * point — the refresh token may still be good, and the next request retries.
  * Which failures count as definite is decided in one place,
  * `isDefiniteRejection` in `src/lib/refresh-tokens.ts`.
  */
@@ -109,22 +110,23 @@ export async function proxy(request: NextRequest) {
       return response;
     } catch (err) {
       if (!isDefiniteRejection(err)) {
-        // The auth service could not answer right now (5xx, 429, network
-        // error) — NOT a verdict on the credential (#855). Only ONE of the two
+        // Not a verdict on the refresh token (#855): the auth service could
+        // not answer right now (5xx, 429, network error), or refused the app
+        // rather than the user (`invalid_client`). Only ONE of the two
         // edits: strip the cookie from the REQUEST, so this render sees a
         // logged-out viewer instead of an expired token (which `getSession()`
         // would reject anyway), and leave the BROWSER's cookie untouched, so
         // the next request retries the refresh and the user stays signed in
         // once the service is back.
         console.warn(
-          '[proxy] session refresh failed transiently; keeping the cookie for a retry:',
+          '[proxy] session refresh failed without rejecting the refresh token; keeping the cookie for a retry:',
           err instanceof Error ? err.message : err,
         );
         request.cookies.delete(SESSION_COOKIE);
         return NextResponse.next({ request });
       }
-      // Refresh token revoked, expired or spent, or the client was refused —
-      // fall through and clear.
+      // `invalid_grant`: the refresh token is unknown, expired, revoked or
+      // spent — fall through and clear.
     }
   }
 
