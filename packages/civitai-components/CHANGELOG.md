@@ -1,5 +1,11 @@
 # @civitai/components
 
+## 0.13.1
+
+### Patch Changes
+
+- b81f18d: **`@civitai/components/testing/happy-dom` no longer makes Vite warn about a missing source map.** The published module ended with `//# sourceMappingURL=happy-dom.js.map`, but the tarball left out every `.map` file, so each Vitest run that used it as a setup file printed `Failed to load source map … ENOENT`. The package now ships that one map, with its source inlined, so the comment points at a file that exists and stack traces through the shim show the original TypeScript. No other files change, and the shim behaves the same.
+
 ## 0.13.0
 
 ### Minor Changes
@@ -1038,10 +1044,10 @@
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                    before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                             @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                    after    @civitai/theme       0.3.1                   — 1 copy
-                                             @civitai/components  0.4.2                   — 1 copy
+                                      before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                               @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                      after    @civitai/theme       0.3.1                   — 1 copy
+                                               @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens

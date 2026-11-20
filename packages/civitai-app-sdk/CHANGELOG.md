@@ -1,5 +1,16 @@
 # @civitai/app-sdk
 
+## 0.92.0
+
+### Minor Changes
+
+- 3660f76: **`createOrchestratorClient` takes an optional `logger`.** `callOrchestrator` logs a failed orchestrator response (status plus the first 500 characters of the raw body) before it throws `OrchestratorError`. That line went to `console.error` with no way to change it. Pass `logger: { error }` to send it somewhere else, or `logger: null` to turn it off. Omitting `logger` keeps the old `console.error` behaviour. The thrown `OrchestratorError` (status and body) does not change, even if the logger throws or returns a rejected promise. Adds the exported type `OrchestratorLogger`. Contributed by @PBandDev (#34).
+
+### Patch Changes
+
+- 44969c8: **The `@civitai/app-sdk/orchestrator/steps` docs now say that its peer, `@civitai/client`, is frozen.** That package was renamed to `@civitai/orchestration-client`, and `0.2.0-beta.98` is its last release. The README and the module's doc comment no longer claim that a later `@civitai/client` release will close the gap between the step catalog and the typed map. They now say that this subpath still imports `@civitai/client` on purpose, so installing only the renamed package does not satisfy it, and that `@civitai/sdk` types its steps from `@civitai/orchestration-client`. Documentation only: no type or behaviour changes.
+- 75036ec: **`BlockTextToImageParams.sampler` no longer documents a default of `'Euler'`.** Since civitai/civitai#8859 the host uses the model family's own default sampler when `sampler` is omitted (`Euler a` for the SD families), and sends none for a family with no sampler control. The doc comment now says so, and points at `fetchGenerationSamplers` for the names a family offers. Documentation only: no type or behaviour changes.
+
 ## 0.91.0
 
 ### Minor Changes
@@ -1148,15 +1159,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                                                                                                                                                        🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                                                                                                                                                        stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                                                                                                                                                        the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                                                                                                                                                        same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                                                                                                                                                        1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                                                                                                                                                        code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                                                                                                                                                        gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                                                                                                                                                        `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                                                                                                                                                        single measurements on one machine.
+                                                                                                                                                                            🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                                                                                                                                            stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                                                                                                                                            the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                                                                                                                                            same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                                                                                                                                            1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                                                                                                                                            code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                                                                                                                                            gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                                                                                                                                            `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                                                                                                                                            single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -2064,10 +2075,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                                                                            before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                                                                                     @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                                                                            after    @civitai/theme       0.3.1                   — 1 copy
-                                                                                                                     @civitai/components  0.4.2                   — 1 copy
+                                                                                                              before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                                                                       @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                                                                              after    @civitai/theme       0.3.1                   — 1 copy
+                                                                                                                       @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
