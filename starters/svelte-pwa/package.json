@@ -33,11 +33,13 @@
     "typecheck": "svelte-check --tsconfig ./tsconfig.json && tsc -p tsconfig.server.json --noEmit",
     "check:env": "node scripts/check-env.mjs",
     "preview": "vite preview",
+    "test": "node --test \"tests/**/*.test.mjs\"",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:install": "playwright install --with-deps chromium",
     "probe:static-serving": "node scripts/probe-static-serving.mjs",
-    "probe:cookie-flags": "node scripts/probe-cookie-flags.mjs"
+    "probe:cookie-flags": "node scripts/probe-cookie-flags.mjs",
+    "probe:expired-session": "node scripts/probe-expired-session.mjs"
   },
   "comment-overrides": [
     "SECURITY CONSTRAINTS ON TRANSITIVE DEPENDENCIES. Declared HERE, in the",

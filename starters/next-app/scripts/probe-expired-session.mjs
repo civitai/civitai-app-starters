@@ -60,6 +60,11 @@
  *       call, zero clears, every response carries the rotated session; then a
  *       straggler with the OLD cookie inside the grace window reuses the rotated
  *       tokens without a second call.
+ *   L/R. sign out (`/api/auth/logout`, then `/api/auth/revoke`) right after a
+ *       rotation, then load with the PRE-rotation cookie inside the 60 s
+ *       window -> NOT signed in: the old refresh token goes back to the hub,
+ *       which refuses it, instead of being answered from the remembered
+ *       rotation of a session that has signed out.
  *
  *   node scripts/probe-expired-session.mjs
  *   PROBE_SKIP_BUILD=1 node scripts/probe-expired-session.mjs   # reuse .next
@@ -868,6 +873,59 @@ async function main() {
       secondToken === NEW_ACCESS_TOKEN,
       `the load after release did not recover the session (cookie carries ${secondToken})`,
     );
+  }
+
+  // ---- L / R: signing out ends the reuse window ---------------------------
+  //
+  // A rotation is remembered for 60 s so a straggler with the OLD cookie gets
+  // the rotated tokens (G). Signing out must end that: otherwise, for the rest
+  // of the window, another tab or a copy of the pre-rotation cookie is handed
+  // the signed-out session again. The old refresh token must go back to the
+  // hub instead, which refuses it (it was spent by the rotation).
+  for (const [label, path] of [
+    ['L', '/api/auth/logout'],
+    ['R', '/api/auth/revoke'],
+  ]) {
+    rotatingValid.clear();
+    rotatingValid.add(`refresh-${label}`);
+    refreshMode = 'rotate';
+    refreshAttempts = 0;
+    const old = expiredSessionCookie(`refresh-${label}`);
+    const first = await loadPage(old);
+    const rotatedOk = carriedAccessToken(first.cookies.session) === ROTATED_ACCESS_TOKEN;
+
+    // Sign out the way the browser would: with the cookie it now holds.
+    const held = first.cookies.session?.slice('civ_session='.length).split(';')[0] ?? '';
+    const outRes = await fetch(`http://127.0.0.1:${APP_PORT}${path}`, {
+      method: 'POST',
+      headers: { cookie: `civ_session=${held}` },
+      redirect: 'manual',
+    });
+    await outRes.text();
+    const outClears = isClearing(sessionSetCookie(outRes.headers).session);
+    const before = refreshAttempts;
+    const late = await loadPage(old);
+    const lateAttempts = refreshAttempts - before;
+    const lateToken = carriedAccessToken(late.cookies.session);
+    const lateSignedIn = late.body.includes(SIGNED_IN_MARKER);
+
+    console.log(`\n--- ${label}: ${path} right after a rotation, then the old cookie ---`);
+    console.log('rotated first     :', rotatedOk, '(want true)');
+    console.log('sign-out clears   :', outClears, `(want true; status ${outRes.status})`);
+    console.log('late refresh calls:', lateAttempts, '(want 1 — the old token goes back to the hub)');
+    console.log('late carries      :', lateToken, '(want null)');
+    console.log('late signed in    :', lateSignedIn, '(want false)');
+
+    check(label, rotatedOk, 'the first load did not rotate the session — the arm measured nothing');
+    check(label, outClears, `${path} did not clear civ_session`);
+    check(
+      label,
+      lateAttempts === 1,
+      `after ${path}, a load with the pre-rotation cookie made ${lateAttempts} refresh calls; ` +
+        `0 means it was answered from the signed-out session's remembered rotation`,
+    );
+    check(label, lateToken === null, `after ${path}, the pre-rotation cookie was handed a session (${lateToken})`);
+    check(label, !lateSignedIn, `after ${path}, the pre-rotation cookie rendered signed-in`);
   }
 
   if (failures.length || process.env.PROBE_DUMP_BODY) {

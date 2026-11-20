@@ -573,6 +573,18 @@ jobs:
         run: pnpm --filter ./starters/sveltekit-app build
         env:
           SKIP_ENV_VALIDATION: '1'
+      # EXPIRED-SESSION PROBE. Loads the build in-process against a stand-in
+      # Civitai and asserts: only invalid_grant clears the session; a 5xx, a
+      # 429, a network error or invalid_client keeps it (with a 5 s backoff)
+      # and the next request recovers; concurrent refreshes share one call;
+      # a hung token call cannot hang the request; sign-out ends the 60 s
+      # reuse window; an estimate without a cost reports null, not 0.
+      - name: 'sveltekit-app: expired-session probe'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' && steps.build-sveltekit-app.outcome == 'success' }}
+        run: pnpm --filter ./starters/sveltekit-app probe:expired-session
+        env:
+          PROBE_SKIP_BUILD: '1'
+        timeout-minutes: 5
       # Keyed on the script's existence, not on a starter name, so a rename
       # cannot silently stop it.
       - name: 'sveltekit-app: test (if defined)'
@@ -627,6 +639,18 @@ jobs:
         env:
           PROBE_SKIP_BUILD: '1'
         timeout-minutes: 5
+      # EXPIRED-SESSION PROBE. Loads the build in-process against a stand-in
+      # Civitai and asserts: only invalid_grant clears the session; a 5xx, a
+      # 429, a network error or invalid_client keeps it (with a 5 s backoff)
+      # and the next request recovers; concurrent refreshes share one call;
+      # a hung token call cannot hang the request; sign-out ends the 60 s
+      # reuse window; an estimate without a cost reports null, not 0.
+      - name: 'react-pwa: expired-session probe'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' && steps.build-react-pwa.outcome == 'success' }}
+        run: pnpm --filter ./starters/react-pwa probe:expired-session
+        env:
+          PROBE_SKIP_BUILD: '1'
+        timeout-minutes: 5
       # Keyed on the script's existence, not on a starter name, so a rename
       # cannot silently stop it.
       - name: 'react-pwa: test (if defined)'
@@ -678,6 +702,18 @@ jobs:
       - name: 'svelte-pwa: cookie-flags probe'
         if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' && steps.build-svelte-pwa.outcome == 'success' }}
         run: pnpm --filter ./starters/svelte-pwa probe:cookie-flags
+        env:
+          PROBE_SKIP_BUILD: '1'
+        timeout-minutes: 5
+      # EXPIRED-SESSION PROBE. Loads the build in-process against a stand-in
+      # Civitai and asserts: only invalid_grant clears the session; a 5xx, a
+      # 429, a network error or invalid_client keeps it (with a 5 s backoff)
+      # and the next request recovers; concurrent refreshes share one call;
+      # a hung token call cannot hang the request; sign-out ends the 60 s
+      # reuse window; an estimate without a cost reports null, not 0.
+      - name: 'svelte-pwa: expired-session probe'
+        if: ${{ !cancelled() && needs.lanes.outputs.starter != 'false' && steps.build-svelte-pwa.outcome == 'success' }}
+        run: pnpm --filter ./starters/svelte-pwa probe:expired-session
         env:
           PROBE_SKIP_BUILD: '1'
         timeout-minutes: 5
