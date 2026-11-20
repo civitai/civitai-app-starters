@@ -4,9 +4,11 @@
  * `fetch`. They check what a user sees and what the form sends: the prompt it
  * prices, the prompt it submits, and the workflow it then polls.
  *
- * Deliberately behavioural. They read the form the way a person does (by
- * label, button text and status text), so restyling or restructuring the
- * markup does not break them; changing what the form DOES does.
+ * They assert on what the form sends and on a few things it shows: the button
+ * labels ("Preview Buzz cost", "Generate (≈ N Buzz)"), "Estimate
+ * unavailable", the quoted cost in its <strong>, and the image. Restyling does
+ * not break them; renaming those buttons or dropping those elements does, so
+ * update the matching lookup here when you change one on purpose.
  */
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
