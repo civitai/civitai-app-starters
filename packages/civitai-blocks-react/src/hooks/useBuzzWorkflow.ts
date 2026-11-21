@@ -124,6 +124,57 @@ export const CONFIRMED_STEP_BODY_SUBMIT_REFUSAL =
   "useBuzzWorkflow.submit() does not run a step body that carries a quoteId — run it with useRunConfirmedStep().runConfirmedStep(body), or drop quoteId to submit it as an ordinary job. Nothing was sent.";
 
 /**
+ * "The same input" for reusing a failed submit's idempotency key: the body as
+ * canonical JSON — object keys sorted at every depth, `undefined`-valued keys
+ * dropped (JSON drops them on the way to the server too). Compared as the whole
+ * string, never hashed, so two different bodies cannot collide.
+ *
+ * 🔴 `null` FOR ANYTHING THAT IS NOT PLAIN JSON: a `Map`, `Set`, `Date`, class
+ * instance, function, `bigint`, non-finite number, `undefined` in an array, or a
+ * cycle. Several of those serialise to the same string as a DIFFERENT value
+ * (every `Map` is `{}`), and a false "same" would send a new input under an old
+ * key, which the host answers with the OLD result. `null` never matches, so such
+ * a body always gets a fresh key — the behaviour before key reuse existed.
+ */
+function canonicalBodyJson(body: unknown): string | null {
+  const onPath = new Set<object>();
+  const walk = (value: unknown): string | null => {
+    if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+      return JSON.stringify(value);
+    }
+    if (typeof value === 'number') return Number.isFinite(value) ? JSON.stringify(value) : null;
+    if (typeof value !== 'object') return null;
+    if (onPath.has(value)) return null;
+    onPath.add(value);
+    try {
+      if (Array.isArray(value)) {
+        const items: string[] = [];
+        for (let i = 0; i < value.length; i += 1) {
+          const item = walk(value[i]);
+          if (item === null) return null;
+          items.push(item);
+        }
+        return `[${items.join(',')}]`;
+      }
+      const proto: unknown = Object.getPrototypeOf(value);
+      if (proto !== Object.prototype && proto !== null) return null;
+      const record = value as Record<string, unknown>;
+      const entries: string[] = [];
+      for (const key of Object.keys(record).sort()) {
+        if (record[key] === undefined) continue;
+        const item = walk(record[key]);
+        if (item === null) return null;
+        entries.push(`${JSON.stringify(key)}:${item}`);
+      }
+      return `{${entries.join(',')}}`;
+    } finally {
+      onPath.delete(value);
+    }
+  };
+  return walk(body);
+}
+
+/**
  * Snapshot statuses that mean "no further polling is needed."
  * Used by both `submit` (a host can return an instant-fail / cached result)
  * and `poll` so the hook can't get stuck in 'polling' after a terminal reply.
@@ -596,8 +647,8 @@ export class WorkflowSubmitError extends Error {
    *     - a **transient transport failure** (5xx / 408 / 429 / 401), which the
    *       `dev:live` host collapses into this same shape.
    *
-   *   So prefer **reusing the same {@link SubmitWorkflowOptions.idempotencyKey}**
-   *   on retry rather than letting a fresh one be minted, and do not render
+   *   So retry under the **same {@link SubmitWorkflowOptions.idempotencyKey}**
+   *   (`submit()` does this itself for a same-input retry), and do not render
    *   "nothing was charged" to a viewer as a certainty. There is no workflow id
    *   on this arm to poll.
    *
@@ -612,9 +663,12 @@ export class WorkflowSubmitError extends Error {
    *   on a non-throwing failed snapshot", and `finalizeGenIdempotency` runs on
    *   that path. So Buzz may already be spent for this call.
    *
-   *   A retry is a SECOND reservation unless you reuse the same
-   *   {@link SubmitWorkflowOptions.idempotencyKey} — `submit()` mints a fresh key
-   *   per call by default, so an automatic retry double-reserves.
+   *   A retry is a SECOND reservation unless it carries the same
+   *   {@link SubmitWorkflowOptions.idempotencyKey}. Without a caller key,
+   *   `submit()` reuses the failed call's key when the SAME input is submitted
+   *   again (until another auto-keyed submit fails); changed input gets a fresh
+   *   key. Under the same key the host replays this failed reply rather than
+   *   running the workflow again.
    *
    *   🔴 `err.snapshot.workflowId` IS USUALLY POLLABLE, BUT CHECK IT FIRST — this
    *   arm is defined by what the id is NOT. The server emits `workflow.id ??
@@ -700,13 +754,17 @@ export interface SubmitWorkflowOptions extends ConsentRetryOptions {
    * A STABLE idempotency key for this logical submit. Reuse the SAME value when
    * RETRYING a submit whose response was lost (timeout / network drop) so the
    * host+orchestrator collapse it to ONE Buzz charge instead of double-charging.
-   * Omit → the hook generates a fresh key per `submit()` call (each call is a new
-   * logical submit); pass a stable id (e.g. a grid-cell id) to make a retry safe.
+   * Omit → the hook mints a key, and REUSES it when the next submit of the SAME
+   * input (same body as canonical JSON, key order ignored) follows a submit that
+   * rejected; any other submit gets a fresh key. That covers a plain "try again"
+   * on one hook instance. Pass a stable id (e.g. a grid-cell id) when retries can
+   * interleave with other inputs, cross a remount, or the body is not plain JSON
+   * — the hook remembers only the most recent failure.
    *
    * 🔴 THIS IS THE FIELD THAT MAKES A RETRY AFTER A `'workflow-failed'` REJECTION
    * SAFE. That code means a workflow probably exists and its spend may already
-   * be committed server-side; retrying WITHOUT reusing the key mints a fresh one
-   * and therefore a SECOND reservation. See {@link WorkflowSubmitError.code}.
+   * be committed server-side; a retry under a DIFFERENT key is a SECOND
+   * reservation. See {@link WorkflowSubmitError.code}.
    *
    * The SDK's own automatic consent retry obeys this: whichever value ends up
    * here — yours, or the one `submit()` mints — is the value BOTH of its
@@ -797,8 +855,8 @@ export interface UseBuzzWorkflow {
    * idempotency conflict reaches it too; `'workflow-failed'` means a workflow
    * PROBABLY exists (the `'whatif'` sentinel lands here too and has nothing to
    * poll — guard before polling) and its spend may already be committed. Do not
-   * tell the viewer it was free, and on either code prefer reusing the same
-   * {@link SubmitWorkflowOptions.idempotencyKey}.
+   * tell the viewer it was free. On either code, a retry of the same input reuses
+   * the failed call's {@link SubmitWorkflowOptions.idempotencyKey} (see there).
    *
    * 🔴 A BUDGET / SPEND-CAP REJECTION STILL RESOLVES, and that is deliberate. It
    * is a documented outcome, not an error: the server quotes what it refused to
@@ -1088,17 +1146,16 @@ export interface UseBuzzWorkflow {
  *   // the id decides only whether there is anything to POLL. Conjoining them
  *   // sends a 'whatif' id into the reassuring arm.
  *   if (err.code === 'workflow-failed') {
- *     // Spend may already be committed. Do NOT retry blindly (that mints a new
- *     // idempotency key = a second reservation) and do NOT claim nothing was
- *     // charged.
+ *     // Spend may already be committed. Do NOT claim nothing was charged. A
+ *     // same-input retry reuses the key, so the host replays this failure.
  *     showError('The generation may have started but did not complete.');
  *     // 'whatif' is a non-workflow sentinel — nothing behind it to poll.
  *     if (err.snapshot.workflowId !== 'whatif') {
  *       await watch(err.snapshot.workflowId, { onUpdate: render });
  *     }
  *   } else {
- *     // 'exception' — usually nothing was queued. Retry, but reuse the SAME
- *     // idempotencyKey: a lost response can also land here.
+ *     // 'exception' — usually nothing was queued. Retrying submit(body) with the
+ *     // same body reuses the key, so a lost response is not charged twice.
  *     showError('Could not start the generation. Please try again.');
  *   }
  * }
@@ -1127,6 +1184,28 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       mountedRef.current = false;
     };
   }, []);
+
+  /**
+   * The input and auto-minted key of the most recent auto-keyed `submit()` that
+   * REJECTED — so a retry of the same input carries the same key and the host
+   * dedupes it to one charge instead of two.
+   *
+   * 🔴 ANY REJECTION AFTER THE KEY WAS CHOSEN COUNTS AS FAILED: a timeout, a
+   * transport error, `'exception'` and `'workflow-failed'` alike. Each can follow
+   * a first attempt the host accepted (a lost reply, an in-progress conflict, a
+   * committed failed workflow), so a fresh key there is a possible second charge.
+   * Note the cost on `'workflow-failed'`: the host has stored that failed reply
+   * under the key, so a same-input retry replays it rather than running again.
+   *
+   * Cleared when a submit carrying the remembered key RESOLVES — that reply is
+   * the host's answer for the key, and a committed one is cached and would be
+   * replayed — so the next submit of the input is new.
+   * Replaced by the next auto-keyed failure; a successful submit of a DIFFERENT
+   * input leaves it alone. A caller-supplied key bypasses it entirely — it is
+   * neither reused for, nor overwritten by, a caller-keyed submit. Pre-send
+   * refusals (training body, `quoteId`, malformed key) never reach it.
+   */
+  const lastFailedSubmitRef = useRef<{ input: string; key: string } | null>(null);
 
   /**
    * 🔴 `estimate()` IS DELIBERATELY NOT ROUTED THROUGH `withConsentRetry`, and
@@ -1298,7 +1377,8 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       setError(null);
       setStatus('submitting');
       // Idempotency: reuse a caller-supplied stable key across a retry (→ one Buzz
-      // charge), or mint a fresh one per call (each call is a new logical submit).
+      // charge); otherwise reuse the last FAILED submit's key for the same input,
+      // or mint a fresh one (a new logical submit).
       //
       // 🔴 MINTED HERE, OUTSIDE THE CLOSURE `withConsentRetry` RE-INVOKES. Both
       // attempts therefore carry the SAME key and the host+orchestrator collapse
@@ -1313,12 +1393,18 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
       // `InvalidIdempotencyKeyError` for why this cannot be a
       // `WorkflowSubmitError` (that class's `'exception'` arm explicitly admits
       // money may have moved; here nothing left the iframe).
-      const idempotencyKey = resolveIdempotencyKey(
-        'useBuzzWorkflow.submit',
-        options?.idempotencyKey,
-      );
+      //
+      // 🔴 AN AUTO KEY IS REUSED WHEN THE SAME INPUT IS RETRIED AFTER A FAILURE
+      // — see `lastFailedSubmitRef`. A caller key always wins and never reads or
+      // writes that memory.
+      const input = options?.idempotencyKey === undefined ? canonicalBodyJson(body) : null;
+      const remembered = lastFailedSubmitRef.current;
+      const idempotencyKey =
+        input !== null && remembered !== null && remembered.input === input
+          ? remembered.key
+          : resolveIdempotencyKey('useBuzzWorkflow.submit', options?.idempotencyKey);
       try {
-        return await withConsentRetry(
+        const snapshot = await withConsentRetry(
           getTransport(),
           WORKFLOW_SCOPES,
           () => submitOnce(body, idempotencyKey),
@@ -1327,7 +1413,14 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
           // needs it even though it has no `AbortController`.
           () => mountedRef.current,
         );
+        // A resolved reply is the host's answer for this key (a committed one is
+        // cached and would be REPLAYED), so the next submit of this input is new.
+        if (lastFailedSubmitRef.current?.key === idempotencyKey) {
+          lastFailedSubmitRef.current = null;
+        }
+        return snapshot;
       } catch (err) {
+        if (input !== null) lastFailedSubmitRef.current = { input, key: idempotencyKey };
         setError(err as Error);
         setStatus('error');
         throw err;

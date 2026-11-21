@@ -382,9 +382,9 @@ if (priced) {
     // whose id is 'whatif' into the reassuring arm — the exact blind-retry
     // invitation this whole guard exists to remove.
     if (err.code === 'workflow-failed') {
-      // 🔴 Spend MAY ALREADY BE COMMITTED. Do not tell the viewer it was free,
-      // and do not retry blindly — a retry mints a fresh idempotency key, i.e. a
-      // SECOND reservation.
+      // 🔴 Spend MAY ALREADY BE COMMITTED. Do not tell the viewer it was free.
+      // A retry of the same body reuses the failed call's idempotency key, so the
+      // host replays this failure instead of reserving a second time.
       showError('The generation may have started but did not complete. Check your history.');
       // Only NOW ask about pollability: 'whatif' is a non-workflow sentinel.
       if (err.snapshot.workflowId !== 'whatif') await poll(err.snapshot.workflowId);
@@ -439,9 +439,10 @@ if (priced) {
     `err.code === 'workflow-failed'`.
     🔴 **Money may already be committed.** Server-side, *any* resolved submit
     keeps its Buzz reservation "regardless of snapshot status", with no refund on
-    a non-throwing failed snapshot. So do not tell the viewer it was free, and do
-    not retry blindly — `submit()` mints a fresh `idempotencyKey` per call, so an
-    automatic retry is a second reservation. Read `err.snapshot.workflowId` (a
+    a non-throwing failed snapshot. So do not tell the viewer it was free. A
+    retry of the SAME body reuses the failed call's `idempotencyKey` (the host
+    replays this failed reply); a changed body gets a fresh key, i.e. a second
+    reservation. Read `err.snapshot.workflowId` (a
     usually-pollable id) and `watch`/`poll` it to learn the workflow's actual
     fate — guarding with `err.snapshot.workflowId !== 'whatif'` first, since the
     server treats both `'failed'` and `'whatif'` as non-workflow sentinels.
