@@ -94,6 +94,9 @@ expectTypeOf<KnownBlockWorkflowErrorCode>().toEqualTypeOf<
   | 'step_quote_unpriced'
   // The pending-scan source refusal (civitai#8405).
   | 'source-scan-pending'
+  // The prompt refusals (civitai#9024).
+  | 'prompt-policy-refused'
+  | 'prompt-check-unavailable'
   // The inline customComfy graph refusals (civitai#8488, and checkComfyGraph's two).
   | 'inline-node-refused'
   | 'not-api-format'

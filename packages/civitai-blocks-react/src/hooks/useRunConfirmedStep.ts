@@ -125,7 +125,9 @@ export function isRunConfirmedStepErrorCode(
  *    the app's daily spend or rate limit). Its reservation was refunded: NO JOB,
  *    nothing charged. `.message` is the server's reason and `.snapshot` the
  *    refusal it arrived in. Retrying needs a new estimate and usually a later
- *    time.
+ *    time. A PROMPT refusal arrives the same way, with
+ *    `.snapshot.errorCode === 'prompt-policy-refused'` (show `.message` and do
+ *    not retry the prompt) or `'prompt-check-unavailable'` (retry later).
  *  - `.signInRequired` — no session. Route into `useRequestSignIn()`.
  *  - anything else — a refusal before any submit (an expired or used quote, a
  *    body that no longer matches its quote, a price that changed, or the
