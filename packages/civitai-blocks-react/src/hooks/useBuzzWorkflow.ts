@@ -764,6 +764,13 @@ export interface SubmitWorkflowOptions extends ConsentRetryOptions {
    * interleave with other inputs, cross a remount, or the body is not plain JSON
    * — the hook remembers only the most recent failure.
    *
+   * ⚠️ A reused key can keep a same-input retry failing for up to 10 minutes.
+   * If the host dies after claiming the key but before finishing (a rollout, for
+   * example), its in-progress claim lives for that long, and every retry under
+   * the key rejects as `'exception'` ("already in progress"). Changing the
+   * input, remounting the hook, or passing a new key here starts a new run, at
+   * the risk of a second charge if the first attempt did go through.
+   *
    * 🔴 THIS IS THE FIELD THAT MAKES A RETRY AFTER A `'workflow-failed'` REJECTION
    * REPLAY. That code means a workflow probably exists and its spend may already
    * be committed server-side; a retry under a DIFFERENT key — which is what an
@@ -859,8 +866,10 @@ export interface UseBuzzWorkflow {
    * idempotency conflict reaches it too; `'workflow-failed'` means a workflow
    * PROBABLY exists (the `'whatif'` sentinel lands here too and has nothing to
    * poll — guard before polling) and its spend may already be committed. Do not
-   * tell the viewer it was free. On either code, a retry of the same input reuses
-   * the failed call's {@link SubmitWorkflowOptions.idempotencyKey} (see there).
+   * tell the viewer it was free. After `'exception'`, a retry of the same input
+   * reuses the failed call's {@link SubmitWorkflowOptions.idempotencyKey}; after
+   * `'workflow-failed'` it gets a FRESH key, so the retry is a real second run
+   * and may be charged again (see there).
    *
    * 🔴 A BUDGET / SPEND-CAP REJECTION STILL RESOLVES, and that is deliberate. It
    * is a documented outcome, not an error: the server quotes what it refused to
@@ -1151,7 +1160,7 @@ export interface UseBuzzWorkflow {
  *   // sends a 'whatif' id into the reassuring arm.
  *   if (err.code === 'workflow-failed') {
  *     // Spend may already be committed. Do NOT claim nothing was charged. A
- *     // same-input retry reuses the key, so the host replays this failure.
+ *     // same-input retry gets a FRESH key: it is a real new run, charged again.
  *     showError('The generation may have started but did not complete.');
  *     // 'whatif' is a non-workflow sentinel — nothing behind it to poll.
  *     if (err.snapshot.workflowId !== 'whatif') {

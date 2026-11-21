@@ -217,6 +217,38 @@ describe('useBuzzWorkflow.submit — idempotency key reuse on retry', () => {
     expect(again.key).not.toBe(first.key);
   });
 
+  it('a SUCCESSFUL submit of a DIFFERENT input keeps the failed input\'s key for its retry', async () => {
+    // Y succeeding says nothing about X's unknown outcome: X's retry must still
+    // carry X's key, or a lost first attempt of X is charged twice.
+    const { result } = renderHook(() => useBuzzWorkflow());
+
+    const failedX = await submitOnce(result.current.submit as never, bodyA(), FAILED);
+    expect((await failedX.settled).ok).toBe(false);
+
+    const bodyY = { ...bodyA(), params: { prompt: 'dog', steps: 20 } };
+    const okY = await submitOnce(result.current.submit as never, bodyY, ACCEPTED);
+    expect((await okY.settled).ok).toBe(true);
+    expect(okY.key).not.toBe(failedX.key);
+
+    const retryX = await submitOnce(result.current.submit as never, bodyA(), ACCEPTED);
+    expect((await retryX.settled).ok).toBe(true);
+    expect(retryX.key).toBe(failedX.key);
+  });
+
+  it('an undefined-valued field does not make the same input look different', async () => {
+    // JSON drops `undefined` keys on the way to the host, so these two bodies
+    // are the same request and must share the key.
+    const { result } = renderHook(() => useBuzzWorkflow());
+
+    const withUndefined = { ...bodyA(), params: { prompt: 'cat', steps: 20, seed: undefined } };
+    const first = await submitOnce(result.current.submit as never, withUndefined, FAILED);
+    expect((await first.settled).ok).toBe(false);
+
+    const retry = await submitOnce(result.current.submit as never, bodyA(), ACCEPTED);
+    expect((await retry.settled).ok).toBe(true);
+    expect(retry.key).toBe(first.key);
+  });
+
   it('a caller-passed key wins over the remembered key, and does not replace it', async () => {
     const { result } = renderHook(() => useBuzzWorkflow());
 
