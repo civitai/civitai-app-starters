@@ -7,6 +7,7 @@
     quoteFor,
     type Quote,
   } from '../lib/estimate';
+  import { attemptFor, type Attempt } from '../lib/attempt-key';
   import { estimateCost, getWorkflow, submitGeneration } from '../lib/api';
   import {
     DEFAULT_MODEL_AIR,
@@ -47,6 +48,11 @@
   let snapshot = $state<WorkflowSnapshot | null>(null);
 
   let abort: AbortController | null = null;
+  // The idempotency key of the current Generate attempt, bound to its prompt
+  // (see `attempt-key.ts`). Kept across a failed submit, a failed wait and the
+  // re-Preview they force, so a retry cannot pay for a second workflow.
+  // Dropped when the workflow finishes, on Reset and when the prompt is edited.
+  let attempt: Attempt | null = null;
   onDestroy(() => abort?.abort());
 
   async function estimate() {
@@ -79,6 +85,8 @@
         const { snapshot: snap, done } = await getWorkflow(id, SERVER_WAIT_MS, controller.signal);
         snapshot = snap;
         if (done) {
+          // Finished (succeeded or not): the next Generate is a new attempt.
+          attempt = null;
           phase = 'done';
           return;
         }
@@ -99,7 +107,9 @@
     error = null;
     snapshot = null;
     try {
-      const { workflowId: id } = await submitGeneration({ prompt });
+      const next = attemptFor(attempt, prompt);
+      attempt = next;
+      const { workflowId: id } = await submitGeneration({ prompt, idempotencyKey: next.key });
       workflowId = id;
       phase = 'polling';
       longPollUntilDone(id);
@@ -114,9 +124,15 @@
     }
   }
 
+  // An edited prompt is a new input, so the next Generate is a new attempt.
+  function dropAttempt() {
+    attempt = null;
+  }
+
   function reset() {
     abort?.abort();
     sequencer.invalidate();
+    attempt = null;
     phase = 'idle';
     error = null;
     quote = null;
@@ -137,6 +153,7 @@
     <textarea
       class="min-h-[5rem] rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
       bind:value={prompt}
+      oninput={dropAttempt}
       disabled={busy}
     ></textarea>
     <span class="text-xs text-zinc-500">

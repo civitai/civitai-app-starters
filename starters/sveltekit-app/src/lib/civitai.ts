@@ -11,6 +11,7 @@ import {
   type WorkflowSnapshot,
 } from '@civitai/app-sdk/orchestrator';
 import { config } from './env';
+import { withExternalId } from './submit-key';
 import type { Session } from './session';
 
 const STARTER_TAG = 'sveltekit-app';
@@ -133,13 +134,22 @@ export function estimateGenerationCost(
   );
 }
 
+/**
+ * Submit the workflow for real. `idempotencyKey` (checked by the route with
+ * `readIdempotencyKey`) becomes the workflow's `externalId`, so a retry with
+ * the same key returns the first workflow instead of paying for a second.
+ */
 export function submitGeneration(
   session: Session,
   input: GenerateInput,
+  idempotencyKey?: string,
 ): Promise<WorkflowSnapshot> {
   return submitWorkflow(
     getClient(session),
-    buildTextToImageBody(input, { tags: ['civitai-app-starter', STARTER_TAG] }),
+    withExternalId(
+      buildTextToImageBody(input, { tags: ['civitai-app-starter', STARTER_TAG] }),
+      idempotencyKey,
+    ),
   );
 }
 

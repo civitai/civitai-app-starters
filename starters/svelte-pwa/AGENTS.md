@@ -75,7 +75,7 @@ the secret or breaks the auth model.
 1. Mount → `onMount` `GET /api/me` → 401 → `<LoginButton>` → form posts `/api/auth/login` → BFF 303 to civitai.com.
 2. Civitai redirects to `GET /api/auth/callback/civitai` → BFF exchanges code + seals session → 303 to `/?notice=connected`.
 3. SPA re-mounts → `GET /api/me` → 200 `{username, balance, grantedScopes}` → `<GenerateForm>`. 🔴 The BFF reads `balance` from `getBuzzBalance()` (`buzz.getUserAccount`, needs `BuzzRead`), **not** from `/api/v1/me`, which returns none; it is `null` when the scope was not granted and the SPA then renders no row.
-4. "Preview Buzz cost" → `POST /api/generate/estimate` → display the cost for that prompt. Generate is disabled until the current prompt has an estimate; editing the prompt, Reset, a failed submit or a failed workflow wait discards it (a failed submit may still have started a paid workflow, so Generate stays locked until a new Preview), a reply to a discarded estimate is ignored, and an estimate without a cost (`cost: null`) shows "Estimate unavailable".
+4. "Preview Buzz cost" → `POST /api/generate/estimate` → display the cost for that prompt. Generate is disabled until the current prompt has an estimate; editing the prompt, Reset, a failed submit or a failed workflow wait discards it (a failed submit may still have started a paid workflow, so Generate stays locked until a new Preview), a reply to a discarded estimate is ignored, and an estimate without a cost (`cost: null`) shows "Estimate unavailable". Each Generate sends an `idempotencyKey` (`src/lib/attempt-key.ts`) that the generate route checks (`^[A-Za-z0-9_-]{1,64}$`, else 400) and puts on the real submit, never the estimate, as the workflow's `externalId`; the orchestrator returns the existing workflow for a repeat key. The form keeps the key across a failed submit, a failed wait and the re-Preview they force, so the retry cannot pay twice, and drops it when the workflow finishes, on Reset and when the prompt is edited. Never reuse a key for a different input: a repeat key returns the old workflow even if the body differs.
 5. "Generate" → `POST /api/generate` → `workflowId` → SPA polls `GET /api/workflow/[id]` every 2s.
 6. Terminal status → display image blobs.
 
@@ -87,7 +87,7 @@ the secret or breaks the auth model.
 | `server/index.ts`, static serving, the SPA fallback | `pnpm probe:static-serving` |
 | `server/app.ts` security headers, cookie flags, `server/env.ts` | `pnpm probe:cookie-flags` |
 | `server/session.ts`, `server/refresh-tokens.ts`, the estimate or sign-out routes in `server/app.ts` | `pnpm probe:expired-session` (no Civitai needed: a stand-in runs in the probe) |
-| `src/lib/estimate.ts`, `server/refresh-tokens.ts` | `pnpm test` (needs Node ≥ 22.18: it imports the `.ts` modules with Node's built-in type stripping) |
+| `src/lib/estimate.ts`, `server/refresh-tokens.ts`, `src/lib/attempt-key.ts`, `server/submit-key.ts` | `pnpm test` (needs Node ≥ 22.18: it imports the `.ts` modules with Node's built-in type stripping) |
 | `src/components/GenerateForm.svelte` | `pnpm test`: `tests/GenerateForm.test.ts` renders the real form in happy-dom (Vitest) with `fetch` stubbed, and checks what it shows and what it sends |
 | `vite.config.ts`, env, security headers | `pnpm build` |
 | Auth flow (`server/app.ts` auth routes, `server/session.ts`) | `pnpm test:e2e -- auth-flow` |
