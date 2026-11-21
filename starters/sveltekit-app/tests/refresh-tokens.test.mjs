@@ -267,7 +267,7 @@ test('a caller waiting on a HUNG refresh is signed out at sign-out, not after th
   assert.equal(outcome, 'SessionEndedError');
 });
 
-test('a refresh that succeeds after its session signed out has its new refresh token revoked', async () => {
+test('a refresh that succeeds after its session was REVOKED has its new refresh token revoked', async () => {
   let release;
   const gate = new Promise((r) => (release = r));
   const revoked = [];
@@ -278,7 +278,7 @@ test('a refresh that succeeds after its session signed out has its new refresh t
   const waiting = refresh('rv-1');
   const other = refresh('rv-other');
   waiting.catch(() => {});
-  forgetRefreshesFor({ refresh_token: 'rv-1' });
+  forgetRefreshesFor({ refresh_token: 'rv-1' }, { revokeOrphans: true });
   release();
   await assert.rejects(waiting, (err) => err?.name === 'SessionEndedError');
   assert.equal((await other).refresh_token, 'rv-other-orphan');
@@ -289,13 +289,34 @@ test('a refresh that succeeds after its session signed out has its new refresh t
   assert.deepEqual(revoked, ['rv-1-orphan']);
 });
 
+test('a plain sign-out does not revoke a refresh it orphaned', async () => {
+  // Logout is local by design (PORTING.md 3c), and the hub's revoke of a
+  // refresh token deletes every access token the user holds for the app: a
+  // logout racing a refresh must not become a sign-out on every device.
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const revoked = [];
+  const calls = fakeHub(async (p) => {
+    await gate;
+    return rotateTo((x) => `${x}-orphan`)(p);
+  }, revoked);
+  const waiting = refresh('lo-1');
+  waiting.catch(() => {});
+  forgetRefreshesFor({ refresh_token: 'lo-1' });
+  release();
+  await assert.rejects(waiting, (err) => err?.name === 'SessionEndedError');
+  await settle();
+  assert.deepEqual(calls, ['lo-1'], 'positive control: the refresh did reach the hub and succeed');
+  assert.deepEqual(revoked, []);
+});
+
 // An invariant guard, not regression coverage: the code before the fix never
 // revoked anything, so this passes there too. It pins the fix's other edge.
 test('a refresh that succeeds before sign-out is not revoked', async () => {
   const revoked = [];
   fakeHub(rotateTo((p) => `${p}-next`), revoked);
   assert.equal((await refresh('kept-1')).refresh_token, 'kept-1-next');
-  forgetRefreshesFor({ refresh_token: 'kept-1-next' });
+  forgetRefreshesFor({ refresh_token: 'kept-1-next' }, { revokeOrphans: true });
   await settle();
   // Its caller holds those tokens; the sign-out route owns revoking them.
   assert.deepEqual(revoked, []);

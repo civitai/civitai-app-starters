@@ -4,8 +4,10 @@
  * refresh THROUGH its copy of `refresh-tokens.ts` (single flight, backoff,
  * wait cap), clear the cookie only behind `isDefiniteRejection`, and forget
  * the session's remembered refreshes on sign-out, and revoke the STORED tokens
- * without refreshing first. `tests/refresh-tokens.test.mjs`
- * tests the module; this pins that the starter calls it.
+ * without refreshing first. Only the revoke route revokes a refresh its
+ * sign-out orphaned (`revokeOrphans`); a plain logout must not.
+ * `tests/refresh-tokens.test.mjs` tests the module; this pins that the starter
+ * calls it.
  *
  * 🔴 STRUCTURAL, NOT BEHAVIOURAL. Each starter's `probe:expired-session` is the
  * behavioural check (a real build against a stand-in Civitai). This exists so
@@ -31,7 +33,7 @@ const LAYOUT = {
     sessionFile: 'src/lib/session.ts',
     sessionImportFrom: "'./refresh-tokens'",
     signOut: ['src/app/api/auth/logout/route.ts', 'src/app/api/auth/revoke/route.ts'],
-    signOutCall: /await clearSession\(\);/,
+    signOutCall: /await clearSession\((?:\{ revokeOrphans: true \})?\);/,
     roots: ['src'],
     revoke: { file: 'src/app/api/auth/revoke/route.ts', reads: /await getStoredSession\(\)/, notReads: /\bgetSession\(\)/ },
     skipsSignOut: { file: 'src/proxy.ts', pattern: /if \(SIGN_OUT_PATHS\.has\(request\.nextUrl\.pathname\)\) return NextResponse\.next\(\);/ },
@@ -43,7 +45,7 @@ const LAYOUT = {
     sessionFile: 'src/lib/session.ts',
     sessionImportFrom: "'./refresh-tokens'",
     signOut: ['src/routes/api/auth/logout/+server.ts', 'src/routes/api/auth/revoke/+server.ts'],
-    signOutCall: /clearSession\(cookies, !dev\);/,
+    signOutCall: /clearSession\(cookies, !dev(?:, \{ revokeOrphans: true \})?\);/,
     roots: ['src'],
     revoke: { file: 'src/routes/api/auth/revoke/+server.ts', reads: /parseSession\(cookies\)\?\.tokens/, notReads: /locals\.session/ },
     skipsSignOut: { file: 'src/hooks.server.ts', pattern: /SIGN_OUT_PATHS\.has\(event\.url\.pathname\)\s*\?\s*null/ },
@@ -55,7 +57,7 @@ const LAYOUT = {
     sessionFile: 'server/session.ts',
     sessionImportFrom: "'./refresh-tokens.js'",
     signOut: ['server/app.ts'],
-    signOutCall: /clearSession\(c, production\);/,
+    signOutCall: /clearSession\(c, production(?:, \{ revokeOrphans: true \})?\);/,
     roots: ['src', 'server'],
     revoke: { file: 'server/app.ts', route: "app.post('/api/auth/revoke'", reads: /parseSession\(c\)/, notReads: /readSession\(/ },
   },
@@ -66,7 +68,7 @@ const LAYOUT = {
     sessionFile: 'server/session.ts',
     sessionImportFrom: "'./refresh-tokens.js'",
     signOut: ['server/app.ts'],
-    signOutCall: /clearSession\(c, production\);/,
+    signOutCall: /clearSession\(c, production(?:, \{ revokeOrphans: true \})?\);/,
     roots: ['src', 'server'],
     revoke: { file: 'server/app.ts', route: "app.post('/api/auth/revoke'", reads: /parseSession\(c\)/, notReads: /readSession\(/ },
   },
@@ -138,5 +140,22 @@ for (const [starter, l] of Object.entries(LAYOUT)) {
     assert.match(body, l.revoke.reads, 'revoke must read the stored session cookie');
     assert.doesNotMatch(body, l.revoke.notReads, 'revoke must not read the refreshed session');
     if (l.skipsSignOut) assert.match(read(starter, l.skipsSignOut.file), l.skipsSignOut.pattern);
+  });
+
+  test(`${starter}: only the revoke route revokes a refresh its sign-out orphaned`, () => {
+    // A plain logout leaves the upstream tokens live by design (PORTING.md
+    // 3c), and Civitai's revoke of a refresh token deletes every access token
+    // the user holds for this app, so a logout that raced a refresh would sign
+    // the user out on every device. Behaviour is pinned by the
+    // revokeOrphans cases in tests/refresh-tokens.test.mjs.
+    const code = (rel) => read(starter, rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const perFile = l.signOut.map((rel) => code(rel).match(/\{ revokeOrphans: true \}/g)?.length ?? 0);
+    assert.equal(perFile.reduce((a, b) => a + b, 0), 1, `exactly one sign-out call may pass revokeOrphans (${l.signOut.join(', ')})`);
+    let body = code(l.revoke.file);
+    if (l.revoke.route) {
+      const at = body.indexOf(l.revoke.route);
+      body = body.slice(at, body.indexOf('\n});', at));
+    }
+    assert.match(body, /clearSession\([^)]*\{ revokeOrphans: true \}\);/, 'the revoke route must pass revokeOrphans');
   });
 }
