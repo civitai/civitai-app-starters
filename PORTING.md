@@ -209,7 +209,7 @@ deleteCookie('civ_session');
 return json({ ok: true });
 ```
 
-Read the tokens from the stored cookie, not from the session reader that refreshes (Step 4). That reader answers "signed out" for a request whose refresh failed for a transient reason, so revoking what it returns skips the upstream revoke while the cookie is still cleared, and the refresh token stays live at Civitai. Do not refresh on the sign-out routes at all: a refresh there mints tokens only to throw them away. The starters skip them in the code that refreshes (`SIGN_OUT_PATHS`).
+Read the tokens from the stored cookie, not from the session reader that refreshes (Step 4). That reader answers "signed out" for a request whose refresh failed for a transient reason, so revoking what it returns skips the upstream revoke while the cookie is still cleared, and the refresh token stays live at Civitai. Do not refresh on the sign-out routes at all: a refresh there mints tokens only to throw them away. Step 4's `refreshSession()` returns early for them (`SIGN_OUT_PATHS`), as the starters' refresh code does.
 
 ---
 
@@ -240,6 +240,9 @@ interface Session {
 
 const SESSION_COOKIE = 'civ_session';
 const SESSION_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
+
+/** The sign-out routes (3c, 3d). They read the stored cookie themselves and are never refreshed. */
+const SIGN_OUT_PATHS: ReadonlySet<string> = new Set(['/api/auth/logout', '/api/auth/revoke']);
 
 export function writeSession(session: Session) {
   const sealed = sealCookie(JSON.stringify(session), process.env.SESSION_SECRET!);
@@ -283,9 +286,14 @@ export function readSession(): Session | null {
 
 /**
  * WRITES COOKIES. Call only where response cookies may be set (see the wiring
- * list below), before any `readSession()` in the same request.
+ * list below), before any `readSession()` in the same request, with the
+ * request's path.
  */
-export async function refreshSession(): Promise<void> {
+export async function refreshSession(pathname: string): Promise<void> {
+  // A sign-out route revokes or drops the STORED tokens (3c, 3d). Refreshing
+  // first would mint tokens only to throw them away.
+  if (SIGN_OUT_PATHS.has(pathname)) return;
+
   const session = parseSession();
   // Nothing to refresh. An unreadable cookie is left alone on purpose, so a
   // secret rotation does not emit a Set-Cookie on every request.
@@ -330,16 +338,16 @@ function isDefiniteRejection(err: unknown): boolean {
 }
 ```
 
-Call `refreshSession()` from a hook that runs before your handlers and may set response cookies, then read with `readSession()` everywhere else:
+Call `refreshSession(pathname)` from a hook that runs before your handlers and may set response cookies, passing the request's path so the sign-out routes are skipped, then read with `readSession()` everywhere else:
 
-- **Next.js** → refresh in `proxy.ts` (Next.js 16's name for `middleware.ts`), never in a Server Component. There, the cookie functions are the request's and response's cookies: a refresh must update **both** `request.cookies` (what this render reads) and the response's cookies (what the browser keeps). [`starters/next-app/src/proxy.ts`](./starters/next-app/src/proxy.ts) shows that request-and-response pairing in full. Server Components and route handlers then call `readSession()`. `cookies()` is async in Next.js 16, so resolve the store first (`const jar = await cookies()`) and back `getCookie` with `jar.get(name)?.value`, or make your read helper async the way `getSession()` in [`starters/next-app/src/lib/session.ts`](./starters/next-app/src/lib/session.ts) is.
-- **SvelteKit** → `hooks.server.ts`: in `handle`, refresh through `event.cookies`, then set `event.locals.session = readSession()`. ([`starters/sveltekit-app/src/hooks.server.ts`](./starters/sveltekit-app/src/hooks.server.ts) does both in one call, `readSession(event.cookies, …)`, which refreshes in place; that is legal there because `handle` may set cookies.)
-- **Hono / Express** → a middleware that refreshes first, then sets `c.set('session', …)` / `req.session`.
+- **Next.js** → refresh in `proxy.ts` (Next.js 16's name for `middleware.ts`) with `request.nextUrl.pathname`, never in a Server Component. There, the cookie functions are the request's and response's cookies: a refresh must update **both** `request.cookies` (what this render reads) and the response's cookies (what the browser keeps). [`starters/next-app/src/proxy.ts`](./starters/next-app/src/proxy.ts) shows that request-and-response pairing in full. Server Components and route handlers then call `readSession()`. `cookies()` is async in Next.js 16, so resolve the store first (`const jar = await cookies()`) and back `getCookie` with `jar.get(name)?.value`, or make your read helper async the way `getSession()` in [`starters/next-app/src/lib/session.ts`](./starters/next-app/src/lib/session.ts) is.
+- **SvelteKit** → `hooks.server.ts`: in `handle`, refresh through `event.cookies` with `event.url.pathname`, then set `event.locals.session = readSession()`. ([`starters/sveltekit-app/src/hooks.server.ts`](./starters/sveltekit-app/src/hooks.server.ts) does both in one call, `readSession(event.cookies, …)`, which refreshes in place; that is legal there because `handle` may set cookies.)
+- **Hono / Express** → a middleware that refreshes first, with `c.req.path` / `req.path`, then sets `c.set('session', …)` / `req.session`.
 
 See the starter for your framework for the exact cookie wiring. The four standalone starters (`next-app`, `sveltekit-app`, `react-pwa`, `svelte-pwa`) follow the same rule, and add what the recipe above leaves out. Each carries the same `refresh-tokens.ts` (`src/lib/` in next-app and sveltekit-app, `server/` in the PWAs), which adds four things:
 
 - **Single flight.** Concurrent requests with one cookie share one refresh call.
-- **A 60 s reuse window.** A request that still carries the pre-rotation cookie gets the rotated tokens instead of replaying a refresh token the server already spent. Signing out forgets it (`forgetRefreshesFor`), and a request still waiting on a refresh when its session signs out gets a `SessionEndedError` instead of the refreshed tokens: it is signed out and writes no cookie (the sign-out already cleared it).
+- **A 60 s reuse window.** A request that still carries the pre-rotation cookie gets the rotated tokens instead of replaying a refresh token the server already spent. Signing out forgets it (`forgetRefreshesFor`), and a request still waiting on a refresh when its session signs out gets a `SessionEndedError` at once instead of the refreshed tokens: it is signed out and writes no cookie (the sign-out already cleared it). If that refresh still succeeds, the refresh token it returns reached no one, so it is revoked upstream.
 - **A 5 s backoff.** After a failure that keeps the cookie, the rate-limited token endpoint is not called on every request.
 - **A 10 s cap** on how long a request waits for a refresh.
 
