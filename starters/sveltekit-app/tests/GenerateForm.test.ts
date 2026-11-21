@@ -6,7 +6,8 @@
  *
  * They assert on what the form sends and on a few things it shows: the button
  * labels ("Preview Buzz cost", "Generate (≈ N Buzz)"), "Estimate
- * unavailable", the quoted cost in its <strong>, and the image. Restyling does
+ * unavailable", the quoted cost in its <strong>, the image, and the error a
+ * failed request shows in its <pre>. Restyling does
  * not break them; renaming those buttons or dropping those elements does, so
  * update the matching lookup here when you change one on purpose.
  */
@@ -20,6 +21,8 @@ const COST = 37;
 const BALANCE = 1234;
 const WORKFLOW_ID = 'wf-test-91';
 const IMAGE_URL = 'https://images.example.test/out-1.png';
+const ESTIMATE_ERROR = 'estimate upstream answered 503, test e41';
+const SUBMIT_ERROR = 'not enough Buzz for this workflow, test s52';
 
 interface Call {
   url: string;
@@ -29,6 +32,9 @@ interface Call {
 
 let calls: Call[];
 let estimateReply: Record<string, unknown>;
+let estimateStatus: number;
+let submitReply: Record<string, unknown>;
+let submitStatus: number;
 let container: HTMLElement;
 let component: ReturnType<typeof mount>;
 
@@ -37,12 +43,12 @@ function fakeBff(input: RequestInfo | URL, init?: RequestInit): Promise<Response
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
   const method = init?.method ?? 'GET';
   calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
-  const reply = (body: unknown) =>
+  const reply = (body: unknown, status = 200) =>
     Promise.resolve(
-      new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }),
+      new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }),
     );
-  if (method === 'POST' && url === '/api/generate/estimate') return reply(estimateReply);
-  if (method === 'POST' && url === '/api/generate') return reply({ workflowId: WORKFLOW_ID, snapshot: {} });
+  if (method === 'POST' && url === '/api/generate/estimate') return reply(estimateReply, estimateStatus);
+  if (method === 'POST' && url === '/api/generate') return reply(submitReply, submitStatus);
   if (method === 'GET' && url.startsWith(`/api/workflow/${WORKFLOW_ID}?`)) {
     return reply({
       done: true,
@@ -60,6 +66,9 @@ function fakeBff(input: RequestInfo | URL, init?: RequestInit): Promise<Response
 beforeEach(() => {
   calls = [];
   estimateReply = { cost: COST };
+  estimateStatus = 200;
+  submitReply = { workflowId: WORKFLOW_ID, snapshot: {} };
+  submitStatus = 200;
   vi.stubGlobal('fetch', vi.fn(fakeBff));
   container = document.createElement('div');
   document.body.append(container);
@@ -166,4 +175,57 @@ test('editing the prompt after an estimate drops the price and locks Generate ag
   expect(button(/^Generate/).disabled).toBe(true);
   expect(button(/^Generate/).textContent?.trim()).toBe('Generate');
   expect(container.querySelector('strong')).toBeNull();
+});
+
+test('a failed estimate shows the error and keeps Generate locked', async () => {
+  estimateStatus = 503;
+  estimateReply = { error: ESTIMATE_ERROR };
+  typePrompt(PROMPT);
+  click(button(/^Preview Buzz cost$/));
+
+  await until(() => expect(container.querySelector('pre')?.textContent).toContain(ESTIMATE_ERROR));
+  expect(button(/^Generate/).textContent?.trim()).toBe('Generate');
+  expect(button(/^Generate/).disabled).toBe(true);
+  expect(container.querySelector('strong')).toBeNull();
+  // An error, not a priced-at-nothing estimate: no "Estimate unavailable".
+  expect(container.querySelector('[role="status"]')).toBeNull();
+  // The estimate can be retried.
+  expect(button(/^Preview Buzz cost$/).disabled).toBe(false);
+  expect(calls.map((c) => c.url)).toEqual(['/api/generate/estimate']);
+});
+
+test('a failed submit shows the error and starts no workflow', async () => {
+  submitStatus = 402;
+  submitReply = { error: SUBMIT_ERROR };
+  typePrompt(PROMPT);
+  click(button(/^Preview Buzz cost$/));
+  await until(() => expect(button(/^Generate/).disabled).toBe(false));
+
+  click(button(/^Generate/));
+
+  await until(() => expect(container.querySelector('pre')?.textContent).toContain(SUBMIT_ERROR));
+  expect(calls.slice(1)).toEqual([{ url: '/api/generate', method: 'POST', body: { prompt: PROMPT } }]);
+  expect(container.querySelector('img')).toBeNull();
+  expect(container.querySelector('strong')).toBeNull();
+  // What the form does today, pinned so a change to it is a decision: the
+  // quote still prices this exact prompt, so Generate comes back enabled, with
+  // the price, for a retry. It does not lock.
+  expect(button(/^Generate/).textContent?.trim()).toBe(`Generate (≈ ${COST} Buzz)`);
+  expect(button(/^Generate/).disabled).toBe(false);
+});
+
+test('a failed re-estimate drops the earlier price and locks Generate again', async () => {
+  typePrompt(PROMPT);
+  click(button(/^Preview Buzz cost$/));
+  await until(() => expect(button(/^Generate/).disabled).toBe(false));
+
+  estimateStatus = 503;
+  estimateReply = { error: ESTIMATE_ERROR };
+  click(button(/^Preview Buzz cost$/));
+
+  await until(() => expect(container.querySelector('pre')?.textContent).toContain(ESTIMATE_ERROR));
+  expect(button(/^Generate/).textContent?.trim()).toBe('Generate');
+  expect(button(/^Generate/).disabled).toBe(true);
+  expect(container.querySelector('strong')).toBeNull();
+  expect(calls.map((c) => c.url)).toEqual(['/api/generate/estimate', '/api/generate/estimate']);
 });

@@ -10,11 +10,11 @@
  * exist, not that the form renders correctly. The routes ARE checked
  * behaviourally too: each starter's `probe:expired-session` sends an estimate
  * whose snapshot has no cost and asserts `cost: null` on the wire. So are the
- * react-pwa, svelte-pwa and sveltekit-app forms: each starter's
+ * four forms (next-app, react-pwa, svelte-pwa, sveltekit-app): each starter's
  * `tests/GenerateForm.test.ts` (Vitest + happy-dom, run by its `pnpm test`)
  * renders the real form and checks the prompt it prices and submits, the
- * locked Generate button and "Estimate unavailable". next-app's form has no
- * rendered test, so for it this guard is the only check. It lives
+ * locked Generate button, "Estimate unavailable", and the error a failed
+ * estimate or submit shows. It lives
  * HERE, not in a starter's own `tests/`, because a starter is copied out
  * verbatim by `npx tiged`: a source-text match shipped there would go red on a
  * developer's first legitimate edit of their own copy.

@@ -34,7 +34,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "check:env": "node scripts/check-env.mjs",
-    "test": "node --test \"tests/**/*.test.mjs\"",
+    "test": "node --test \"tests/**/*.test.mjs\" && vitest run",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:install": "playwright install --with-deps chromium",
@@ -96,9 +96,11 @@
     "@tailwindcss/postcss": "^4.0.0",
     "eslint": "^9.39.0",
     "eslint-config-next": "^16.2.11",
+    "happy-dom": "^20.9.0",
     "postcss": "^8.5.15",
     "server-only": "^0.0.1",
     "tailwindcss": "^4.3.0",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.11"
   }
 }
