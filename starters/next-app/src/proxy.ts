@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { sealCookie } from '@civitai/app-sdk';
 import { env } from '@/lib/env';
-import { isDefiniteRejection, refreshTokensOnce } from '@/lib/refresh-tokens';
+import { isDefiniteRejection, refreshTokensOnce, SessionEndedError } from '@/lib/refresh-tokens';
 import {
   needsRefresh,
   parseSession,
@@ -122,10 +122,14 @@ export async function proxy(request: NextRequest) {
         // would reject anyway), and leave the BROWSER's cookie untouched, so
         // the next request retries the refresh and the user stays signed in
         // once the service is back.
-        console.warn(
-          '[proxy] session refresh failed without rejecting the refresh token; keeping the cookie for a retry:',
-          err instanceof Error ? err.message : err,
-        );
+        // A sign-out ended the session while this request waited on its
+        // refresh: nothing is retried, so this is not a failed refresh.
+        if (!(err instanceof SessionEndedError)) {
+          console.warn(
+            '[proxy] session refresh failed without rejecting the refresh token; keeping the cookie for a retry:',
+            err instanceof Error ? err.message : err,
+          );
+        }
         request.cookies.delete(SESSION_COOKIE);
         return NextResponse.next({ request });
       }

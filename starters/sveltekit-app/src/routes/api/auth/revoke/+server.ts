@@ -29,7 +29,9 @@ export const POST: RequestHandler = async ({ cookies }) => {
   // End the session BEFORE the upstream round trips: clearSession() forgets
   // its remembered refreshes, so a request another tab has waiting on one is
   // signed out instead of being handed the tokens while revoke is waiting.
-  clearSession(cookies, !dev);
+  // `revokeOrphans`: if such a refresh still succeeds, its new refresh token
+  // is revoked too, since the cookie's one, revoked below, is the one it spent.
+  clearSession(cookies, !dev, { revokeOrphans: true });
   await tryRevoke(tokens?.access_token);
   await tryRevoke(tokens?.refresh_token);
   return json({ ok: true });

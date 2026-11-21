@@ -29,6 +29,8 @@
  *  4. A 400 `invalid_grant` and a 401 clear it.
  *  5. `refreshSession()` leaves a fresh session alone (no fetch, no write),
  *     and clears an expired one that has no refresh token without a fetch.
+ *  6. `refreshSession()` neither refreshes nor clears on a sign-out route
+ *     (3c, 3d), and does refresh the same expired cookie on any other path.
  *
  * WATCHED TO FAIL against the pre-fix recipe (origin/main @ 75036eca), with
  * the refresh entry point temporarily resolved as `refreshSession ??
@@ -51,6 +53,8 @@ const PORTING = join(PKG, '..', '..', 'PORTING.md');
 const SRC_INDEX = join(PKG, 'src', 'index.ts');
 
 const SECRET = 'porting-recipe-test-secret-0123456789abcdef';
+/** The path every refresh below is made for: a page, not a sign-out route. */
+const PAGE = '/gallery';
 const COOKIE = 'civ_session';
 const PRIOR_SCOPE = 65537;
 
@@ -93,7 +97,7 @@ const jar: JarState = { store: new Map(), writes: [], readOnly: false };
 
 interface Recipe {
   readSession: () => unknown;
-  refreshSession: () => Promise<unknown>;
+  refreshSession: (pathname: string) => Promise<unknown>;
 }
 
 let recipe: Recipe;
@@ -200,7 +204,7 @@ describe('PORTING.md Step 4 — refreshSession only acts on an expiring session'
   it('leaves a fresh session alone: no network, no cookie write', async () => {
     seed(60 * 60 * 1000);
     const fetchFn = stubFetch(() => json(200, OMITTED_SCOPE));
-    await recipe.refreshSession();
+    await recipe.refreshSession(PAGE);
     expect(fetchFn).not.toHaveBeenCalled();
     expect(jar.writes).toEqual([]);
   });
@@ -214,9 +218,23 @@ describe('PORTING.md Step 4 — refreshSession only acts on an expiring session'
       ),
     );
     const fetchFn = stubFetch(() => json(200, OMITTED_SCOPE));
-    await recipe.refreshSession();
+    await recipe.refreshSession(PAGE);
     expect(fetchFn).not.toHaveBeenCalled();
     expect(jar.store.has(COOKIE)).toBe(false);
+  });
+
+  it('skips the sign-out routes: an expired session there is neither refreshed nor cleared', async () => {
+    const sealed = seed(-60 * 60 * 1000);
+    const fetchFn = stubFetch(() => json(200, OMITTED_SCOPE));
+    await recipe.refreshSession('/api/auth/logout');
+    await recipe.refreshSession('/api/auth/revoke');
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(jar.writes).toEqual([]);
+    expect(jar.store.get(COOKIE)).toBe(sealed);
+    // Control: the same expired cookie IS refreshed on any other path, so the
+    // skip above is the path's doing, not this session's.
+    await recipe.refreshSession(PAGE);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -224,7 +242,7 @@ describe('PORTING.md Step 4 — refreshSession keeps the granted scope (#807)', 
   it('a response that omits scope keeps the stored 65537', async () => {
     seed(-60 * 60 * 1000);
     const fetchFn = stubFetch(() => json(200, OMITTED_SCOPE));
-    await recipe.refreshSession();
+    await recipe.refreshSession(PAGE);
     expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(storedScope()).toBe(PRIOR_SCOPE);
     const after = (await recipe.readSession()) as { tokens: { access_token: string; scope: number } };
@@ -235,7 +253,7 @@ describe('PORTING.md Step 4 — refreshSession keeps the granted scope (#807)', 
   it('CONTROL — a response that states a scope wins over the stored one', async () => {
     seed(-60 * 60 * 1000);
     stubFetch(() => json(200, { ...OMITTED_SCOPE, scope: 3 }));
-    await recipe.refreshSession();
+    await recipe.refreshSession(PAGE);
     expect(storedScope()).toBe(3);
   });
 });
@@ -248,7 +266,7 @@ describe('PORTING.md Step 4 — only a definite rejection clears the session (#8
   ])('%s keeps the cookie byte-for-byte so the next request retries', async (_label, impl) => {
     const sealed = seed(-60 * 60 * 1000);
     const fetchFn = stubFetch(impl);
-    await recipe.refreshSession();
+    await recipe.refreshSession(PAGE);
     expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(jar.writes.filter((w) => w.op === 'delete')).toEqual([]);
     expect(jar.store.get(COOKIE)).toBe(sealed);
@@ -260,7 +278,7 @@ describe('PORTING.md Step 4 — only a definite rejection clears the session (#8
   ])('%s clears it', async (_label, status) => {
     seed(-60 * 60 * 1000);
     stubFetch(() => json(status, { error: 'invalid_grant' }));
-    await recipe.refreshSession();
+    await recipe.refreshSession(PAGE);
     expect(jar.store.has(COOKIE)).toBe(false);
     expect(jar.writes.some((w) => w.op === 'delete' && w.name === COOKIE)).toBe(true);
   });

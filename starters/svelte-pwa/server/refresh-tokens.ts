@@ -12,7 +12,12 @@
  * Each starter's `AGENTS.md` names the file that calls it.
  */
 import { createHash } from 'node:crypto';
-import { OAuthError, refreshToken as oauthRefresh, type OAuthTokens } from '@civitai/app-sdk';
+import {
+  OAuthError,
+  refreshToken as oauthRefresh,
+  revokeToken,
+  type OAuthTokens,
+} from '@civitai/app-sdk';
 
 /**
  * 🔴 THE ONE PREDICATE FOR "THIS CREDENTIAL IS DEAD". Only this clears the
@@ -89,8 +94,21 @@ interface Flight {
   resultKey?: string;
   /** Set once the call fails with an error that keeps the cookie. */
   failedAt?: number;
-  /** Set when the session signed out while this was remembered (forgetRefreshesFor). */
-  ended?: boolean;
+  /**
+   * Set when the session was REVOKED while this was remembered
+   * (forgetRefreshesFor with `revokeOrphans`): if the call then succeeds, the
+   * refresh token it returns is revoked upstream.
+   */
+  revokeIfSucceeds?: boolean;
+  /**
+   * Rejects with a {@link SessionEndedError} the moment the session signs out
+   * (`end`), and never settles otherwise. Every caller races it against
+   * `promise`, so a sign-out releases its waiters at once, not when the call
+   * settles: a hung call would otherwise hold them for {@link REFRESH_WAIT_MS}
+   * and then report a timeout.
+   */
+  endedSignal: Promise<never>;
+  end: () => void;
 }
 
 /**
@@ -100,9 +118,10 @@ interface Flight {
  * Deliberately NOT a {@link isDefiniteRejection}: the caller treats it like a
  * transient failure, so that request is signed out and its response leaves
  * the browser's cookie alone. The sign-out response already cleared it, and a
- * clearing `Set-Cookie` from this request, which can land up to
- * {@link REFRESH_WAIT_MS} later, would wipe a session the user had signed in
- * to again in the meantime.
+ * clearing `Set-Cookie` from this request, which can land after the sign-out's
+ * own response, would wipe a session the user had signed in to again in the
+ * meantime. The caller should not log it as a failed refresh either: nothing
+ * is retried, the session is simply over.
  */
 export class SessionEndedError extends Error {
   override readonly name = 'SessionEndedError';
@@ -167,20 +186,37 @@ function makeRoom(now: number): boolean {
 }
 
 /**
- * What one caller of a remembered refresh gets: its answer, unless the session
- * signed out first. Checked when the call SETTLES, not when the caller joined,
- * so a caller that joined before the sign-out is covered too.
+ * What one caller of a remembered refresh gets: its answer, or a
+ * {@link SessionEndedError} as soon as the session signs out, whichever comes
+ * first. A caller that joined before the sign-out is covered too, and it is not
+ * kept waiting for a call that is still in flight.
  */
 function answerOf(flight: Flight): Promise<OAuthTokens> {
-  return flight.promise.then(
-    (tokens) => {
-      if (flight.ended) throw new SessionEndedError();
-      return tokens;
-    },
-    (err: unknown) => {
-      throw flight.ended ? new SessionEndedError() : err;
-    },
-  );
+  return Promise.race([flight.promise, flight.endedSignal]);
+}
+
+/**
+ * Revoke the refresh token a call returned AFTER its session was revoked. No
+ * caller was handed it (each got a {@link SessionEndedError}) and the map no
+ * longer holds it, while the revoke route revoked only the refresh token the
+ * cookie held, which this call had already spent. Without this the disconnect
+ * would leave a live refresh token behind. Best effort: the answer is not
+ * awaited and a failure is ignored.
+ *
+ * It runs when the call settles, however late. Civitai's revoke also deletes
+ * every access token the user holds for this app, so a call that hung past a
+ * fresh sign-in would also break that new session's access token until it next
+ * refreshes. That needs a token endpoint hung for longer than a sign-in, which
+ * calls the same endpoint, and is accepted rather than bounded here.
+ */
+function revokeOrphan(opts: RefreshOpts, tokens: OAuthTokens): void {
+  if (!tokens.refresh_token) return;
+  revokeToken({
+    baseUrl: opts.baseUrl,
+    clientId: opts.clientId,
+    clientSecret: opts.clientSecret,
+    token: tokens.refresh_token,
+  }).catch(() => {});
 }
 
 /** `promise`, or a {@link RefreshWaitTimeoutError} after `ms` — whichever is first. */
@@ -222,7 +258,9 @@ export interface RefreshOpts {
  *   refresh is also out of reach of {@link forgetRefreshesFor}: a sign-out
  *   cannot end it, and its caller gets its tokens.
  * - A caller whose session signs out while it waits gets a
- *   {@link SessionEndedError}, never the tokens (see {@link forgetRefreshesFor}).
+ *   {@link SessionEndedError} at once, never the tokens (see
+ *   {@link forgetRefreshesFor}). If the sign-out was a revoke and the call
+ *   then succeeds, the refresh token it returned is revoked upstream.
  *
  * 🔴 IN-PROCESS ONLY. This dedupes requests that reach the SAME server
  * process. Two processes or instances (serverless functions, several
@@ -243,9 +281,19 @@ export function refreshTokensOnce(opts: RefreshOpts): Promise<OAuthTokens> {
     direct.catch(() => {});
     return waitAtMost(direct, REFRESH_WAIT_MS);
   }
+  let end!: () => void;
+  const endedSignal = new Promise<never>((_, reject) => {
+    end = () => reject(new SessionEndedError());
+  });
+  // Rejected only once the session ends, and only callers that are still
+  // waiting observe it; never report it as unhandled.
+  endedSignal.catch(() => {});
   const flight: Flight = {
+    endedSignal,
+    end,
     promise: oauthRefresh(opts).then(
       (tokens) => {
+        if (flight.revokeIfSucceeds) revokeOrphan(opts, tokens);
         flight.doneAt = Date.now();
         if (tokens.refresh_token) flight.resultKey = keyFor(tokens.refresh_token);
         return tokens;
@@ -285,12 +333,24 @@ export function refreshTokensOnce(opts: RefreshOpts): Promise<OAuthTokens> {
  * window, and a sign-out that arrives with a pre-rotation cookie. Unrelated
  * sessions are untouched. An in-flight refresh of this session is dropped from
  * the map, so no later request can join it, and callers already waiting on it
- * get a {@link SessionEndedError} instead of its answer: otherwise a request
- * another tab sent just before the sign-out would set the refreshed session
- * cookie after it, signing the browser back in. That request is signed out
- * and writes no cookie at all.
+ * get a {@link SessionEndedError} at once instead of its answer: otherwise a
+ * request another tab sent just before the sign-out would set the refreshed
+ * session cookie after it, signing the browser back in. That request is signed
+ * out and writes no cookie at all.
+ *
+ * `revokeOrphans` is for the REVOKE route only. With it, a dropped call that
+ * still succeeds has the refresh token it returns revoked upstream: nothing
+ * holds that token, and the revoke route's own revoke reached only the spent
+ * one. A plain sign-out must not pass it. Signing out locally leaves the
+ * stored refresh token live by design, and Civitai's revoke of a refresh
+ * token also deletes every access token the user holds for this app, so a
+ * sign-out that raced a refresh would break the access token on every device
+ * until it next refreshes.
  */
-export function forgetRefreshesFor(tokens: { refresh_token?: string | null } | null | undefined): void {
+export function forgetRefreshesFor(
+  tokens: { refresh_token?: string | null } | null | undefined,
+  { revokeOrphans = false }: { revokeOrphans?: boolean } = {},
+): void {
   const refreshToken = tokens?.refresh_token;
   if (!refreshToken) return;
   const gone = new Set([keyFor(refreshToken)]);
@@ -299,7 +359,8 @@ export function forgetRefreshesFor(tokens: { refresh_token?: string | null } | n
     changed = false;
     for (const [key, flight] of flights) {
       if (gone.has(key) || (flight.resultKey !== undefined && gone.has(flight.resultKey))) {
-        flight.ended = true;
+        if (revokeOrphans) flight.revokeIfSucceeds = true;
+        flight.end();
         flights.delete(key);
         gone.add(key);
         if (flight.resultKey !== undefined) gone.add(flight.resultKey);

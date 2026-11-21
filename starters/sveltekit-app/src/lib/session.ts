@@ -1,7 +1,12 @@
 import type { Cookies } from '@sveltejs/kit';
 import { sealCookie, unsealCookie, type OAuthTokens } from '@civitai/app-sdk';
 import { config } from './env';
-import { forgetRefreshesFor, isDefiniteRejection, refreshTokensOnce } from './refresh-tokens';
+import {
+  forgetRefreshesFor,
+  isDefiniteRejection,
+  refreshTokensOnce,
+  SessionEndedError,
+} from './refresh-tokens';
 
 const SESSION_COOKIE = 'civ_session';
 const OAUTH_STATE_COOKIE = 'civ_oauth_state';
@@ -100,10 +105,14 @@ export async function readSession(cookies: Cookies, production: boolean): Promis
   } catch (err) {
     if (!isDefiniteRejection(err)) {
       // Not a verdict on the refresh token: keep the cookie for a retry.
-      console.warn(
-        '[session] refresh failed without rejecting the refresh token; keeping the cookie for a retry:',
-        err instanceof Error ? err.message : err,
-      );
+      // A sign-out ended the session while this request waited on its
+      // refresh: nothing is retried, so this is not a failed refresh.
+      if (!(err instanceof SessionEndedError)) {
+        console.warn(
+          '[session] refresh failed without rejecting the refresh token; keeping the cookie for a retry:',
+          err instanceof Error ? err.message : err,
+        );
+      }
       return null;
     }
     // `invalid_grant`: the refresh token is unknown, expired, revoked or spent.
@@ -124,9 +133,18 @@ export function writeSession(cookies: Cookies, session: Session, production: boo
  * Sign out: forget this session's remembered refreshes, then clear the cookie.
  * Without the first half, a request carrying the pre-rotation cookie inside the
  * 60 s reuse window would be handed this session's tokens again.
+ *
+ * Pass `{ revokeOrphans: true }` from the revoke route only: a refresh of this
+ * session that is still in flight and then succeeds has its new refresh token
+ * revoked upstream too (see `forgetRefreshesFor`). A plain sign-out leaves the
+ * upstream tokens alone.
  */
-export function clearSession(cookies: Cookies, production: boolean): void {
-  forgetRefreshesFor(parseSession(cookies)?.tokens);
+export function clearSession(
+  cookies: Cookies,
+  production: boolean,
+  { revokeOrphans = false }: { revokeOrphans?: boolean } = {},
+): void {
+  forgetRefreshesFor(parseSession(cookies)?.tokens, { revokeOrphans });
   cookies.delete(SESSION_COOKIE, sessionCookieOpts(production));
 }
 

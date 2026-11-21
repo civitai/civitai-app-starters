@@ -100,9 +100,16 @@ export async function setSession(session: Session): Promise<void> {
  * pre-rotation cookie inside that window was handed this session's tokens
  * again after sign-out. Read from the raw cookie, not `getSession()`, which
  * returns `null` for a token that needs a refresh.
+ *
+ * Pass `{ revokeOrphans: true }` from the revoke route only: a refresh of this
+ * session that is still in flight and then succeeds has its new refresh token
+ * revoked upstream too (see `forgetRefreshesFor`). A plain sign-out leaves the
+ * upstream tokens alone.
  */
-export async function clearSession(): Promise<void> {
-  forgetRefreshesFor((await getStoredSession())?.tokens);
+export async function clearSession({
+  revokeOrphans = false,
+}: { revokeOrphans?: boolean } = {}): Promise<void> {
+  forgetRefreshesFor((await getStoredSession())?.tokens, { revokeOrphans });
   await writeCookie(SESSION_COOKIE, '', 0);
 }
 
