@@ -84,8 +84,10 @@ export function useRuns(onSettled: () => void) {
       const localId = crypto.randomUUID();
       setRuns((rs) => [{ localId, workflowId: null, status: 'submitting', images: [], cost: null }, ...rs]);
       try {
-        // No idempotencyKey: each click is a NEW logical submit, and the hook mints
-        // a fresh valid key. The SDK's one automatic consent retry reuses it.
+        // No idempotencyKey: the hook mints a fresh valid key per click, except
+        // that a click re-submitting the SAME body after a submit with an unknown
+        // outcome (timeout, transport error, 'exception') reuses that key, so the
+        // host dedupes it. The SDK's one automatic consent retry reuses it too.
         const snap = await submit(body);
         if (snap.status === 'failed') {
           // RESOLVED: a cap refusal ("Not started") or a run that came back failed

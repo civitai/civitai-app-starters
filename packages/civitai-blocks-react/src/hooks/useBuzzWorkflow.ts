@@ -664,11 +664,12 @@ export class WorkflowSubmitError extends Error {
    *   that path. So Buzz may already be spent for this call.
    *
    *   A retry is a SECOND reservation unless it carries the same
-   *   {@link SubmitWorkflowOptions.idempotencyKey}. Without a caller key,
-   *   `submit()` reuses the failed call's key when the SAME input is submitted
-   *   again (until another auto-keyed submit fails); changed input gets a fresh
-   *   key. Under the same key the host replays this failed reply rather than
-   *   running the workflow again.
+   *   {@link SubmitWorkflowOptions.idempotencyKey}; under the same key the host
+   *   replays this failed reply rather than running the workflow again. Without
+   *   a caller key, `submit()` treats this code as a FINAL answer and mints a
+   *   fresh key for the next submit, even of the same input, so a viewer's
+   *   "try again" really runs again (and may be charged again). To make a retry
+   *   replay instead, pass the same key yourself.
    *
    *   🔴 `err.snapshot.workflowId` IS USUALLY POLLABLE, BUT CHECK IT FIRST — this
    *   arm is defined by what the id is NOT. The server emits `workflow.id ??
@@ -756,15 +757,18 @@ export interface SubmitWorkflowOptions extends ConsentRetryOptions {
    * host+orchestrator collapse it to ONE Buzz charge instead of double-charging.
    * Omit → the hook mints a key, and REUSES it when the next submit of the SAME
    * input (same body as canonical JSON, key order ignored) follows a submit that
-   * rejected; any other submit gets a fresh key. That covers a plain "try again"
+   * rejected with an unknown outcome (a timeout, a transport error,
+   * `'exception'`); any other submit, including one after `'workflow-failed'`,
+   * gets a fresh key. That covers a plain "try again"
    * on one hook instance. Pass a stable id (e.g. a grid-cell id) when retries can
    * interleave with other inputs, cross a remount, or the body is not plain JSON
    * — the hook remembers only the most recent failure.
    *
    * 🔴 THIS IS THE FIELD THAT MAKES A RETRY AFTER A `'workflow-failed'` REJECTION
-   * SAFE. That code means a workflow probably exists and its spend may already
-   * be committed server-side; a retry under a DIFFERENT key is a SECOND
-   * reservation. See {@link WorkflowSubmitError.code}.
+   * REPLAY. That code means a workflow probably exists and its spend may already
+   * be committed server-side; a retry under a DIFFERENT key — which is what an
+   * un-keyed `submit()` sends after this code — is a SECOND reservation. See
+   * {@link WorkflowSubmitError.code}.
    *
    * The SDK's own automatic consent retry obeys this: whichever value ends up
    * here — yours, or the one `submit()` mints — is the value BOTH of its
@@ -1190,16 +1194,19 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
    * REJECTED — so a retry of the same input carries the same key and the host
    * dedupes it to one charge instead of two.
    *
-   * 🔴 ANY REJECTION AFTER THE KEY WAS CHOSEN COUNTS AS FAILED: a timeout, a
-   * transport error, `'exception'` and `'workflow-failed'` alike. Each can follow
-   * a first attempt the host accepted (a lost reply, an in-progress conflict, a
-   * committed failed workflow), so a fresh key there is a possible second charge.
-   * Note the cost on `'workflow-failed'`: the host has stored that failed reply
-   * under the key, so a same-input retry replays it rather than running again.
+   * 🔴 A REJECTION WHOSE OUTCOME IS UNKNOWN COUNTS AS FAILED: a timeout, a
+   * transport error and `'exception'`. Each can follow a first attempt the host
+   * accepted (a lost reply, an in-progress conflict), so a fresh key there is a
+   * possible second charge.
    *
-   * Cleared when a submit carrying the remembered key RESOLVES — that reply is
-   * the host's answer for the key, and a committed one is cached and would be
-   * replayed — so the next submit of the input is new.
+   * 🔴 `'workflow-failed'` DOES NOT. It is a definite outcome: the host has
+   * stored that failed reply under the key and would only replay it, so a
+   * same-input "try again" would be stuck on the old failure. It is handled
+   * like a resolved reply.
+   *
+   * Cleared when a submit carrying the remembered key RESOLVES or rejects as
+   * `'workflow-failed'` — that reply is the host's answer for the key, and it is
+   * cached and would be replayed — so the next submit of the input is new.
    * Replaced by the next auto-keyed failure; a successful submit of a DIFFERENT
    * input leaves it alone. A caller-supplied key bypasses it entirely — it is
    * neither reused for, nor overwritten by, a caller-keyed submit. Pre-send
@@ -1420,7 +1427,15 @@ export function useBuzzWorkflow(): UseBuzzWorkflow {
         }
         return snapshot;
       } catch (err) {
-        if (input !== null) lastFailedSubmitRef.current = { input, key: idempotencyKey };
+        // `'workflow-failed'` is the host's FINAL answer for this key, like a
+        // resolved reply: it is stored and would be replayed, so the retry the
+        // viewer asked for must be a new run. Every other rejection may have
+        // left an accepted first attempt behind, so its key is kept for a retry.
+        if (err instanceof WorkflowSubmitError && err.code === 'workflow-failed') {
+          if (lastFailedSubmitRef.current?.key === idempotencyKey) lastFailedSubmitRef.current = null;
+        } else if (input !== null) {
+          lastFailedSubmitRef.current = { input, key: idempotencyKey };
+        }
         setError(err as Error);
         setStatus('error');
         throw err;

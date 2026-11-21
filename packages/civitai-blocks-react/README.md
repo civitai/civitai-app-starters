@@ -383,8 +383,8 @@ if (priced) {
     // invitation this whole guard exists to remove.
     if (err.code === 'workflow-failed') {
       // 🔴 Spend MAY ALREADY BE COMMITTED. Do not tell the viewer it was free.
-      // A retry of the same body reuses the failed call's idempotency key, so the
-      // host replays this failure instead of reserving a second time.
+      // This is a FINAL answer: the next submit() gets a fresh key and really
+      // runs again (a second reservation). Pass this call's key to replay instead.
       showError('The generation may have started but did not complete. Check your history.');
       // Only NOW ask about pollability: 'whatif' is a non-workflow sentinel.
       if (err.snapshot.workflowId !== 'whatif') await poll(err.snapshot.workflowId);
@@ -439,10 +439,10 @@ if (priced) {
     `err.code === 'workflow-failed'`.
     🔴 **Money may already be committed.** Server-side, *any* resolved submit
     keeps its Buzz reservation "regardless of snapshot status", with no refund on
-    a non-throwing failed snapshot. So do not tell the viewer it was free. A
-    retry of the SAME body reuses the failed call's `idempotencyKey` (the host
-    replays this failed reply); a changed body gets a fresh key, i.e. a second
-    reservation. Read `err.snapshot.workflowId` (a
+    a non-throwing failed snapshot. So do not tell the viewer it was free. This
+    outcome is final, so the next `submit()`, even of the SAME body, gets a fresh
+    `idempotencyKey`, i.e. a real second run and a second reservation; pass the
+    failed call's key yourself to replay this reply instead. Read `err.snapshot.workflowId` (a
     usually-pollable id) and `watch`/`poll` it to learn the workflow's actual
     fate — guarding with `err.snapshot.workflowId !== 'whatif'` first, since the
     server treats both `'failed'` and `'whatif'` as non-workflow sentinels.

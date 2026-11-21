@@ -49,6 +49,8 @@ function buildInit(): BlockInitPayload {
 
 /** The host's own `failureSnapshot(err)` shape: `submit()` rejects it as `'exception'`. */
 const FAILED = { workflowId: 'failed', status: 'failed', error: 'upstream timed out' };
+/** A failed, unpriced reply with a real workflow id: `submit()` rejects it as `'workflow-failed'`. */
+const WORKFLOW_FAILED = { workflowId: 'wf-failed-3', status: 'failed', error: 'step failed' };
 /** An ordinary accepted submit. */
 const ACCEPTED = { workflowId: 'wf-1', status: 'processing' };
 
@@ -163,6 +165,25 @@ describe('useBuzzWorkflow.submit — idempotency key reuse on retry', () => {
     const retry = await submitOnce(result.current.submit as never, bodyA(), ACCEPTED);
     expect((await retry.settled).ok).toBe(true);
     expect(retry.key).toBe(first.key);
+  });
+
+  it("after a 'workflow-failed' rejection (a final answer), the same input sends a NEW idempotencyKey", async () => {
+    const { result } = renderHook(() => useBuzzWorkflow());
+
+    // An unknown outcome first, so a key is remembered for this input...
+    const first = await submitOnce(result.current.submit as never, bodyA(), FAILED);
+    expect((await first.settled).ok).toBe(false);
+    // ...whose retry reuses it, and the host answers with a definite failure.
+    const retry = await submitOnce(result.current.submit as never, bodyA(), WORKFLOW_FAILED);
+    const retryOutcome = await retry.settled;
+    expect(retry.key).toBe(first.key);
+    expect((retryOutcome as { e: WorkflowSubmitError }).e).toBeInstanceOf(WorkflowSubmitError);
+    expect((retryOutcome as { e: WorkflowSubmitError }).e.code).toBe('workflow-failed');
+
+    // The host would only replay that failure under the old key: "try again" is a new run.
+    const again = await submitOnce(result.current.submit as never, bodyA(), ACCEPTED);
+    expect((await again.settled).ok).toBe(true);
+    expect(again.key).not.toBe(first.key);
   });
 
   it('a NEW input after a failed submit sends a NEW idempotencyKey', async () => {
