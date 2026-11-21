@@ -35,8 +35,13 @@ export async function estimateCost(input: GenerateInput): Promise<{ cost: number
   return json;
 }
 
+/**
+ * `idempotencyKey` comes from the form's current attempt (`attempt-key.ts`);
+ * the BFF sends it as the workflow's `externalId`. Never send it to
+ * {@link estimateCost}.
+ */
 export async function submitGeneration(
-  input: GenerateInput,
+  input: GenerateInput & { idempotencyKey: string },
 ): Promise<{ workflowId: string; snapshot: WorkflowSnapshot }> {
   const res = await fetch('/api/generate', {
     method: 'POST',

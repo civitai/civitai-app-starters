@@ -11,6 +11,7 @@ import {
 import { scopesFromBitmask } from '@civitai/app-sdk/scopes';
 import { env, REDIRECT_URI } from './env.js';
 import { REQUESTED_SCOPES } from './scopes.js';
+import { readIdempotencyKey } from './submit-key.js';
 import {
   clearSession,
   consumeOAuthState,
@@ -309,8 +310,12 @@ app.post('/api/generate', async (c) => {
   const parsed = await parseGenerateInput(c);
   if ('response' in parsed) return parsed.response;
 
+  // A missing or malformed key is refused, never rewritten (see `submit-key.ts`).
+  const key = readIdempotencyKey(parsed.input);
+  if (!key.ok) return c.json({ error: key.error }, 400);
+
   try {
-    const snapshot = await submitGeneration(auth.session, parsed.input);
+    const snapshot = await submitGeneration(auth.session, parsed.input, key.key);
     return c.json({ workflowId: snapshot.id, snapshot });
   } catch (err) {
     return handleOrchestratorError(c, err);
