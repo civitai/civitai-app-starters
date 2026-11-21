@@ -79,7 +79,7 @@ src/
 
 1. Logged out → `<LoginButton>` → `POST /api/auth/login` → 302 to Civitai → user consents → `GET /api/auth/callback/civitai` → session sealed → 302 to `/`.
 2. Logged in → `getSession()` on server → `getMe()` (username) **and** `getBuzzBalance()` (balance — a separate endpoint, `null` without `BuzzRead`) → render the profile card, scope summary, prompt form.
-3. **Preview Buzz cost** → client `POST /api/generate/estimate` → display the Buzz cost for that prompt → user confirms with **Generate**. Generate is disabled until the current prompt has an estimate; editing the prompt, Reset, a failed submit or a failed workflow wait discards it (a failed submit may still have started a paid workflow, so Generate stays locked until a new Preview), a reply to a discarded estimate is ignored, and an estimate without a cost shows "Estimate unavailable".
+3. **Preview Buzz cost** → client `POST /api/generate/estimate` → display the Buzz cost for that prompt → user confirms with **Generate**. Generate is disabled until the current prompt has an estimate; editing the prompt, Reset, a failed submit or a failed workflow wait discards it (a failed submit may still have started a paid workflow, so Generate stays locked until a new Preview), a reply to a discarded estimate is ignored, and an estimate without a cost shows "Estimate unavailable". Each Generate sends an `idempotencyKey` (`src/lib/attempt-key.ts`) that the generate route checks (`^[A-Za-z0-9_-]{1,64}$`, else 400) and puts on the real submit, never the estimate, as the workflow's `externalId`; the orchestrator returns the existing workflow for a repeat key. The form keeps the key across a failed submit, a failed wait and the re-Preview they force, so the retry cannot pay twice, and drops it when the workflow finishes, on Reset and when the prompt is edited. Never reuse a key for a different input: a repeat key returns the old workflow even if the body differs.
 4. Client `POST /api/generate` → returns workflow ID → client long-polls `GET /api/workflow/[id]?wait=…` (the server holds each request open) until the workflow is done.
 5. On terminal status → display image(s) or error.
 
@@ -90,7 +90,7 @@ After any meaningful change, run the matching check before declaring done:
 | You touched | Run |
 |---|---|
 | Anything in `src/` | `pnpm typecheck` |
-| `src/lib/estimate.ts`, `src/lib/refresh-tokens.ts`, the estimate route | `pnpm test` (needs Node ≥ 22.18: it imports the `.ts` module with Node's built-in type stripping, which is newer than the README's minimum for running the app) |
+| `src/lib/estimate.ts`, `src/lib/refresh-tokens.ts`, the estimate route, `src/lib/attempt-key.ts`, `src/lib/submit-key.ts` | `pnpm test` (needs Node ≥ 22.18: it imports the `.ts` module with Node's built-in type stripping, which is newer than the README's minimum for running the app) |
 | `src/components/GenerateForm.tsx` | `pnpm test`: `tests/GenerateForm.test.ts` renders the real form in happy-dom (Vitest) with `fetch` stubbed, and checks what it shows and what it sends |
 | `next.config.mjs`, env wiring, security headers | `pnpm build` |
 | `src/lib/session.ts`, `src/proxy.ts`, anything touching the session cookie | `pnpm probe:expired-session` |

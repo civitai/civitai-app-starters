@@ -19,6 +19,11 @@
  *     that starter keeps the module.
  *   - `scripts/probe-expired-session.mjs` in sveltekit-app and the two PWAs
  *     (next-app's drives `next start` and is its own file).
+ *   - The Generate idempotency key: `src/lib/attempt-key.ts` in all four;
+ *     `submit-key.ts` in next-app and sveltekit-app `src/lib/`, the PWAs
+ *     `server/`; and `tests/idempotency.test.mjs` in all four except its one
+ *     `const MODULE = …` line, which names where that starter keeps
+ *     `submit-key.ts`.
  *
  * 🔴 TEXT IDENTITY ONLY. It cannot tell you the shared code is CORRECT — that
  * is the unit tests' and the probes' job, and they run in every starter. It
@@ -64,28 +69,58 @@ export const COPIES = {
     'react-pwa/scripts/probe-expired-session.mjs',
     'svelte-pwa/scripts/probe-expired-session.mjs',
   ],
+  'attempt-key.ts': [
+    'next-app/src/lib/attempt-key.ts',
+    'sveltekit-app/src/lib/attempt-key.ts',
+    'react-pwa/src/lib/attempt-key.ts',
+    'svelte-pwa/src/lib/attempt-key.ts',
+  ],
+  'submit-key.ts': [
+    'next-app/src/lib/submit-key.ts',
+    'sveltekit-app/src/lib/submit-key.ts',
+    'react-pwa/server/submit-key.ts',
+    'svelte-pwa/server/submit-key.ts',
+  ],
+  'idempotency.test.mjs': [
+    'next-app/tests/idempotency.test.mjs',
+    'sveltekit-app/tests/idempotency.test.mjs',
+    'react-pwa/tests/idempotency.test.mjs',
+    'svelte-pwa/tests/idempotency.test.mjs',
+  ],
 };
 
-/** Where each starter keeps `refresh-tokens.ts`, as its test file must import it. */
-const MODULE_LINE = {
-  'next-app': "const MODULE = '../src/lib/refresh-tokens.ts';",
-  'sveltekit-app': "const MODULE = '../src/lib/refresh-tokens.ts';",
-  'react-pwa': "const MODULE = '../server/refresh-tokens.ts';",
-  'svelte-pwa': "const MODULE = '../server/refresh-tokens.ts';",
+/**
+ * For each test file that imports a server module, where each starter keeps
+ * that module, as the test's `const MODULE = …` line must name it.
+ */
+const MODULE_LINES = {
+  'refresh-tokens.test.mjs': {
+    'next-app': "const MODULE = '../src/lib/refresh-tokens.ts';",
+    'sveltekit-app': "const MODULE = '../src/lib/refresh-tokens.ts';",
+    'react-pwa': "const MODULE = '../server/refresh-tokens.ts';",
+    'svelte-pwa': "const MODULE = '../server/refresh-tokens.ts';",
+  },
+  'idempotency.test.mjs': {
+    'next-app': "const MODULE = '../src/lib/submit-key.ts';",
+    'sveltekit-app': "const MODULE = '../src/lib/submit-key.ts';",
+    'react-pwa': "const MODULE = '../server/submit-key.ts';",
+    'svelte-pwa': "const MODULE = '../server/submit-key.ts';",
+  },
 };
+const MODULE_LINE = MODULE_LINES['refresh-tokens.test.mjs'];
 
 const read = (rel) => readFileSync(resolve(STARTERS, rel), 'utf8');
 
 /**
- * The text that must match. For the refresh-tokens test, the starter's own
+ * The text that must match. For the refresh-tokens and idempotency tests, the starter's own
  * `MODULE` line is checked and then replaced by a placeholder, so a copy that
  * points at ANOTHER starter's path (or anywhere else) fails rather than
  * normalising away.
  */
 function normalised(name, rel, text) {
-  if (name !== 'refresh-tokens.test.mjs') return text;
+  if (!(name in MODULE_LINES)) return text;
   const starter = rel.split('/')[0];
-  const want = MODULE_LINE[starter];
+  const want = MODULE_LINES[name][starter];
   const lines = text.split('\n').filter((l) => l.startsWith('const MODULE = '));
   assert.deepEqual(lines, [want], `${rel} must import the module from exactly: ${want}`);
   return text.replace(want, '<MODULE>');
@@ -135,4 +170,14 @@ test('control: a refresh-tokens test pointing at another starter\'s module is re
   const rel = 'react-pwa/tests/refresh-tokens.test.mjs';
   const wrong = read(rel).replace(MODULE_LINE['react-pwa'], MODULE_LINE['next-app']);
   assert.throws(() => normalised('refresh-tokens.test.mjs', rel, wrong), /must import the module from exactly/);
+});
+
+test('control: an idempotency test pointing at another starter\'s submit-key module is refused', () => {
+  const rel = 'react-pwa/tests/idempotency.test.mjs';
+  const wrong = read(rel).replace(
+    MODULE_LINES['idempotency.test.mjs']['react-pwa'],
+    MODULE_LINES['idempotency.test.mjs']['next-app'],
+  );
+  assert.notEqual(wrong, read(rel), 'the control edit must change the text');
+  assert.throws(() => normalised('idempotency.test.mjs', rel, wrong), /must import the module from exactly/);
 });

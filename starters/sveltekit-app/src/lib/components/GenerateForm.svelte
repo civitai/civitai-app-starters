@@ -12,6 +12,7 @@
     quoteFor,
     type Quote,
   } from '$lib/estimate';
+  import { attemptFor, type Attempt } from '$lib/attempt-key';
 
   /**
    * The user's Buzz balance, or `null`/`undefined` when this app could not read
@@ -46,6 +47,11 @@
   let snapshot = $state<WorkflowSnapshot | null>(null);
 
   let abort: AbortController | null = null;
+  // The idempotency key of the current Generate attempt, bound to its prompt
+  // (see `attempt-key.ts`). Kept across a failed submit, a failed wait and the
+  // re-Preview they force, so a retry cannot pay for a second workflow.
+  // Dropped when the workflow finishes, on Reset and when the prompt is edited.
+  let attempt: Attempt | null = null;
   onDestroy(() => abort?.abort());
 
   async function estimate() {
@@ -89,6 +95,8 @@
         if (!res.ok) throw new Error(JSON.stringify(json));
         snapshot = json.snapshot as WorkflowSnapshot;
         if (json.done) {
+          // Finished (succeeded or not): the next Generate is a new attempt.
+          attempt = null;
           phase = 'done';
           return;
         }
@@ -108,11 +116,13 @@
     phase = 'submitting';
     error = null;
     snapshot = null;
+    const next = attemptFor(attempt, prompt);
+    attempt = next;
     try {
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, idempotencyKey: next.key }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(JSON.stringify(json));
@@ -124,15 +134,25 @@
       // 5xx can arrive after the orchestrator accepted it. So drop the quote.
       // Generate stays locked until a new Preview prices the prompt again, and
       // one more click cannot pay for a second workflow. Preview stays usable.
+      // Keep this attempt's key even if Reset cleared it while the request was
+      // in flight: the workflow may exist, and the retry must reuse the key.
+      // (The key is bound to its prompt, so an edited prompt still gets a new one.)
+      attempt ??= next;
       quote = null;
       error = err instanceof Error ? err.message : 'unknown error';
       phase = 'error';
     }
   }
 
+  // An edited prompt is a new input, so the next Generate is a new attempt.
+  function dropAttempt() {
+    attempt = null;
+  }
+
   function reset() {
     abort?.abort();
     sequencer.invalidate();
+    attempt = null;
     phase = 'idle';
     error = null;
     quote = null;
@@ -153,6 +173,7 @@
     <textarea
       class="min-h-[5rem] rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
       bind:value={prompt}
+      oninput={dropAttempt}
       disabled={busy}
     ></textarea>
     <span class="text-xs text-zinc-500">

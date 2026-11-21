@@ -84,7 +84,7 @@ src/
 1. Logged out → `<form action="/api/auth/login">` posts → `POST /api/auth/login` → PKCE + state seal + 303 to Civitai.
 2. Civitai redirects back with `code` + `state` → `GET /api/auth/callback/civitai` exchanges → session sealed → 303 home.
 3. Logged in → `+page.server.ts` calls `getMe()` (username) **and** `getBuzzBalance()` (a separate endpoint — `buzz.getUserAccount`, needs `BuzzRead`, `null` without it; 🔴 the balance is NOT on `/api/v1/me`) and passes both plus scopes to `+page.svelte`.
-4. **Preview Buzz cost** → client `POST /api/generate/estimate` → display the Buzz cost for that prompt. Generate is disabled until the current prompt has an estimate; editing the prompt, Reset, a failed submit or a failed workflow wait discards it (a failed submit may still have started a paid workflow, so Generate stays locked until a new Preview), a reply to a discarded estimate is ignored, and an estimate without a cost shows "Estimate unavailable".
+4. **Preview Buzz cost** → client `POST /api/generate/estimate` → display the Buzz cost for that prompt. Generate is disabled until the current prompt has an estimate; editing the prompt, Reset, a failed submit or a failed workflow wait discards it (a failed submit may still have started a paid workflow, so Generate stays locked until a new Preview), a reply to a discarded estimate is ignored, and an estimate without a cost shows "Estimate unavailable". Each Generate sends an `idempotencyKey` (`src/lib/attempt-key.ts`) that the generate route checks (`^[A-Za-z0-9_-]{1,64}$`, else 400) and puts on the real submit, never the estimate, as the workflow's `externalId`; the orchestrator returns the existing workflow for a repeat key. The form keeps the key across a failed submit, a failed wait and the re-Preview they force, so the retry cannot pay twice, and drops it when the workflow finishes, on Reset and when the prompt is edited. Never reuse a key for a different input: a repeat key returns the old workflow even if the body differs.
 5. Confirm → client `POST /api/generate` → returns workflowId → client polls `GET /api/workflow/[id]` every 2s.
 6. On terminal status → display image blobs from `steps[0].output.blobs`.
 
@@ -96,7 +96,7 @@ After any meaningful change, run the matching check before declaring done:
 |---|---|
 | Anything in `src/` | `pnpm typecheck` (`svelte-check` + svelte-kit sync) |
 | `svelte.config.js`, env wiring, security headers | `pnpm build` |
-| `src/lib/estimate.ts`, `src/lib/refresh-tokens.ts` | `pnpm test` (needs Node ≥ 22.18: it imports the `.ts` modules with Node's built-in type stripping) |
+| `src/lib/estimate.ts`, `src/lib/refresh-tokens.ts`, `src/lib/attempt-key.ts`, `src/lib/submit-key.ts` | `pnpm test` (needs Node ≥ 22.18: it imports the `.ts` modules with Node's built-in type stripping) |
 | `src/lib/components/GenerateForm.svelte` | `pnpm test`: `tests/GenerateForm.test.ts` renders the real form in happy-dom (Vitest) with `fetch` stubbed, and checks what it shows and what it sends |
 | `src/lib/session.ts`, `hooks.server.ts`, the estimate route, the sign-out routes | `pnpm build && PROBE_SKIP_BUILD=1 pnpm probe:expired-session` (no Civitai needed: a stand-in runs in the probe) |
 | Auth flow (`src/routes/api/auth/**`, `hooks.server.ts`, `$lib/session.ts`) | `pnpm test:e2e -- auth-flow` |

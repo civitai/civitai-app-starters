@@ -13,6 +13,7 @@ import {
   quoteFor,
   type Quote,
 } from '@/lib/estimate';
+import { attemptFor, type Attempt } from '@/lib/attempt-key';
 
 type Phase = 'idle' | 'estimating' | 'previewed' | 'submitting' | 'polling' | 'done' | 'error';
 
@@ -50,6 +51,11 @@ export function GenerateForm({ initialBalance }: { initialBalance?: number | nul
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // The idempotency key of the current Generate attempt, bound to its prompt
+  // (see `attempt-key.ts`). Kept across a failed submit, a failed wait and the
+  // re-Preview they force, so a retry cannot pay for a second workflow.
+  // Dropped when the workflow finishes, on Reset and when the prompt is edited.
+  const attemptRef = useRef<Attempt | null>(null);
 
   useEffect(
     () => () => {
@@ -99,6 +105,8 @@ export function GenerateForm({ initialBalance }: { initialBalance?: number | nul
         if (!res.ok) throw new Error(JSON.stringify(json));
         setSnapshot(json.snapshot as WorkflowSnapshot);
         if (json.done) {
+          // Finished (succeeded or not): the next Generate is a new attempt.
+          attemptRef.current = null;
           setPhase('done');
           return;
         }
@@ -118,11 +126,13 @@ export function GenerateForm({ initialBalance }: { initialBalance?: number | nul
     setPhase('submitting');
     setError(null);
     setSnapshot(null);
+    const next = attemptFor(attemptRef.current, prompt);
+    attemptRef.current = next;
     try {
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, idempotencyKey: next.key }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(JSON.stringify(json));
@@ -134,6 +144,10 @@ export function GenerateForm({ initialBalance }: { initialBalance?: number | nul
       // 5xx can arrive after the orchestrator accepted it. So drop the quote.
       // Generate stays locked until a new Preview prices the prompt again, and
       // one more click cannot pay for a second workflow. Preview stays usable.
+      // Keep this attempt's key even if Reset cleared it while the request was
+      // in flight: the workflow may exist, and the retry must reuse the key.
+      // (The key is bound to its prompt, so an edited prompt still gets a new one.)
+      attemptRef.current ??= next;
       setQuote(null);
       setError(err instanceof Error ? err.message : 'unknown error');
       setPhase('error');
@@ -143,6 +157,7 @@ export function GenerateForm({ initialBalance }: { initialBalance?: number | nul
   const reset = useCallback(() => {
     abortRef.current?.abort();
     sequencer.invalidate();
+    attemptRef.current = null;
     setPhase('idle');
     setError(null);
     setQuote(null);
@@ -163,7 +178,10 @@ export function GenerateForm({ initialBalance }: { initialBalance?: number | nul
         <textarea
           className="min-h-[5rem] rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
           value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
+          onChange={(e) => {
+            attemptRef.current = null;
+            setPrompt(e.target.value);
+          }}
           disabled={busy}
         />
         <span className="text-xs text-zinc-500">
