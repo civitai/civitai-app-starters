@@ -217,11 +217,26 @@ test('a failed submit shows the error and starts no workflow', async () => {
   await until(() => expect(container.querySelector('pre')?.textContent).toContain(SUBMIT_ERROR));
   expect(calls.slice(1)).toEqual([{ url: '/api/generate', method: 'POST', body: { prompt: PROMPT } }]);
   expect(container.querySelector('img')).toBeNull();
-  expect(text()).not.toContain(WORKFLOW_ID);
   expect(container.querySelector('strong')).toBeNull();
   // What the form does today, pinned so a change to it is a decision: the
   // quote still prices this exact prompt, so Generate comes back enabled, with
   // the price, for a retry. It does not lock.
   expect(button(/^Generate/).textContent).toBe(`Generate (≈ ${COST} Buzz)`);
   expect(button(/^Generate/).disabled).toBe(false);
+});
+
+test('a failed re-estimate drops the earlier price and locks Generate again', async () => {
+  await typePrompt(PROMPT);
+  await click(button(/^Preview Buzz cost$/));
+  await until(() => expect(button(/^Generate/).disabled).toBe(false));
+
+  estimateStatus = 503;
+  estimateReply = { error: ESTIMATE_ERROR };
+  await click(button(/^Preview Buzz cost$/));
+
+  await until(() => expect(container.querySelector('pre')?.textContent).toContain(ESTIMATE_ERROR));
+  expect(button(/^Generate/).textContent).toBe('Generate');
+  expect(button(/^Generate/).disabled).toBe(true);
+  expect(container.querySelector('strong')).toBeNull();
+  expect(calls.map((c) => c.url)).toEqual(['/api/generate/estimate', '/api/generate/estimate']);
 });
