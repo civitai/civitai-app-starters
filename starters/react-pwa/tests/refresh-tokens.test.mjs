@@ -25,18 +25,29 @@ const T0 = 1_800_000_000_000;
 const realFetch = globalThis.fetch;
 
 /**
- * A fake token endpoint. `answer(refreshToken)` returns the response for one
- * call; `calls` lists the refresh token each call presented.
+ * A fake auth hub. `answer(refreshToken)` returns the token endpoint's response
+ * for one call; the returned array lists the refresh token each token call
+ * presented. The revoke endpoint always answers 200 and records the token it
+ * was sent in `revoked`, never in that array, so a revoke is not counted as a
+ * refresh.
  */
-function fakeHub(answer) {
+function fakeHub(answer, revoked = []) {
   const calls = [];
-  globalThis.fetch = async (_url, init) => {
-    const presented = new URLSearchParams(init.body).get('refresh_token');
+  globalThis.fetch = async (url, init) => {
+    const form = new URLSearchParams(init.body);
+    if (String(url).endsWith('/api/auth/oauth/revoke')) {
+      revoked.push(form.get('token'));
+      return new Response(null, { status: 200 });
+    }
+    const presented = form.get('refresh_token');
     calls.push(presented);
     return answer(presented);
   };
   return calls;
 }
+
+/** Let every pending promise callback and an immediate timer run. */
+const settle = () => new Promise((r) => setImmediate(r));
 
 /** A successful rotation: `<presented>` -> access `<presented>-access`, refresh `next(presented)`. */
 function rotateTo(next) {
@@ -230,6 +241,64 @@ test('a caller waiting on a failing refresh at sign-out also gets signed out', a
   forgetRefreshesFor({ refresh_token: 'wt-503' });
   release();
   await assert.rejects(waiting, (err) => err?.name === 'SessionEndedError' && !isDefiniteRejection(err));
+});
+
+test('a caller waiting on a HUNG refresh is signed out at sign-out, not after the wait cap', async () => {
+  let release;
+  const gate = new Promise((r) => (release = r));
+  fakeHub(async () => {
+    await gate;
+    return new Response('Service Unavailable', { status: 503 });
+  });
+  const waiting = refresh('hang-1');
+  waiting.catch(() => {});
+  forgetRefreshesFor({ refresh_token: 'hang-1' });
+  // The token call is still hung. Before the fix the waiter stayed until the
+  // call settled or the 10 s cap hit, then reported a timeout (logged as a
+  // failed refresh "kept for a retry").
+  const outcome = await Promise.race([
+    waiting.then(
+      () => 'resolved',
+      (err) => err?.name,
+    ),
+    new Promise((r) => setTimeout(() => r('still waiting'), 50)),
+  ]);
+  release();
+  assert.equal(outcome, 'SessionEndedError');
+});
+
+test('a refresh that succeeds after its session signed out has its new refresh token revoked', async () => {
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const revoked = [];
+  const calls = fakeHub(async (p) => {
+    await gate;
+    return rotateTo((x) => `${x}-orphan`)(p);
+  }, revoked);
+  const waiting = refresh('rv-1');
+  const other = refresh('rv-other');
+  waiting.catch(() => {});
+  forgetRefreshesFor({ refresh_token: 'rv-1' });
+  release();
+  await assert.rejects(waiting, (err) => err?.name === 'SessionEndedError');
+  assert.equal((await other).refresh_token, 'rv-other-orphan');
+  await settle();
+  assert.deepEqual(calls.sort(), ['rv-1', 'rv-other']);
+  // No caller got rv-1-orphan and the map dropped it: only a revoke ends it.
+  // The other session's rotation is not revoked.
+  assert.deepEqual(revoked, ['rv-1-orphan']);
+});
+
+// An invariant guard, not regression coverage: the code before the fix never
+// revoked anything, so this passes there too. It pins the fix's other edge.
+test('a refresh that succeeds before sign-out is not revoked', async () => {
+  const revoked = [];
+  fakeHub(rotateTo((p) => `${p}-next`), revoked);
+  assert.equal((await refresh('kept-1')).refresh_token, 'kept-1-next');
+  forgetRefreshesFor({ refresh_token: 'kept-1-next' });
+  await settle();
+  // Its caller holds those tokens; the sign-out route owns revoking them.
+  assert.deepEqual(revoked, []);
 });
 
 test('forgetRefreshesFor ignores a session without a refresh token', () => {
