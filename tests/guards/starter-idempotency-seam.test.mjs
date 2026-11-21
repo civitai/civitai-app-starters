@@ -64,6 +64,7 @@ function honoRoute(src, path) {
   const start = src.indexOf(`app.post('${path}',`);
   assert.notEqual(start, -1, `no route ${path}`);
   const end = src.indexOf('\n});\n', start);
+  assert.notEqual(end, -1, `no end of route ${path}`);
   return src.slice(start, end + 5);
 }
 
@@ -71,7 +72,11 @@ for (const [starter, f] of Object.entries(STARTER_FILES)) {
   test(`${starter}: only the real submit puts the key on the workflow as externalId`, () => {
     const src = read(starter, f.civitai);
     assert.equal(src.match(/withExternalId\(/g)?.length, 1, 'withExternalId is called exactly once');
-    assert.match(functionBody(src, 'submitGeneration'), /withExternalId\(\s*buildTextToImageBody\([\s\S]*?\),\s*idempotencyKey,?\s*\)/);
+    // The keyed body is the one actually handed to submitWorkflow.
+    assert.match(
+      functionBody(src, 'submitGeneration'),
+      /return submitWorkflow\(\s*getClient\(session\),\s*withExternalId\(\s*buildTextToImageBody\([\s\S]*?\),\s*idempotencyKey,?\s*\),?\s*\);/,
+    );
     assert.doesNotMatch(functionBody(src, 'estimateGenerationCost'), /withExternalId|externalId|idempotencyKey/);
   });
 
@@ -81,6 +86,8 @@ for (const [starter, f] of Object.entries(STARTER_FILES)) {
     assert.match(submit, /const key = readIdempotencyKey\((body|parsed\.input)\);/);
     assert.match(submit, /if \(!key\.ok\) return [\s\S]{0,40}\{ error: key\.error \},\s*(\{ status: 400 \}|400)\);/);
     assert.match(submit, /submitGeneration\([^)]*, key\.key\)/);
+    // The refusal runs before anything is submitted.
+    assert.ok(submit.indexOf('if (!key.ok)') < submit.indexOf('submitGeneration('), 'the key is checked before the submit');
     const estimate = f.estimateRoute ? read(starter, f.estimateRoute) : honoRoute(src, '/api/generate/estimate');
     assert.doesNotMatch(estimate, /idempotencyKey|IdempotencyKey|externalId/);
   });

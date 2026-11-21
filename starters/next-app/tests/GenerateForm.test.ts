@@ -44,6 +44,8 @@ let estimateStatus: number;
 let submitReply: Record<string, unknown>;
 let submitStatus: number;
 let pollStatus: number;
+/** When set, the submit reply waits for it, so a test can act while the submit is in flight. */
+let submitGate: Promise<void> | null;
 let container: HTMLElement;
 let root: Root;
 
@@ -57,7 +59,10 @@ function fakeBff(input: RequestInfo | URL, init?: RequestInit): Promise<Response
       new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }),
     );
   if (method === 'POST' && url === '/api/generate/estimate') return reply(estimateReply, estimateStatus);
-  if (method === 'POST' && url === '/api/generate') return reply(submitReply, submitStatus);
+  if (method === 'POST' && url === '/api/generate') {
+    if (submitGate) return submitGate.then(() => reply(submitReply, submitStatus));
+    return reply(submitReply, submitStatus);
+  }
   if (method === 'GET' && url.startsWith(`/api/workflow/${WORKFLOW_ID}?`)) {
     if (pollStatus !== 200) return reply({ error: POLL_ERROR }, pollStatus);
     return reply({
@@ -80,6 +85,7 @@ beforeEach(async () => {
   submitReply = { workflowId: WORKFLOW_ID, snapshot: {} };
   submitStatus = 200;
   pollStatus = 200;
+  submitGate = null;
   vi.stubGlobal('fetch', vi.fn(fakeBff));
   container = document.createElement('div');
   document.body.append(container);
@@ -390,4 +396,30 @@ test('Reset after a failed submit gives the next submit a new key', async () => 
   expect(keys[0]).toMatch(KEY);
   expect(keys[1]).toMatch(KEY);
   expect(keys[1]).not.toBe(keys[0]);
+});
+
+test('a submit that fails after Reset was pressed mid-flight keeps its key for the retry', async () => {
+  let release!: () => void;
+  submitGate = new Promise<void>((r) => {
+    release = r;
+  });
+  submitStatus = 502;
+  submitReply = { error: SUBMIT_ERROR };
+  await typePrompt(PROMPT);
+  await previewThenGenerate();
+  await until(() => expect(submitKeys()).toHaveLength(1));
+
+  // Reset while the submit is still in flight, then the submit fails: the
+  // workflow may exist, so the retry must still carry the same key.
+  await click(button(/^Reset$/));
+  release();
+  await until(() => expect(container.querySelector('pre')?.textContent).toContain(SUBMIT_ERROR));
+
+  submitGate = null;
+  await previewThenGenerate();
+  await until(() => expect(submitKeys()).toHaveLength(2));
+
+  const keys = submitKeys();
+  expect(keys[0]).toMatch(KEY);
+  expect(keys[1]).toBe(keys[0]);
 });

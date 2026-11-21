@@ -4,10 +4,11 @@
  * `POST /api/generate` must carry `idempotencyKey`. This module checks it and
  * puts it on the REAL submit's workflow body as `externalId`, which the
  * orchestrator dedupes on per user: a repeat key returns the workflow the first
- * submit started, so a retried submit cannot pay twice.
+ * submit started, so a retry from the same form cannot pay twice.
  *
- * 🔴 NEVER ON THE ESTIMATE. A `whatif=true` estimate sent with the same
- * `externalId` may count as a match, so only the submit path calls
+ * 🔴 NEVER ON THE ESTIMATE. The orchestrator looks `externalId` up before it
+ * looks at `whatif=true`, so an estimate sent with a used key would hand back
+ * the existing workflow. Only the submit path calls
  * {@link withExternalId}.
  *
  * 🔴 REFUSE, NEVER REWRITE. A malformed key is answered with a 400. Trimming or

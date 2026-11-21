@@ -106,9 +106,9 @@
     phase = 'submitting';
     error = null;
     snapshot = null;
+    const next = attemptFor(attempt, prompt);
+    attempt = next;
     try {
-      const next = attemptFor(attempt, prompt);
-      attempt = next;
       const { workflowId: id } = await submitGeneration({ prompt, idempotencyKey: next.key });
       workflowId = id;
       phase = 'polling';
@@ -118,6 +118,10 @@
       // 5xx can arrive after the orchestrator accepted it. So drop the quote.
       // Generate stays locked until a new Preview prices the prompt again, and
       // one more click cannot pay for a second workflow. Preview stays usable.
+      // Keep this attempt's key even if Reset cleared it while the request was
+      // in flight: the workflow may exist, and the retry must reuse the key.
+      // (The key is bound to its prompt, so an edited prompt still gets a new one.)
+      attempt ??= next;
       quote = null;
       error = err instanceof Error ? err.message : 'unknown';
       phase = 'error';
