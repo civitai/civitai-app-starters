@@ -1136,7 +1136,7 @@ describe('useBuzzWorkflow', () => {
     await p;
   });
 
-  it('two auto-keyed submits get DIFFERENT keys (each call is a new logical submit)', async () => {
+  it('two auto-keyed submits get DIFFERENT keys when the first SUCCEEDED (a new logical submit)', async () => {
     const { result } = renderHook(() => useBuzzWorkflow());
     const body = { kind: 'textToImage' as const, modelId: 7, modelVersionId: 99, params: { prompt: 'cat' } };
 
