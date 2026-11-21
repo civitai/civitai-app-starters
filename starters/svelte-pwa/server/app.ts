@@ -310,7 +310,7 @@ app.post('/api/generate', async (c) => {
   const parsed = await parseGenerateInput(c);
   if ('response' in parsed) return parsed.response;
 
-  // A malformed key is refused, never rewritten (see `submit-key.ts`).
+  // A missing or malformed key is refused, never rewritten (see `submit-key.ts`).
   const key = readIdempotencyKey(parsed.input);
   if (!key.ok) return c.json({ error: key.error }, 400);
 

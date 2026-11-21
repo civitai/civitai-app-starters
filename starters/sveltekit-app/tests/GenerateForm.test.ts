@@ -325,13 +325,16 @@ test('editing the prompt after a failed submit gives the next submit a new key, 
   await previewThenGenerate();
   await until(() => expect(container.querySelector('pre')?.textContent).toContain(SUBMIT_ERROR));
 
+  // Edited and back again, without submitting the edit: the edit dropped the
+  // first attempt, so the same prompt is a new attempt.
   typePrompt(`${PROMPT}, edited`);
+  typePrompt(PROMPT);
   await previewThenGenerate();
   await until(() => expect(submitKeys()).toHaveLength(2));
   await until(() => expect(container.querySelector('pre')?.textContent).toContain(SUBMIT_ERROR));
 
-  // Back to the first prompt: an edit dropped the first attempt, so this is a new one.
-  typePrompt(PROMPT);
+  // A different prompt is a new attempt too.
+  typePrompt(`${PROMPT}, edited`);
   await previewThenGenerate();
   await until(() => expect(submitKeys()).toHaveLength(3));
 
@@ -340,8 +343,8 @@ test('editing the prompt after a failed submit gives the next submit a new key, 
   expect(new Set(keys).size).toBe(3);
   expect(calls.filter((c) => c.url === '/api/generate').map((c) => (c.body as { prompt: string }).prompt)).toEqual([
     PROMPT,
-    `${PROMPT}, edited`,
     PROMPT,
+    `${PROMPT}, edited`,
   ]);
 });
 

@@ -9,10 +9,10 @@
  * stay green over functions no route calls.
  *
  * 🔴 STRUCTURAL, NOT BEHAVIOURAL. It reads source text, so it proves the calls
- * exist, not that a request is answered correctly. What the four forms SEND
- * (the key on the submit, the same key on a retry, a new key after an edit,
- * a finished workflow or Reset, no key on the estimate) is checked
- * behaviourally by each starter's `tests/GenerateForm.test.ts`.
+ * exist, not that a request is answered correctly. The forms are NOT checked
+ * here: what they SEND (the key on the submit, the same key on a retry, a new
+ * key after an edit, a finished workflow or Reset, no key on the estimate) is
+ * checked behaviourally by each starter's `tests/GenerateForm.test.ts`.
  *
  * It lives HERE, not in a starter's own `tests/`, because a starter is copied
  * out verbatim by `npx tiged`: a source-text match shipped there would go red
@@ -41,29 +41,21 @@ const STARTER_FILES = {
     civitai: 'src/lib/civitai.ts',
     submitRoute: 'src/app/api/generate/route.ts',
     estimateRoute: 'src/app/api/generate/estimate/route.ts',
-    form: 'src/components/GenerateForm.tsx',
-    kind: 'react',
   },
   'sveltekit-app': {
     civitai: 'src/lib/civitai.ts',
     submitRoute: 'src/routes/api/generate/+server.ts',
     estimateRoute: 'src/routes/api/generate/estimate/+server.ts',
-    form: 'src/lib/components/GenerateForm.svelte',
-    kind: 'svelte',
   },
   'react-pwa': {
     civitai: 'server/civitai.ts',
     submitRoute: 'server/app.ts',
     estimateRoute: null,
-    form: 'src/components/GenerateForm.tsx',
-    kind: 'react',
   },
   'svelte-pwa': {
     civitai: 'server/civitai.ts',
     submitRoute: 'server/app.ts',
     estimateRoute: null,
-    form: 'src/components/GenerateForm.svelte',
-    kind: 'svelte',
   },
 };
 
@@ -92,21 +84,6 @@ for (const [starter, f] of Object.entries(STARTER_FILES)) {
     const estimate = f.estimateRoute ? read(starter, f.estimateRoute) : honoRoute(src, '/api/generate/estimate');
     assert.doesNotMatch(estimate, /idempotencyKey|IdempotencyKey|externalId/);
   });
-
-  test(`${starter}: GenerateForm keeps one attempt key and sends it on the submit only`, () => {
-    const src = read(starter, f.form);
-    assert.match(src, /import \{ attemptFor, type Attempt \} from '[^']*attempt-key';/);
-    assert.equal(src.match(/idempotencyKey: next\.key/g)?.length, 1, 'the key is sent from one place');
-    // The estimate prices the prompt alone.
-    assert.match(src, /\{ prompt: ticket\.prompt \}/);
-    // Dropped on a finished workflow, on Reset and on an edit: three clears.
-    const clears = kindClears(f.kind, src);
-    assert.equal(clears, 3, 'the attempt is cleared in exactly three places');
-  });
-}
-
-function kindClears(kind, src) {
-  return (kind === 'react' ? src.match(/attemptRef\.current = null;/g) : src.match(/attempt = null/g))?.length ?? 0;
 }
 
 // --- negative control: the body extractor can go red -----------------------

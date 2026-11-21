@@ -1,7 +1,7 @@
 /**
  * The generate route's handling of the form's idempotency key.
  *
- * `POST /api/generate` may carry `idempotencyKey`. This module checks it and
+ * `POST /api/generate` must carry `idempotencyKey`. This module checks it and
  * puts it on the REAL submit's workflow body as `externalId`, which the
  * orchestrator dedupes on per user: a repeat key returns the workflow the first
  * submit started, so a retried submit cannot pay twice.
@@ -16,7 +16,9 @@
  * `isValidBlockIdempotencyKey` (`^[A-Za-z0-9_-]{1,64}$`), which sits inside the
  * orchestrator's own `externalId` rule (`^[A-Za-z0-9_-]+$`, at most 128).
  *
- * An absent key is allowed: that submit is simply not deduped, as before.
+ * 🔴 AN ABSENT KEY IS REFUSED TOO. Every Generate form sends one; a caller
+ * that forgot it would otherwise get submits that are silently not deduped,
+ * which is the double charge this exists to prevent.
  *
  * 🔴 THE SAME FILE IN EVERY STANDALONE STARTER (next-app and sveltekit-app keep
  * it in `src/lib/`, the two PWAs in `server/`), pinned by the repo guard
@@ -25,7 +27,7 @@
 import { isValidBlockIdempotencyKey } from '@civitai/app-sdk/blocks';
 
 export type IdempotencyKeyCheck =
-  | { ok: true; key: string | undefined }
+  | { ok: true; key: string }
   | { ok: false; error: string };
 
 /** Read `idempotencyKey` off a generate request body. */
@@ -34,13 +36,11 @@ export function readIdempotencyKey(body: unknown): IdempotencyKeyCheck {
     body !== null && typeof body === 'object'
       ? (body as { idempotencyKey?: unknown }).idempotencyKey
       : undefined;
-  if (value === undefined) return { ok: true, key: undefined };
   if (typeof value === 'string' && isValidBlockIdempotencyKey(value)) return { ok: true, key: value };
   return { ok: false, error: 'idempotencyKey must match ^[A-Za-z0-9_-]{1,64}$' };
 }
 
-/** The workflow body with `externalId` set to `key`; unchanged when there is no key. */
-export function withExternalId(body: unknown, key: string | undefined): unknown {
-  if (key === undefined) return body;
+/** A copy of the workflow body with `externalId` set to `key`. */
+export function withExternalId(body: unknown, key: string): unknown {
   return { ...(body as Record<string, unknown>), externalId: key };
 }

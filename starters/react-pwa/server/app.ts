@@ -290,7 +290,7 @@ app.post('/api/generate', async (c) => {
   if (!session) return c.json({ error: 'not_authenticated' }, 401);
   const body = await readPromptBody(c);
   if (!body) return c.json({ error: 'prompt is required' }, 400);
-  // A malformed key is refused, never rewritten (see `submit-key.ts`).
+  // A missing or malformed key is refused, never rewritten (see `submit-key.ts`).
   const key = readIdempotencyKey(body);
   if (!key.ok) return c.json({ error: key.error }, 400);
 

@@ -142,7 +142,7 @@ export function estimateGenerationCost(
 export function submitGeneration(
   session: Session,
   input: GenerateInput,
-  idempotencyKey?: string,
+  idempotencyKey: string,
 ): Promise<WorkflowSnapshot> {
   return submitWorkflow(
     getClient(session),

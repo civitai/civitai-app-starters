@@ -19,9 +19,12 @@ const { readIdempotencyKey, withExternalId } = await import(MODULE);
 
 // --- the route's check: refuse a malformed key, never rewrite it -----------
 
-test('submit key: a body without idempotencyKey is accepted with no key', () => {
-  assert.deepEqual(readIdempotencyKey({ prompt: 'p' }), { ok: true, key: undefined });
-  assert.deepEqual(readIdempotencyKey(null), { ok: true, key: undefined });
+test('submit key: a body without idempotencyKey is refused', () => {
+  for (const body of [{ prompt: 'p' }, { prompt: 'p', idempotencyKey: undefined }, null, 'p']) {
+    const check = readIdempotencyKey(body);
+    assert.equal(check.ok, false, `accepted ${JSON.stringify(body)}`);
+    assert.equal(check.error, 'idempotencyKey must match ^[A-Za-z0-9_-]{1,64}$');
+  }
 });
 
 test('submit key: a well-formed key is accepted unchanged', () => {
@@ -45,11 +48,6 @@ test('submit key: withExternalId sets externalId on a copy of the body', () => {
   const out = withExternalId(body, 'k-61_x');
   assert.deepEqual(out, { steps: [{ name: 'step_0' }], tags: ['t1'], externalId: 'k-61_x' });
   assert.equal('externalId' in body, false, 'the input body must not be mutated');
-});
-
-test('submit key: withExternalId leaves the body alone when there is no key', () => {
-  const body = { steps: [] };
-  assert.equal(withExternalId(body, undefined), body);
 });
 
 // --- the form's attempt key -------------------------------------------------

@@ -11,7 +11,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   if (!body?.prompt || typeof body.prompt !== 'string') {
     return json({ error: 'prompt is required' }, { status: 400 });
   }
-  // A malformed key is refused, never rewritten (see `submit-key.ts`).
+  // A missing or malformed key is refused, never rewritten (see `submit-key.ts`).
   const key = readIdempotencyKey(body);
   if (!key.ok) return json({ error: key.error }, { status: 400 });
 
