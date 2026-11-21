@@ -94,8 +94,12 @@ interface Flight {
   resultKey?: string;
   /** Set once the call fails with an error that keeps the cookie. */
   failedAt?: number;
-  /** Set when the session signed out while this was remembered (forgetRefreshesFor). */
-  ended?: boolean;
+  /**
+   * Set when the session was REVOKED while this was remembered
+   * (forgetRefreshesFor with `revokeOrphans`): if the call then succeeds, the
+   * refresh token it returns is revoked upstream.
+   */
+  revokeIfSucceeds?: boolean;
   /**
    * Rejects with a {@link SessionEndedError} the moment the session signs out
    * (`end`), and never settles otherwise. Every caller races it against
@@ -192,10 +196,12 @@ function answerOf(flight: Flight): Promise<OAuthTokens> {
 }
 
 /**
- * Revoke the refresh token a call returned AFTER its session signed out. No
+ * Revoke the refresh token a call returned AFTER its session was revoked. No
  * caller was handed it (each got a {@link SessionEndedError}) and the map no
- * longer holds it, so nothing could ever use it, nor revoke it later. Best
- * effort: the answer is not awaited and a failure is ignored.
+ * longer holds it, while the revoke route revoked only the refresh token the
+ * cookie held, which this call had already spent. Without this the disconnect
+ * would leave a live refresh token behind. Best effort: the answer is not
+ * awaited and a failure is ignored.
  */
 function revokeOrphan(opts: RefreshOpts, tokens: OAuthTokens): void {
   if (!tokens.refresh_token) return;
@@ -247,8 +253,8 @@ export interface RefreshOpts {
  *   cannot end it, and its caller gets its tokens.
  * - A caller whose session signs out while it waits gets a
  *   {@link SessionEndedError} at once, never the tokens (see
- *   {@link forgetRefreshesFor}). If that call then succeeds, the refresh token
- *   it returned is revoked upstream, since nothing holds it.
+ *   {@link forgetRefreshesFor}). If the sign-out was a revoke and the call
+ *   then succeeds, the refresh token it returned is revoked upstream.
  *
  * 🔴 IN-PROCESS ONLY. This dedupes requests that reach the SAME server
  * process. Two processes or instances (serverless functions, several
@@ -281,7 +287,7 @@ export function refreshTokensOnce(opts: RefreshOpts): Promise<OAuthTokens> {
     end,
     promise: oauthRefresh(opts).then(
       (tokens) => {
-        if (flight.ended) revokeOrphan(opts, tokens);
+        if (flight.revokeIfSucceeds) revokeOrphan(opts, tokens);
         flight.doneAt = Date.now();
         if (tokens.refresh_token) flight.resultKey = keyFor(tokens.refresh_token);
         return tokens;
@@ -324,10 +330,20 @@ export function refreshTokensOnce(opts: RefreshOpts): Promise<OAuthTokens> {
  * get a {@link SessionEndedError} at once instead of its answer: otherwise a
  * request another tab sent just before the sign-out would set the refreshed
  * session cookie after it, signing the browser back in. That request is signed
- * out and writes no cookie at all. If the dropped call still succeeds, the
- * refresh token it returns is revoked upstream (nothing else holds it).
+ * out and writes no cookie at all.
+ *
+ * `revokeOrphans` is for the REVOKE route only. With it, a dropped call that
+ * still succeeds has the refresh token it returns revoked upstream: nothing
+ * holds that token, and the revoke route's own revoke reached only the spent
+ * one. A plain sign-out must not pass it. Signing out locally leaves the
+ * stored refresh token live by design, and Civitai's revoke of a refresh
+ * token also deletes every access token the user holds for this app, so a
+ * sign-out that raced a refresh would sign the user out on every device.
  */
-export function forgetRefreshesFor(tokens: { refresh_token?: string | null } | null | undefined): void {
+export function forgetRefreshesFor(
+  tokens: { refresh_token?: string | null } | null | undefined,
+  { revokeOrphans = false }: { revokeOrphans?: boolean } = {},
+): void {
   const refreshToken = tokens?.refresh_token;
   if (!refreshToken) return;
   const gone = new Set([keyFor(refreshToken)]);
@@ -336,7 +352,7 @@ export function forgetRefreshesFor(tokens: { refresh_token?: string | null } | n
     changed = false;
     for (const [key, flight] of flights) {
       if (gone.has(key) || (flight.resultKey !== undefined && gone.has(flight.resultKey))) {
-        flight.ended = true;
+        if (revokeOrphans) flight.revokeIfSucceeds = true;
         flight.end();
         flights.delete(key);
         gone.add(key);

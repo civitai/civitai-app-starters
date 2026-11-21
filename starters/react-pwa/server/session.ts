@@ -123,9 +123,18 @@ export function writeSession(c: Context, session: Session, production: boolean):
  * Sign out: forget this session's remembered refreshes, then clear the cookie.
  * Without the first half, a request carrying the pre-rotation cookie inside the
  * 60 s reuse window would be handed this session's tokens again.
+ *
+ * Pass `{ revokeOrphans: true }` from the revoke route only: a refresh of this
+ * session that is still in flight and then succeeds has its new refresh token
+ * revoked upstream too (see `forgetRefreshesFor`). A plain sign-out leaves the
+ * upstream tokens alone.
  */
-export function clearSession(c: Context, production: boolean): void {
-  forgetRefreshesFor(parseSession(c)?.tokens);
+export function clearSession(
+  c: Context,
+  production: boolean,
+  { revokeOrphans = false }: { revokeOrphans?: boolean } = {},
+): void {
+  forgetRefreshesFor(parseSession(c)?.tokens, { revokeOrphans });
   deleteCookie(c, SESSION_COOKIE, cookieOpts(production));
 }
 

@@ -205,7 +205,9 @@ app.post('/api/auth/revoke', async (c) => {
   // End the session BEFORE the upstream round trips: clearSession() forgets
   // its remembered refreshes, so a request another tab has waiting on one is
   // signed out instead of being handed the tokens while revoke is waiting.
-  clearSession(c, production);
+  // `revokeOrphans`: if such a refresh still succeeds, its new refresh token
+  // is revoked too, since the cookie's one, revoked below, is the one it spent.
+  clearSession(c, production, { revokeOrphans: true });
   const tokens = [session?.tokens.access_token, session?.tokens.refresh_token].filter(
     (t): t is string => typeof t === 'string' && t.length > 0,
   );
