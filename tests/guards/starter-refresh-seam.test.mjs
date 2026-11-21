@@ -145,9 +145,10 @@ for (const [starter, l] of Object.entries(LAYOUT)) {
   test(`${starter}: only the revoke route revokes a refresh its sign-out orphaned`, () => {
     // A plain logout leaves the upstream tokens live by design (PORTING.md
     // 3c), and Civitai's revoke of a refresh token deletes every access token
-    // the user holds for this app, so a logout that raced a refresh would sign
-    // the user out on every device. Behaviour is pinned by the
-    // revokeOrphans cases in tests/refresh-tokens.test.mjs.
+    // the user holds for this app, so a logout that raced a refresh would
+    // break the access token on every device until it next refreshes.
+    // Behaviour is pinned by the revokeOrphans cases in
+    // tests/refresh-tokens.test.mjs; this pins the wiring.
     const code = (rel) => read(starter, rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     const perFile = l.signOut.map((rel) => code(rel).match(/\{ revokeOrphans: true \}/g)?.length ?? 0);
     assert.equal(perFile.reduce((a, b) => a + b, 0), 1, `exactly one sign-out call may pass revokeOrphans (${l.signOut.join(', ')})`);
@@ -157,5 +158,19 @@ for (const [starter, l] of Object.entries(LAYOUT)) {
       body = body.slice(at, body.indexOf('\n});', at));
     }
     assert.match(body, /clearSession\([^)]*\{ revokeOrphans: true \}\);/, 'the revoke route must pass revokeOrphans');
+    // The logout route calls clearSession with no options, so clearSession
+    // itself must default to false and forward the caller's choice: a default
+    // of true, or a hardcoded true, turns orphan-revoke back on for logout
+    // without touching either route.
+    const session = code(l.sessionFile);
+    const decl = session.match(/export (?:async )?function clearSession\(([^)]*)\)[^{]*\{([\s\S]*?)\n\}/);
+    assert.ok(decl, 'clearSession must exist');
+    assert.match(
+      decl[1],
+      /\{\s*revokeOrphans = false,?\s*\}: \{ revokeOrphans\?: boolean \} = \{\}/,
+      'clearSession must default revokeOrphans to false',
+    );
+    assert.match(decl[2], /forgetRefreshesFor\([^;]*, \{ revokeOrphans \}\);/, 'clearSession must forward revokeOrphans as given');
+    assert.doesNotMatch(session, /revokeOrphans(?::\s*| = )true/, 'the session module must not turn revokeOrphans on itself');
   });
 }

@@ -202,6 +202,12 @@ function answerOf(flight: Flight): Promise<OAuthTokens> {
  * cookie held, which this call had already spent. Without this the disconnect
  * would leave a live refresh token behind. Best effort: the answer is not
  * awaited and a failure is ignored.
+ *
+ * It runs when the call settles, however late. Civitai's revoke also deletes
+ * every access token the user holds for this app, so a call that hung past a
+ * fresh sign-in would also break that new session's access token until it next
+ * refreshes. That needs a token endpoint hung for longer than a sign-in, which
+ * calls the same endpoint, and is accepted rather than bounded here.
  */
 function revokeOrphan(opts: RefreshOpts, tokens: OAuthTokens): void {
   if (!tokens.refresh_token) return;
@@ -338,7 +344,8 @@ export function refreshTokensOnce(opts: RefreshOpts): Promise<OAuthTokens> {
  * one. A plain sign-out must not pass it. Signing out locally leaves the
  * stored refresh token live by design, and Civitai's revoke of a refresh
  * token also deletes every access token the user holds for this app, so a
- * sign-out that raced a refresh would sign the user out on every device.
+ * sign-out that raced a refresh would break the access token on every device
+ * until it next refreshes.
  */
 export function forgetRefreshesFor(
   tokens: { refresh_token?: string | null } | null | undefined,
