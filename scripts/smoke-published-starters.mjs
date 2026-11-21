@@ -32,8 +32,11 @@
  *      (a plain directory in node_modules with a version, never a symlink back
  *      into this repo). This is the positive control on the whole premise: if a
  *      workspace copy leaked in, the run says so instead of passing vacuously.
- *   4. RUN the starter's own `typecheck` and `build` scripts (with
- *      SKIP_ENV_VALIDATION=1, same as CI — there are no real secrets here).
+ *   4. RUN the starter's own `typecheck`, `test` and `build` scripts, each one
+ *      it defines (with SKIP_ENV_VALIDATION=1, same as CI — there are no real
+ *      secrets here). `test` runs a copy's unit and rendered-component tests
+ *      against the published packages, the way a developer's first
+ *      `npm test` does; its log is printed in full so each test is named.
  *
  * SCOPE:
  *   - COVERED: the depth-1 starters under `starters/` AND the apps under
@@ -46,11 +49,12 @@
  * WHAT IT CATCHES: a starter using an API that exists only in the workspace
  *   source and not in the published version its pin admits (new export, changed
  *   signature, moved subpath export, a dependency never actually published).
- * WHAT IT DOES NOT CATCH: runtime behaviour (nothing is executed beyond the
- *   build), anything requiring real credentials, and browser/e2e behaviour.
+ * WHAT IT DOES NOT CATCH: runtime behaviour beyond what a starter's own `test`
+ *   covers (happy-dom, stubbed `fetch`: no server, no real browser), anything
+ *   requiring real credentials, and browser/e2e behaviour.
  *
  * EXIT CODES:
- *   0  every discovered starter installed + typechecked + built against npm,
+ *   0  every discovered starter installed + ran its typecheck/test/build against npm,
  *      OR the registry was unreachable (loud SKIP — see below).
  *   1  at least one starter failed, or nothing was discovered to test.
  *
@@ -360,17 +364,24 @@ async function main() {
       record.steps.push({ step: 'published-resolution check', ok: true, log: resolved.join(', ') });
 
       // 3. the starter's own scripts.
-      for (const script of ['typecheck', 'build']) {
+      for (const script of ['typecheck', 'test', 'build']) {
         if (!starter.pkg.scripts?.[script]) {
           console.log(`${script}: not defined — skipping`);
           continue;
         }
-        const r = run('npm', ['run', script], workdir, {
+        // npm appends args after `--` to the script's LAST command, so a `test`
+        // script that ends in `vitest run` gets `--reporter=verbose`: the log
+        // then names each test it ran, so a reader can count them instead of
+        // trusting an exit code. Any other ending runs as written.
+        const verbose = script === 'test' && /\bvitest run$/.test(starter.pkg.scripts.test.trim());
+        const args = verbose ? ['run', 'test', '--', '--reporter=verbose'] : ['run', script];
+        const r = run('npm', args, workdir, {
           SKIP_ENV_VALIDATION: '1',
           npm_config_registry: REGISTRY,
         });
         record.steps.push({ step: `npm run ${script}`, ok: r.ok, seconds: r.seconds, log: r.out });
         console.log(`${script} ${r.ok ? 'OK' : `FAILED (exit ${r.status})`} in ${r.seconds}s`);
+        if (script === 'test' && r.ok) console.log(r.out.replace(/^/gm, '  | '));
         if (!r.ok) {
           console.log(tail(r.out, 40));
           throw new Error(`npm run ${script} failed`);
@@ -404,7 +415,7 @@ async function main() {
     );
   }
   console.log(
-    `\n${passed.length}/${results.length} starter(s) copied, installed from ${REGISTRY} and built.`,
+    `\n${passed.length}/${results.length} starter(s) copied, installed from ${REGISTRY}, and ran their typecheck/test/build scripts.`,
   );
 
   if (failed.length > 0) {
@@ -440,7 +451,7 @@ function writeSummary({ found, skipped, results, registrySkip }) {
     const passed = results.filter((r) => r.ok).length;
     lines.push(
       `**${passed}/${results.length}** starter(s) copied out (tracked files only, like \`npx tiged\`), ` +
-        `installed with plain \`npm install\` from \`${REGISTRY}\`, and built.`,
+        `installed with plain \`npm install\` from \`${REGISTRY}\`, and ran its \`typecheck\`, \`test\` and \`build\` scripts (each it defines).`,
       '',
       '| Starter | Result | Files copied | Resolved @civitai/* |',
       '| --- | --- | --- | --- |',
