@@ -88,7 +88,7 @@ src/                          # React SPA (tsconfig.json)
 1. Mount → `GET /api/me` → 401 → render `<LoginButton>` → form posts to `/api/auth/login` → BFF 303 to civitai.com.
 2. User consents → civitai.com redirects to `GET /api/auth/callback/civitai` → BFF exchanges code + seals session → 303 to `/?notice=connected`.
 3. SPA re-mounts → `GET /api/me` → 200 with `{username, balance, grantedScopes}` → render `<GenerateForm>`. 🔴 The BFF reads `balance` from `getBuzzBalance()` (`buzz.getUserAccount`, needs `BuzzRead`), **not** from `/api/v1/me`, which returns none; it is `null` when the scope was not granted and the SPA then renders no row.
-4. "Preview Buzz cost" → `POST /api/generate/estimate` → display the cost for that prompt. Generate is disabled until the current prompt has an estimate; editing the prompt or Reset discards it, a reply to a discarded estimate is ignored, and an estimate without a cost (`cost: null`) shows "Estimate unavailable".
+4. "Preview Buzz cost" → `POST /api/generate/estimate` → display the cost for that prompt. Generate is disabled until the current prompt has an estimate; editing the prompt, Reset, a failed submit or a failed workflow wait discards it (a failed submit may still have started a paid workflow, so Generate stays locked until a new Preview), a reply to a discarded estimate is ignored, and an estimate without a cost (`cost: null`) shows "Estimate unavailable".
 5. User clicks "Generate" → `POST /api/generate` → returns `workflowId` → SPA polls `GET /api/workflow/[id]` every 2s.
 6. On terminal status → display image blobs from `steps[0].output.blobs`.
 

@@ -79,7 +79,7 @@ src/
 
 1. Logged out → `<LoginButton>` → `POST /api/auth/login` → 302 to Civitai → user consents → `GET /api/auth/callback/civitai` → session sealed → 302 to `/`.
 2. Logged in → `getSession()` on server → `getMe()` (username) **and** `getBuzzBalance()` (balance — a separate endpoint, `null` without `BuzzRead`) → render the profile card, scope summary, prompt form.
-3. **Preview Buzz cost** → client `POST /api/generate/estimate` → display the Buzz cost for that prompt → user confirms with **Generate**. Generate is disabled until the current prompt has an estimate; editing the prompt or Reset discards it, a reply to a discarded estimate is ignored, and an estimate without a cost shows "Estimate unavailable".
+3. **Preview Buzz cost** → client `POST /api/generate/estimate` → display the Buzz cost for that prompt → user confirms with **Generate**. Generate is disabled until the current prompt has an estimate; editing the prompt, Reset, a failed submit or a failed workflow wait discards it (a failed submit may still have started a paid workflow, so Generate stays locked until a new Preview), a reply to a discarded estimate is ignored, and an estimate without a cost shows "Estimate unavailable".
 4. Client `POST /api/generate` → returns workflow ID → client long-polls `GET /api/workflow/[id]?wait=…` (the server holds each request open) until the workflow is done.
 5. On terminal status → display image(s) or error.
 
