@@ -84,7 +84,7 @@ src/
 1. Logged out → `<form action="/api/auth/login">` posts → `POST /api/auth/login` → PKCE + state seal + 303 to Civitai.
 2. Civitai redirects back with `code` + `state` → `GET /api/auth/callback/civitai` exchanges → session sealed → 303 home.
 3. Logged in → `+page.server.ts` calls `getMe()` (username) **and** `getBuzzBalance()` (a separate endpoint — `buzz.getUserAccount`, needs `BuzzRead`, `null` without it; 🔴 the balance is NOT on `/api/v1/me`) and passes both plus scopes to `+page.svelte`.
-4. **Preview Buzz cost** → client `POST /api/generate/estimate` → display the Buzz cost for that prompt. Generate is disabled until the current prompt has an estimate; editing the prompt or Reset discards it, a reply to a discarded estimate is ignored, and an estimate without a cost shows "Estimate unavailable".
+4. **Preview Buzz cost** → client `POST /api/generate/estimate` → display the Buzz cost for that prompt. Generate is disabled until the current prompt has an estimate; editing the prompt, Reset, a failed submit or a failed workflow wait discards it (a failed submit may still have started a paid workflow, so Generate stays locked until a new Preview), a reply to a discarded estimate is ignored, and an estimate without a cost shows "Estimate unavailable".
 5. Confirm → client `POST /api/generate` → returns workflowId → client polls `GET /api/workflow/[id]` every 2s.
 6. On terminal status → display image blobs from `steps[0].output.blobs`.
 

@@ -23,6 +23,7 @@ const WORKFLOW_ID = 'wf-test-91';
 const IMAGE_URL = 'https://images.example.test/out-1.png';
 const ESTIMATE_ERROR = 'estimate upstream answered 503, test e41';
 const SUBMIT_ERROR = 'not enough Buzz for this workflow, test s52';
+const POLL_ERROR = 'workflow wait answered 502, test p63';
 
 interface Call {
   url: string;
@@ -35,6 +36,7 @@ let estimateReply: Record<string, unknown>;
 let estimateStatus: number;
 let submitReply: Record<string, unknown>;
 let submitStatus: number;
+let pollStatus: number;
 let container: HTMLElement;
 let component: ReturnType<typeof mount>;
 
@@ -50,6 +52,7 @@ function fakeBff(input: RequestInfo | URL, init?: RequestInit): Promise<Response
   if (method === 'POST' && url === '/api/generate/estimate') return reply(estimateReply, estimateStatus);
   if (method === 'POST' && url === '/api/generate') return reply(submitReply, submitStatus);
   if (method === 'GET' && url.startsWith(`/api/workflow/${WORKFLOW_ID}?`)) {
+    if (pollStatus !== 200) return reply({ error: POLL_ERROR }, pollStatus);
     return reply({
       done: true,
       snapshot: {
@@ -69,6 +72,7 @@ beforeEach(() => {
   estimateStatus = 200;
   submitReply = { workflowId: WORKFLOW_ID, snapshot: {} };
   submitStatus = 200;
+  pollStatus = 200;
   vi.stubGlobal('fetch', vi.fn(fakeBff));
   container = document.createElement('div');
   document.body.append(container);
@@ -194,7 +198,7 @@ test('a failed estimate shows the error and keeps Generate locked', async () => 
   expect(calls.map((c) => c.url)).toEqual(['/api/generate/estimate']);
 });
 
-test('a failed submit shows the error and starts no workflow', async () => {
+test('a failed submit shows the error, drops the price and locks Generate until a new estimate', async () => {
   submitStatus = 402;
   submitReply = { error: SUBMIT_ERROR };
   typePrompt(PROMPT);
@@ -207,11 +211,40 @@ test('a failed submit shows the error and starts no workflow', async () => {
   expect(calls.slice(1)).toEqual([{ url: '/api/generate', method: 'POST', body: { prompt: PROMPT } }]);
   expect(container.querySelector('img')).toBeNull();
   expect(container.querySelector('strong')).toBeNull();
-  // What the form does today, pinned so a change to it is a decision: the
-  // quote still prices this exact prompt, so Generate comes back enabled, with
-  // the price, for a retry. It does not lock.
-  expect(button(/^Generate/).textContent?.trim()).toBe(`Generate (≈ ${COST} Buzz)`);
+  // A failed submit may still have started a workflow (a timeout or a 5xx
+  // after the orchestrator accepted it), so the form drops the quote and
+  // Generate locks: one more click must not pay for a second workflow.
+  expect(button(/^Generate/).textContent?.trim()).toBe('Generate');
+  expect(button(/^Generate/).disabled).toBe(true);
+  // Preview stays usable, and a new estimate unlocks Generate at ITS price.
+  expect(button(/^Preview Buzz cost$/).disabled).toBe(false);
+  estimateReply = { cost: COST + 5 };
+  click(button(/^Preview Buzz cost$/));
+  await until(() => expect(button(/^Generate/).textContent?.trim()).toBe(`Generate (≈ ${COST + 5} Buzz)`));
   expect(button(/^Generate/).disabled).toBe(false);
+  expect(calls.map((c) => c.url)).toEqual(['/api/generate/estimate', '/api/generate', '/api/generate/estimate']);
+});
+
+test('a failed wait for the workflow drops the price and locks Generate', async () => {
+  pollStatus = 502;
+  typePrompt(PROMPT);
+  click(button(/^Preview Buzz cost$/));
+  await until(() => expect(button(/^Generate/).disabled).toBe(false));
+
+  click(button(/^Generate/));
+
+  await until(() => expect(container.querySelector('pre')?.textContent).toContain(POLL_ERROR));
+  expect(container.querySelector('img')).toBeNull();
+  expect(container.querySelector('strong')).toBeNull();
+  // The orchestrator accepted this workflow, so it may still be running.
+  expect(button(/^Generate/).textContent?.trim()).toBe('Generate');
+  expect(button(/^Generate/).disabled).toBe(true);
+  expect(button(/^Preview Buzz cost$/).disabled).toBe(false);
+  expect(calls.map((c) => c.url)).toEqual([
+    '/api/generate/estimate',
+    '/api/generate',
+    `/api/workflow/${WORKFLOW_ID}?wait=25000`,
+  ]);
 });
 
 test('a failed re-estimate drops the earlier price and locks Generate again', async () => {

@@ -13,8 +13,9 @@
  * four forms (next-app, react-pwa, svelte-pwa, sveltekit-app): each starter's
  * `tests/GenerateForm.test.ts` (Vitest + happy-dom, run by its `pnpm test`)
  * renders the real form and checks the prompt it prices and submits, the
- * locked Generate button, "Estimate unavailable", and the error a failed
- * estimate or submit shows. It lives
+ * locked Generate button, "Estimate unavailable", the error a failed
+ * estimate or submit shows, and that a failed submit or workflow wait drops
+ * the price and locks Generate until a new estimate. It lives
  * HERE, not in a starter's own `tests/`, because a starter is copied out
  * verbatim by `npx tiged`: a source-text match shipped there would go red on a
  * developer's first legitimate edit of their own copy.

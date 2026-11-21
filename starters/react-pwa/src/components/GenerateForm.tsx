@@ -91,6 +91,9 @@ export function GenerateForm({ initialBalance }: { initialBalance?: number | nul
       throw new Error('polling timeout');
     } catch (err) {
       if ((err as { name?: string }).name === 'AbortError') return;
+      // The workflow was accepted, so it may still be running and charging.
+      // Drop the quote, as a failed submit does (see `submit`).
+      setQuote(null);
       setError(err instanceof Error ? err.message : 'unknown');
       setPhase('error');
     }
@@ -106,6 +109,11 @@ export function GenerateForm({ initialBalance }: { initialBalance?: number | nul
       setPhase('polling');
       longPollUntilDone(id);
     } catch (err) {
+      // 🔴 A failed submit may still have started a workflow: a timeout or a
+      // 5xx can arrive after the orchestrator accepted it. So drop the quote.
+      // Generate stays locked until a new Preview prices the prompt again, and
+      // one more click cannot pay for a second workflow. Preview stays usable.
+      setQuote(null);
       setError(err instanceof Error ? err.message : 'unknown');
       setPhase('error');
     }
