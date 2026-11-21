@@ -90,7 +90,8 @@ After any meaningful change, run the matching check before declaring done:
 | You touched | Run |
 |---|---|
 | Anything in `src/` | `pnpm typecheck` |
-| `src/lib/estimate.ts`, `src/lib/refresh-tokens.ts`, `GenerateForm.tsx`, the estimate route | `pnpm test` (needs Node ≥ 22.18: it imports the `.ts` module with Node's built-in type stripping, which is newer than the README's minimum for running the app) |
+| `src/lib/estimate.ts`, `src/lib/refresh-tokens.ts`, the estimate route | `pnpm test` (needs Node ≥ 22.18: it imports the `.ts` module with Node's built-in type stripping, which is newer than the README's minimum for running the app) |
+| `src/components/GenerateForm.tsx` | `pnpm test`: `tests/GenerateForm.test.ts` renders the real form in happy-dom (Vitest) with `fetch` stubbed, and checks what it shows and what it sends |
 | `next.config.mjs`, env wiring, security headers | `pnpm build` |
 | `src/lib/session.ts`, `src/proxy.ts`, anything touching the session cookie | `pnpm probe:expired-session` |
 | Auth flow (`src/app/api/auth/**`), session helpers | `pnpm test:e2e -- auth-flow` |
