@@ -975,7 +975,11 @@ async function main() {
     console.error('       It is not a package being introduced; its first publish did not land.');
     console.error('       A first publish through npm OIDC trusted publishing cannot CREATE a');
     console.error('       package that does not exist yet, which is how this happened on release');
-    console.error('       run 35795796225. See RELEASING.md § "Bootstrapping the OIDC trust".');
+    console.error('       run 35795796225. So the remedy is two human steps, in this order:');
+    console.error('         1. publish the first version BY HAND (RELEASING.md § "Emergency manual');
+    console.error('            publish") — that creates the package page;');
+    console.error('         2. then add the trusted publisher on it (RELEASING.md § "Bootstrapping');
+    console.error('            the OIDC trust"). Later releases then publish through this workflow.');
     console.error('');
     for (const f of failedFirstPublish) {
       console.error(`  ${f.pkg.dir}\n    ${f.pkg.name}@${f.pkg.version} -> unknown to npm after ${f.attempts} attempt(s)`);

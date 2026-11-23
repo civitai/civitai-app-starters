@@ -257,7 +257,7 @@ export async function runGuard(dir, script, env = {}) {
   // A test that WANTS one of these sets it explicitly in `env`, which still
   // wins — the strip only removes what the runner injected behind our back.
   const base = { ...process.env };
-  for (const k of ['GITHUB_SHA', 'NPM_REGISTRY', 'PUBLISH_CHECK_FROM_DISK']) delete base[k];
+  for (const k of ['GITHUB_SHA', 'NPM_REGISTRY', 'PUBLISH_CHECK_FROM_DISK', 'PUBLISH_HAS_CHANGESETS']) delete base[k];
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [join(dir, 'scripts', script)], {
       encoding: 'utf8',
