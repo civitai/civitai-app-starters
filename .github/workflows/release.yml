@@ -75,6 +75,7 @@ jobs:
       - run: pnpm -r --filter "./packages/*" build
 
       - name: Create release PR or publish
+        id: changesets
         # PINNED TO A SHA, deliberately. This ref USED to be `@v1`, and `v1` was the
         # only ref in this repo's workflows resolving to a BRANCH rather than a tag —
         # measured 2026-08-20: `refs/heads/v1` exists, `refs/tags/v1` does NOT
@@ -250,4 +251,8 @@ jobs:
         env:
           PUBLISH_CHECK_TRIES: '60'
           PUBLISH_CHECK_DELAY: '10000'
+          # #435: did THIS run attempt a publish? hasChangesets=false is publish
+          # mode, where a package npm has never heard of is a failed first
+          # publish rather than a package being introduced.
+          PUBLISH_HAS_CHANGESETS: ${{ steps.changesets.outputs.hasChangesets }}
         run: pnpm assert:published
