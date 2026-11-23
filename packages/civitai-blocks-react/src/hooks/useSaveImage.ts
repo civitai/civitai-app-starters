@@ -27,26 +27,11 @@ import { useTransportConnection } from './useTransportConnection.js';
  *    host has no `SAVE_IMAGE` handler, so its generic unhandled-request reply
  *    answers at once and the call rejects with `unsupported on this host`.
  *
- *    The host classifies by CONTENT and never trusts `filename` to make a file
- *    acceptable: PNG / WebP / JPEG by magic bytes; otherwise valid UTF-8 with
- *    no NUL byte, saved as JSON when it parses AND `filename` ends `.json`
- *    (case-insensitive) after the host replaces each `?` and `#` with `_` (so
- *    `data.json?v=2` saves as text), else as text/plain. A `.zip` is recognised
- *    by its structure (it must START with a zip local header — not a filename)
- *    and saved as `application/zip` only if the host's validator
- *    (`@civitai/app-sdk/save-zip`) accepts it; a refused zip rejects with the
- *    specific reason (e.g. `zip entry type is not allowed: exe`). The rules are
- *    listed once, in this package's README: `useSaveImage()`, "`{ bytes }`
- *    holding a `.zip`". A binary glTF (`.glb`, starting `glTF` + version 2) or
- *    binary FBX (`.fbx`, starting `Kaydara FBX Binary  \0`) is saved as a 3D
- *    model once the host's structural check passes (a GLB's declared length
- *    must equal the buffer's and its chunks fill it exactly); README:
- *    "`{ bytes }` holding a 3D model". Anything else — a GIF, random binary, a
- *    GLB / FBX that fails that check — is refused with
- *    `file type is not allowed`, and an empty buffer with
- *    `invalid save-image request`. The saved extension is forced from the
- *    classified type, whatever `filename` says. The cap is 50 MiB of raw bytes,
- *    100 MiB for a GLB / FBX, or 256 MiB for a zip.
+ *    The host classifies the bytes by CONTENT (image, JSON / text, zip, binary
+ *    glTF / FBX model), never by `filename`, and forces the saved extension
+ *    from the classified type. The accepted types, their checks, the per-type
+ *    caps and the refusal strings are described once, in this package's README
+ *    under `useSaveImage()`.
  *    The buffer is COPIED across `postMessage`, never transferred, so the block
  *    can keep displaying it.
  */
@@ -67,9 +52,7 @@ export interface UseSaveImage {
    * the transport timeout — the hook never hangs.
    *
    * 🔴 One call is refused BEFORE sending, with the host's own string: a
-   * `bytes` buffer over its cap (50 MiB; 100 MiB when it starts like a GLB /
-   * FBX; 256 MiB when it starts like a zip)
-   * rejects with `file exceeds the maximum save size`, so it is never copied
+   * `bytes` buffer over its type's cap (README, `useSaveImage()`) rejects with `file exceeds the maximum save size`, so it is never copied
    * across `postMessage` just to be refused.
    * Everything else is forwarded and judged by the host, which replies
    * `invalid save-image request` to a request that is not exactly one variant,

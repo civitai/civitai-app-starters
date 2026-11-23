@@ -15,6 +15,11 @@
  * {@link SAVE_ZIP_NEEDS_NEWER_APP_SDK_ERROR}. test/mainEntryNoSaveZip.test.ts
  * checks the BUILT entries: none imports it statically, and only `./testing`
  * reaches it at all.
+ *
+ * The same holds for `@civitai/app-sdk/save-model3d`, the binary glTF / FBX
+ * check: loaded lazily ({@link loadSaveModel3dRules}) on the first save that
+ * starts like a model, refused with {@link SAVE_MODEL3D_NEEDS_NEWER_APP_SDK_ERROR}
+ * on an app-sdk without it, and covered by the same built-entry test.
  */
 
 import {
@@ -24,10 +29,10 @@ import {
   sanitizeSaveBytesFilename,
   saveBytesMaxBytes,
   sniffImageBytes,
+  startsLikeModel3d,
   startsLikeZip,
   type SaveBytesType,
 } from './saveBytes.js';
-import { isValidSaveModel3d, sniffSaveModel3dCandidate } from './saveBytesModel3d.js';
 
 /** A deflated entry the inflate check must inflate (`@civitai/app-sdk/save-zip`'s `SaveZipDeflatedEntry`). */
 export type SaveZipDeflatedEntry = { dataOffset: number; compressedSize: number; size: number; crc: number };
@@ -84,6 +89,50 @@ export async function verifySaveZipInflateSafely(
   }
 }
 
+/** The model types `@civitai/app-sdk/save-model3d` classifies (its `SaveModel3dType`). */
+export type SaveModel3dType = 'model/gltf-binary' | 'model/x-fbx';
+
+/**
+ * The part of `@civitai/app-sdk/save-model3d` the mock host calls, declared structurally for the
+ * same reason as {@link SaveZipRules}; {@link loadSaveModel3dRules} assigns the real module to it.
+ */
+export type SaveModel3dRules = {
+  looksLikeSaveModel3d(view: Uint8Array): SaveModel3dType | null;
+  isValidSaveModel3d(view: Uint8Array, type: SaveModel3dType): boolean;
+};
+
+/**
+ * The mock host's reply to a 3D model save when the installed app-sdk has no `./save-model3d`.
+ * It names no version: the subpath ships in the app-sdk release after 0.92.0.
+ */
+export const SAVE_MODEL3D_NEEDS_NEWER_APP_SDK_ERROR =
+  'createMockHost checks a 3D model with @civitai/app-sdk/save-model3d, which the installed @civitai/app-sdk does not have';
+
+let model3dRules: Promise<SaveModel3dRules> | undefined;
+
+/**
+ * Load the 3D model check once, on the first model save — {@link loadSaveZipRules}'s shape and
+ * reasons (not exported inline, a LITERAL specifier, a failed load not cached).
+ */
+function loadSaveModel3dRules(): Promise<SaveModel3dRules> {
+  model3dRules ??= import('@civitai/app-sdk/save-model3d').then((m): SaveModel3dRules => m);
+  model3dRules.catch(() => {
+    model3dRules = undefined;
+  });
+  return model3dRules;
+}
+export { loadSaveModel3dRules };
+
+/**
+ * Does this request need the 3D model check — a buffer under its cap that is not an image or a
+ * zip and STARTS like a binary glTF / FBX?
+ */
+export function saveBytesNeedsModel3dRules(bytes: ArrayBuffer): boolean {
+  if (bytes.byteLength > saveBytesMaxBytes(bytes)) return false;
+  const view = new Uint8Array(bytes);
+  return !sniffImageBytes(view) && !startsLikeZip(view) && startsLikeModel3d(view);
+}
+
 /**
  * Does this request need the zip validator — a buffer under its cap that is not
  * an image and STARTS like a zip? Everything else is decided without it.
@@ -100,13 +149,14 @@ export function saveBytesNeedsZipRules(bytes: ArrayBuffer): boolean {
  * appended is a PNG); then a buffer that STARTS like a zip must pass the zip
  * validator (`@civitai/app-sdk/save-zip`, the module the host imports) and is
  * refused with the zip's own reason otherwise; then a buffer that STARTS like a
- * binary glTF / FBX must pass the host's structural check (./saveBytesModel3d.ts)
- * and is refused `file type is not allowed` otherwise; then text.
+ * binary glTF / FBX must pass `@civitai/app-sdk/save-model3d` (the module the host
+ * imports) and is refused `file type is not allowed` otherwise; then text.
  */
 export function classifySaveBytesContent(
   bytes: ArrayBuffer,
   filename: string,
   zip: Pick<SaveZipRules, 'validateSaveZip'> | null,
+  model3d: SaveModel3dRules | null = null,
 ):
   | { ok: true; type: Exclude<SaveBytesType, 'application/zip'> }
   | { ok: true; type: 'application/zip'; deflated: SaveZipDeflatedEntry[] }
@@ -120,9 +170,12 @@ export function classifySaveBytesContent(
     if (!v.ok) return v;
     return { ok: true, type: 'application/zip', deflated: v.deflated };
   }
-  const model = sniffSaveModel3dCandidate(view);
-  if (model) {
-    return isValidSaveModel3d(view, model)
+  if (startsLikeModel3d(view)) {
+    if (!model3d) {
+      throw new Error('classifySaveBytesContent: a 3D model candidate needs the model rules (loadSaveModel3dRules)');
+    }
+    const model = model3d.looksLikeSaveModel3d(view);
+    return model && model3d.isValidSaveModel3d(view, model)
       ? { ok: true, type: model }
       : { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR };
   }
@@ -162,11 +215,13 @@ function classifySaveBytesText(view: Uint8Array, filename: string): 'application
  * extension — the host's `prepareSaveBytes`, in its order. Every refusal is the
  * reply's error string. An accepted zip also carries the deflated entries the
  * host inflate-checks before it downloads (`verifySaveZipInflate`). `zip` may be
- * `null` only when {@link saveBytesNeedsZipRules} is false.
+ * `null` only when {@link saveBytesNeedsZipRules} is false, and `model3d` only
+ * when {@link saveBytesNeedsModel3dRules} is false.
  */
 export function prepareSaveBytes(
   req: { bytes: ArrayBuffer; filename?: string },
   zip: Pick<SaveZipRules, 'validateSaveZip'> | null,
+  model3d: SaveModel3dRules | null = null,
 ):
   | { ok: true; type: SaveBytesType; filename: string; deflated?: SaveZipDeflatedEntry[] }
   | { ok: false; error: string } {
@@ -174,7 +229,7 @@ export function prepareSaveBytes(
     return { ok: false, error: SAVE_BYTES_TOO_LARGE_ERROR };
   }
   const filename = sanitizeSaveBytesFilename(req.filename);
-  const c = classifySaveBytesContent(req.bytes, filename, zip);
+  const c = classifySaveBytesContent(req.bytes, filename, zip, model3d);
   if (!c.ok) return c;
   const name = forceSaveBytesExtension(filename, c.type);
   if (c.type === 'application/zip') return { ok: true, type: c.type, filename: name, deflated: c.deflated };

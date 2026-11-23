@@ -100,9 +100,12 @@ import {
 import { stepInputRefusal } from './mockHostStepInput.js';
 import { SAVE_IMAGE_INVALID_REQUEST_ERROR, saveImageRequestKind } from './saveBytes.js';
 import {
+  SAVE_MODEL3D_NEEDS_NEWER_APP_SDK_ERROR,
   SAVE_ZIP_NEEDS_NEWER_APP_SDK_ERROR,
+  loadSaveModel3dRules,
   loadSaveZipRules,
   prepareSaveBytes,
+  saveBytesNeedsModel3dRules,
   saveBytesNeedsZipRules,
   verifySaveZipInflateSafely,
 } from './saveBytesPrepare.js';
@@ -5537,6 +5540,20 @@ export function createMockHost(options: MockHostOptions = {}): MockHost {
               const filename = typeof p.filename === 'string' ? p.filename : undefined;
               // The host's `prepareSaveBytes` (./saveBytesPrepare.ts): size cap, clean
               // the name, classify on the CLEANED name, force the extension.
+              if (saveBytesNeedsModel3dRules(bytes)) {
+                // A binary glTF / FBX candidate: the check (@civitai/app-sdk/save-model3d, the
+                // module the host runs) is loaded on demand, like the zip validator below.
+                void loadSaveModel3dRules().then(
+                  (model3d) => {
+                    const prepared = prepareSaveBytes({ bytes, filename }, null, model3d);
+                    if (!prepared.ok) return saveReply(prepared);
+                    options.onSaveBytes?.({ bytes, mimeType: prepared.type, filename: prepared.filename });
+                    saveReply({ ok: true });
+                  },
+                  () => saveReply({ ok: false, error: SAVE_MODEL3D_NEEDS_NEWER_APP_SDK_ERROR }),
+                );
+                return;
+              }
               if (!saveBytesNeedsZipRules(bytes)) {
                 const prepared = prepareSaveBytes({ bytes, filename }, null);
                 if (!prepared.ok) return saveReply(prepared);

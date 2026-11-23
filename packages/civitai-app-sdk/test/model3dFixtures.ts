@@ -1,9 +1,8 @@
 /**
- * Spec-shaped binary glTF and FBX buffers for the `SAVE_IMAGE` `bytes` parity rows: a copy of the
- * host's own test builders (civitai/civitai `src/components/AppBlocks/__tests__/model3dFixtures.ts`),
- * so a row here is built exactly as the host's case was. The real, tool-written files beside them
- * are `fixtures/tri.glb` and `fixtures/tri.fbx` (assimp 6 export of a one-triangle OBJ), the same
- * files the host's tests read.
+ * Minimal, spec-shaped binary glTF and FBX buffers for the `./save-model3d` tests, built here so a
+ * test can size them (the cap cases) and break one field at a time (the spoof cases). The real,
+ * tool-written files beside them are `fixtures/tri.glb` and `fixtures/tri.fbx` (an assimp 6 export
+ * of a one-triangle OBJ). `@civitai/blocks-react`'s mock-host tests import these builders too.
  */
 
 const enc = new TextEncoder();

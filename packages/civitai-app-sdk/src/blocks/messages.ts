@@ -1829,7 +1829,7 @@ export type BlockToParentMessage =
   //     structured-cloned across postMessage — never transferred). PAGE APPS
   //     ONLY. The host classifies by CONTENT: PNG / WebP / JPEG by magic
   //     bytes; a zip that passes `@civitai/app-sdk/save-zip`, or a binary glTF
-  //     (.glb) / binary FBX (.fbx) that passes the host's structural check, by
+  //     (.glb) / binary FBX (.fbx) that passes `@civitai/app-sdk/save-model3d`, by
   //     structure; otherwise valid UTF-8 with no NUL byte, which becomes JSON when
   //     it parses AND `filename` ends `.json` (case-insensitive) once the
   //     host has replaced each `?` and `#` with `_`, else

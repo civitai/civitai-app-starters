@@ -7,7 +7,7 @@ import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 import type { MockHostOptions } from '../src/testing.js';
 import { zipFixture } from './zipFixtures.js';
-import { buildFbx, buildGlb, concatBytes } from './model3dFixtures.js';
+import { buildFbx, buildGlb, concatBytes } from '../../civitai-app-sdk/test/model3dFixtures.js';
 
 /**
  * `createMockHost`'s SAVE_IMAGE handler, driven through the REAL hook and

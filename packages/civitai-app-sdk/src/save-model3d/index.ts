@@ -1,30 +1,44 @@
 /**
- * The 3D model half of the mock host's `bytes` rules: binary glTF (`.glb`) and binary FBX (`.fbx`).
+ * `@civitai/app-sdk/save-model3d` — the App Blocks `SAVE_IMAGE { bytes }` 3D model check: binary
+ * glTF (`.glb`) and binary FBX (`.fbx`).
  *
- * 🔴 A port of the host's `src/components/AppBlocks/saveBytesModel3d.ts` (civitai/civitai), the same
- * code but for two non-null assertions this package's `noUncheckedIndexedAccess` needs. Change it
- * only together with the host, and keep the host's own cases in
- * test/saveBytesParity.test.ts green. No imports, so the main entry (which needs
- * {@link sniffSaveModel3dCandidate} for the cap) stays loadable on every app-sdk the peer floor admits.
+ * 🔴 THE ONE COPY, like `./save-zip`. The civitai.com host and `@civitai/blocks-react`'s
+ * `createMockHost` both import this module, so the mock accepts and refuses exactly the models
+ * production does. Change the rules here, release, and bump the host's `@civitai/app-sdk`.
  *
- * Two steps, the host's split:
- *   1. {@link sniffSaveModel3dCandidate} — does the buffer START like one of these (the first 8 /
- *      21 bytes)? It picks the per-file cap before anything is decoded. Both prefixes hold a NUL
- *      byte, so no text payload is ever a candidate, and a candidate that fails step 2 is refused.
- *   2. {@link isValidSaveModel3d} — the strict structural check: a GLB's declared length equals the
- *      buffer and its JSON (+ optional BIN) chunks tile it exactly; an FBX's top-level node records
- *      reach the null record with no more than a footer's worth of bytes after it.
+ * glTF-JSON (`.gltf`), ASCII FBX and OBJ are NOT model types here: they are text, so the host saves
+ * them as `.txt` (and a `.gltf` usually references sidecar files a single save could not carry).
+ *
+ * Two steps, the same split as the zip rules:
+ *   1. {@link looksLikeSaveModel3d} — does the buffer START like one of these? Decided on the first
+ *      8 (GLB) or 21 (FBX) bytes, so a caller can pick the per-file cap
+ *      ({@link SAVE_MODEL3D_MAX_BYTES}) before decoding anything. Both prefixes contain a NUL byte,
+ *      so no text payload can ever be a candidate: refusing a candidate that fails step 2 takes
+ *      nothing away from a text classifier that refuses every NUL-bearing buffer.
+ *   2. {@link isValidSaveModel3d} — the strict structural check. A GLB must account for EVERY byte
+ *      of the buffer in its declared chunks (nothing can ride along after it); an FBX must have a
+ *      well-formed run of top-level node records ending in the null record, with no more than a
+ *      footer's worth of bytes after it.
+ *
+ * Dependency-free, browser and Node.
  */
 
-/** The two 3D model types, each with the one extension it saves under. */
-export const SAVE_BYTES_MODEL_3D_EXTENSION = {
+/** The two 3D model types, each with the one extension (no dot) it saves under. */
+export const SAVE_MODEL3D_EXTENSION = {
   // IANA-registered.
   'model/gltf-binary': 'glb',
   // FBX has no registered media type; this names it for the Blob without claiming a registration.
   'model/x-fbx': 'fbx',
 } as const;
 
-export type SaveBytesModel3dType = keyof typeof SAVE_BYTES_MODEL_3D_EXTENSION;
+export type SaveModel3dType = keyof typeof SAVE_MODEL3D_EXTENSION;
+
+/**
+ * The per-file cap on a buffer that starts like a model: 100 MiB. Generated meshes with embedded
+ * textures outgrow the 50 MiB cap of the other bytes types; the host also checks a model against
+ * its 100 MiB window budget, so a model at the cap is the only save that window admits.
+ */
+export const SAVE_MODEL3D_MAX_BYTES = 100 * 1024 * 1024;
 
 /** `glTF` + container version 2 (little-endian u32). */
 const GLB_PREFIX = [0x67, 0x6c, 0x54, 0x46, 0x02, 0x00, 0x00, 0x00] as const;
@@ -40,7 +54,11 @@ const FBX_MAGIC = [
 ] as const;
 /** Magic, then `0x1A 0x00`, then the u32 version. */
 const FBX_HEADER_BYTES = 27;
-/** Binary FBX versions in use: 6100 (FBX 2006) through 7700 (FBX 2020). */
+/**
+ * The version range accepted: from 6100 (FBX 2006, the oldest binary writers emit) to 7999. The
+ * newest version in use is 7700 (FBX 2020); the bound admits any later 7.x so a newer writer of the
+ * same record format is not refused. An 8.x would be a new format and is refused.
+ */
 const FBX_MIN_VERSION = 6100;
 const FBX_MAX_VERSION = 7999;
 /** From 7500 a node record's three leading fields are u64 instead of u32. */
@@ -50,7 +68,7 @@ const FBX_WIDE_RECORD_VERSION = 7500;
  * plus up to 15 of alignment padding; 256 leaves room for a writer that differs, and still means
  * no second file of any size can follow the node data.
  */
-export const FBX_MAX_TAIL_BYTES = 256;
+const FBX_MAX_TAIL_BYTES = 256;
 
 function startsWith(u8: Uint8Array, sig: readonly number[]): boolean {
   if (u8.length < sig.length) return false;
@@ -58,24 +76,30 @@ function startsWith(u8: Uint8Array, sig: readonly number[]): boolean {
   return true;
 }
 
-/** Which 3D type the buffer STARTS like, or `null`. Not a validation: see {@link isValidSaveModel3d}. */
-export function sniffSaveModel3dCandidate(u8: Uint8Array): SaveBytesModel3dType | null {
-  if (startsWith(u8, GLB_PREFIX)) return 'model/gltf-binary';
-  if (startsWith(u8, FBX_MAGIC)) return 'model/x-fbx';
+/**
+ * Which model type the buffer STARTS like (`glTF` + version 2, or the binary FBX magic), or `null`.
+ * Reads at most the first 21 bytes. Not a validation: see {@link isValidSaveModel3d}.
+ */
+export function looksLikeSaveModel3d(view: Uint8Array): SaveModel3dType | null {
+  if (startsWith(view, GLB_PREFIX)) return 'model/gltf-binary';
+  if (startsWith(view, FBX_MAGIC)) return 'model/x-fbx';
   return null;
 }
 
-/** Strict structural check of a candidate of `type`. */
-export function isValidSaveModel3d(u8: Uint8Array, type: SaveBytesModel3dType): boolean {
-  return type === 'model/gltf-binary' ? isValidGlb(u8) : isValidFbx(u8);
+/** Strict structural check of a buffer that {@link looksLikeSaveModel3d} called `type`. */
+export function isValidSaveModel3d(view: Uint8Array, type: SaveModel3dType): boolean {
+  return type === 'model/gltf-binary' ? isValidGlb(view) : isValidFbx(view);
 }
 
 /**
- * glTF 2.0 binary container: a 12-byte header whose declared length equals the buffer's, then a
- * JSON chunk, then at most one BIN chunk, and nothing else. Every length is a multiple of 4 (the
- * spec's alignment rule), every chunk lies inside the declared length, and the chunks end exactly
- * at it. The JSON chunk must be UTF-8 that parses to an object carrying `asset.version`, the one
- * property glTF requires. Unknown chunk types are refused rather than skipped.
+ * glTF 2.0 binary container (spec §4.4): a 12-byte header whose declared length equals the
+ * buffer's, then chunks. The JSON chunk comes first and only first; a BIN chunk, if any, only
+ * second; chunks of any other type are allowed after the JSON chunk, because the spec says
+ * "Client implementations MUST ignore chunks with unknown types to enable glTF extensions to
+ * reference additional chunks with new types following the first two chunks." Every chunk length
+ * is a multiple of 4 (the spec's alignment rule), every chunk lies inside the declared length, and
+ * the chunks end exactly at it. The JSON chunk must be UTF-8 that parses to an object carrying
+ * `asset.version`, the one property glTF requires.
  */
 function isValidGlb(u8: Uint8Array): boolean {
   if (u8.length < GLB_HEADER_BYTES + GLB_CHUNK_HEADER_BYTES) return false;
@@ -87,7 +111,7 @@ function isValidGlb(u8: Uint8Array): boolean {
   let offset = GLB_HEADER_BYTES;
   let index = 0;
   while (offset < length) {
-    if (index > 1 || length - offset < GLB_CHUNK_HEADER_BYTES) return false;
+    if (length - offset < GLB_CHUNK_HEADER_BYTES) return false;
     const chunkLength = view.getUint32(offset, true);
     const chunkType = view.getUint32(offset + 4, true);
     const dataStart = offset + GLB_CHUNK_HEADER_BYTES;
@@ -95,9 +119,11 @@ function isValidGlb(u8: Uint8Array): boolean {
     if (index === 0) {
       if (chunkType !== GLB_CHUNK_JSON || chunkLength === 0) return false;
       if (!isGltfJson(u8.subarray(dataStart, dataStart + chunkLength))) return false;
-    } else if (chunkType !== GLB_CHUNK_BIN) {
+    } else if (chunkType === GLB_CHUNK_JSON || (chunkType === GLB_CHUNK_BIN && index !== 1)) {
+      // A second JSON chunk, or a BIN chunk anywhere but second: out of the spec's order.
       return false;
     }
+    // Every chunk header is 8 bytes, so each pass moves forward and the walk terminates.
     offset = dataStart + chunkLength;
     index += 1;
   }
@@ -118,12 +144,12 @@ function isGltfJson(bytes: Uint8Array): boolean {
 }
 
 /**
- * Binary FBX: the magic, `0x1A 0x00`, a version in the range writers use, then a walk of the
- * TOP-LEVEL node records. Each record's end offset must lie at or past the end of its own header
- * and name (so the walk moves strictly forward) and stay inside the buffer, its name must be printable ASCII, and the walk must reach
- * the all-zero null record with at least one node before it. At most {@link FBX_MAX_TAIL_BYTES}
- * may follow the null record (the footer). Nested records are not walked: they lie inside a
- * top-level record's span, which the walk has already bounded.
+ * Binary FBX: the magic, `0x1A 0x00`, a version from 6100 to 7999, then a walk of the TOP-LEVEL
+ * node records. Each record's end offset must lie at or past the end of its own header and name
+ * (so the walk moves strictly forward) and stay inside the buffer, its name must be printable
+ * ASCII, and the walk must reach the all-zero null record with at least one node before it. At most
+ * {@link FBX_MAX_TAIL_BYTES} may follow the null record (the footer). Nested records are not
+ * walked: they lie inside a top-level record's span, which the walk has already bounded.
  */
 function isValidFbx(u8: Uint8Array): boolean {
   if (u8.length < FBX_HEADER_BYTES) return false;

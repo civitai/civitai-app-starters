@@ -56,6 +56,25 @@ await check('@civitai/app-sdk/save-zip resolves and its validator runs', async (
   assert.deepEqual(mod.validateSaveZip(empty.buffer), { ok: false, error: mod.SAVE_ZIP_EMPTY_ERROR });
 });
 
+// The 3D model check has the same two consumers, imported by specifier. Runs it once each way: the
+// smallest valid GLB is accepted, and the same bytes one byte longer are refused.
+await check('@civitai/app-sdk/save-model3d resolves and its check runs', async () => {
+  const mod = await import('@civitai/app-sdk/save-model3d');
+  const json = new TextEncoder().encode('{"asset":{"version":"2.0"}}\u0020');
+  const glb = new Uint8Array(20 + json.length);
+  const v = new DataView(glb.buffer);
+  glb.set([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0]);
+  v.setUint32(8, glb.length, true);
+  v.setUint32(12, json.length, true);
+  v.setUint32(16, 0x4e4f534a, true);
+  glb.set(json, 20);
+  assert.equal(mod.looksLikeSaveModel3d(glb), 'model/gltf-binary');
+  assert.equal(mod.isValidSaveModel3d(glb, 'model/gltf-binary'), true);
+  const longer = new Uint8Array(glb.length + 4);
+  longer.set(glb);
+  assert.equal(mod.isValidSaveModel3d(longer, 'model/gltf-binary'), false);
+});
+
 await check('the vendored schema is reachable from dist/ (defineBlock actually runs)', async () => {
   const { defineBlock } = await import('@civitai/app-sdk/manifest');
   const manifest = {

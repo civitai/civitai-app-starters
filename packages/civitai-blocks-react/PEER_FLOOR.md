@@ -16,6 +16,21 @@ Declared today: `">=0.57.0 <1.0.0"`.
 
 ---
 
+## ✅ NOT RAISED, 2026-11-23 — `createMockHost`'s 3D model check loads `@civitai/app-sdk/save-model3d` LAZILY (#875)
+
+The binary glTF / FBX check moved into the new app-sdk subpath `./save-model3d`
+(first in the app-sdk release after 0.92.0) so the host and `createMockHost`
+share one copy. It follows the `./save-zip` shape below exactly: the main entry
+restates only the prefix test (`startsLikeModel3d`) and the 100 MiB cap, pinned
+equal to app-sdk's by `test/saveBytesModel3dParity.test.ts`; `./testing` loads the
+check with a dynamic import on the first model save and, on an older app-sdk,
+refuses only that save (`SAVE_MODEL3D_NEEDS_NEWER_APP_SDK_ERROR`,
+`test/mockHostSaveModel3dOldSdk.test.tsx`); `test/mainEntryNoSaveZip.test.ts`
+holds both subpaths to the same built-entry rule. Nothing imported at load time
+moved, so the floor stays `>=0.57.0`.
+
+---
+
 ## ✅ NOT RAISED, 2026-11-10 — `createMockHost`'s zip validation loads `@civitai/app-sdk/save-zip` LAZILY (#815)
 
 civitai-app-starters#815 moved the `SAVE_IMAGE` zip validator into the new
