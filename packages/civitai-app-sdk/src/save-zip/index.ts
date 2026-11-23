@@ -60,7 +60,11 @@ export const SAVE_ZIP_LIMITS = {
   ratioFloorBytes: 1024 * 1024,
 } as const;
 
-/** Entry extensions a zip may contain (lowercase, after the last `.`). Directories need none. */
+/**
+ * Entry extensions a zip may contain (lowercase, after the last `.`). Directories need none. `glb`
+ * (binary glTF) and `fbx` are 3D model files, so a block can bundle a generated model with its
+ * renders; like every entry, only the name is checked, not the content.
+ */
 export const SAVE_ZIP_ALLOWED_EXTENSIONS: ReadonlySet<string> = new Set([
   'png',
   'jpg',
@@ -69,6 +73,8 @@ export const SAVE_ZIP_ALLOWED_EXTENSIONS: ReadonlySet<string> = new Set([
   'txt',
   'json',
   'csv',
+  'glb',
+  'fbx',
 ]);
 
 export const SAVE_ZIP_NO_EOCD_ERROR =

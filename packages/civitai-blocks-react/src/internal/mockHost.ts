@@ -1660,7 +1660,8 @@ export interface MockHostOptions {
    * Live-tunable via {@link MockHost.setScenario}; `undefined` clears it.
    *
    * The `bytes` variant is classified exactly as the host's contract says
-   * (civitai/civitai-app-starters#583): PNG / WebP / JPEG by magic bytes, else
+   * (civitai/civitai-app-starters#583): PNG / WebP / JPEG by magic bytes, then a
+   * zip or a binary glTF / FBX by structure (see `useSaveImage`), else
    * UTF-8 text with no NUL (JSON when it parses and the CLEANED `filename` —
    * `?`/`#` replaced with `_`, path dropped — ends `.json`, case-insensitive),
    * else `file type is not allowed`; an empty buffer,
@@ -1677,7 +1678,7 @@ export interface MockHostOptions {
   /**
    * Called with each `bytes` save the mock ACCEPTS — the classified `mimeType`
    * (one of `image/png`, `image/webp`, `image/jpeg`, `application/json`,
-   * `text/plain`, `application/zip`), the download `filename` exactly as the host cleans it (the
+   * `text/plain`, `application/zip`, `model/gltf-binary`, `model/x-fbx`), the download `filename` exactly as the host cleans it (the
    * same character rules, then the extension forced from that type), and the
    * `bytes` themselves.
    * The mock cannot trigger a browser download, so this is the observable a

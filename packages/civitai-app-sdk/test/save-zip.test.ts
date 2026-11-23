@@ -386,9 +386,25 @@ describe('validateSaveZip — real zips written by jszip', () => {
     ['photo.png.exe', 'exe'],
     ['run.sh', 'sh'],
     ['README', ''],
+    // Only BINARY glTF and FBX are model types: the glTF-JSON form, OBJ, and a glTF's sidecar buffer are not.
+    ['model.gltf', 'gltf'],
+    ['model.obj', 'obj'],
+    ['model.bin', 'bin'],
+    ['mesh.glb.exe', 'exe'],
   ])('refuses a %s entry (allowlist): %s', async (name, ext) => {
     const zip = await jszip({ 'ok.png': new Uint8Array(PNG_HEAD), [name]: 'x' });
     expect(refusal(zip)).toBe(saveZipEntryTypeError(ext));
+  });
+
+  it('accepts .glb and .fbx model entries (any case) beside renders, stored and deflated', async () => {
+    const models = {
+      'turnaround/model.glb': new Uint8Array([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0, 9, 9, 9, 9]),
+      'turnaround/rig.FBX': enc.encode('Kaydara FBX Binary  \0'),
+      'turnaround/front.png': new Uint8Array([...PNG_HEAD, 1, 2, 3]),
+    };
+    for (const compression of ['STORE', 'DEFLATE'] as const) {
+      expect(refusal(await jszip(models, { compression }))).toBe('ok');
+    }
   });
 });
 

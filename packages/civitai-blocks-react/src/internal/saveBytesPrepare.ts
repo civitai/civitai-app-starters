@@ -27,6 +27,7 @@ import {
   startsLikeZip,
   type SaveBytesType,
 } from './saveBytes.js';
+import { isValidSaveModel3d, sniffSaveModel3dCandidate } from './saveBytesModel3d.js';
 
 /** A deflated entry the inflate check must inflate (`@civitai/app-sdk/save-zip`'s `SaveZipDeflatedEntry`). */
 export type SaveZipDeflatedEntry = { dataOffset: number; compressedSize: number; size: number; crc: number };
@@ -98,7 +99,9 @@ export function saveBytesNeedsZipRules(bytes: ArrayBuffer): boolean {
  * `classifySaveBytesContent`: an image by magic bytes first (so a PNG with a zip
  * appended is a PNG); then a buffer that STARTS like a zip must pass the zip
  * validator (`@civitai/app-sdk/save-zip`, the module the host imports) and is
- * refused with the zip's own reason otherwise; then text.
+ * refused with the zip's own reason otherwise; then a buffer that STARTS like a
+ * binary glTF / FBX must pass the host's structural check (./saveBytesModel3d.ts)
+ * and is refused `file type is not allowed` otherwise; then text.
  */
 export function classifySaveBytesContent(
   bytes: ArrayBuffer,
@@ -116,6 +119,12 @@ export function classifySaveBytesContent(
     const v = zip.validateSaveZip(bytes);
     if (!v.ok) return v;
     return { ok: true, type: 'application/zip', deflated: v.deflated };
+  }
+  const model = sniffSaveModel3dCandidate(view);
+  if (model) {
+    return isValidSaveModel3d(view, model)
+      ? { ok: true, type: model }
+      : { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR };
   }
   const text = classifySaveBytesText(view, filename);
   return text ? { ok: true, type: text } : { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR };

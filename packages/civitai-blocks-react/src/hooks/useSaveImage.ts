@@ -37,11 +37,16 @@ import { useTransportConnection } from './useTransportConnection.js';
  *    (`@civitai/app-sdk/save-zip`) accepts it; a refused zip rejects with the
  *    specific reason (e.g. `zip entry type is not allowed: exe`). The rules are
  *    listed once, in this package's README: `useSaveImage()`, "`{ bytes }`
- *    holding a `.zip`". Anything else — a GIF, random binary — is refused with
+ *    holding a `.zip`". A binary glTF (`.glb`, starting `glTF` + version 2) or
+ *    binary FBX (`.fbx`, starting `Kaydara FBX Binary  \0`) is saved as a 3D
+ *    model once the host's structural check passes (a GLB's declared length
+ *    must equal the buffer's and its chunks fill it exactly); README:
+ *    "`{ bytes }` holding a 3D model". Anything else — a GIF, random binary, a
+ *    GLB / FBX that fails that check — is refused with
  *    `file type is not allowed`, and an empty buffer with
  *    `invalid save-image request`. The saved extension is forced from the
  *    classified type, whatever `filename` says. The cap is 50 MiB of raw bytes,
- *    or 256 MiB for a zip.
+ *    100 MiB for a GLB / FBX, or 256 MiB for a zip.
  *    The buffer is COPIED across `postMessage`, never transferred, so the block
  *    can keep displaying it.
  */
@@ -62,7 +67,8 @@ export interface UseSaveImage {
    * the transport timeout — the hook never hangs.
    *
    * 🔴 One call is refused BEFORE sending, with the host's own string: a
-   * `bytes` buffer over its cap (50 MiB, or 256 MiB when it starts like a zip)
+   * `bytes` buffer over its cap (50 MiB; 100 MiB when it starts like a GLB /
+   * FBX; 256 MiB when it starts like a zip)
    * rejects with `file exceeds the maximum save size`, so it is never copied
    * across `postMessage` just to be refused.
    * Everything else is forwarded and judged by the host, which replies
@@ -119,6 +125,8 @@ function toWirePayload(input: SaveImageInput): SaveImageWirePayload {
  * await saveImage({ imageId: cell.imageId });
  * // a file produced in the tab (classified by content host-side; page apps only):
  * await saveImage({ bytes: healedPng, filename: 'healed.png' });
+ * // a 3D model generated in the tab (binary glTF; saved as turnaround.glb):
+ * await saveImage({ bytes: glbBuffer, filename: 'turnaround.glb' });
  * // a dataset zip built in the tab (validated host-side; saved as dataset.zip):
  * // DEFLATE, or stored without streamFiles (README: "Build the zip with DEFLATE"):
  * await saveImage({ bytes: await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' }), filename: 'dataset.zip' });

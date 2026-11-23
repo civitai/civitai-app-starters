@@ -8,6 +8,10 @@ import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 import type { MockHostOptions } from '../src/testing.js';
 import { zipFixture } from './zipFixtures.js';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { ab as abOf, buildFbx, buildGlb, concatBytes, FBX_MAGIC, withU32 } from './model3dFixtures.js';
 
 /**
  * PARITY between the mock host's `bytes` rules and the production host's
@@ -17,6 +21,9 @@ import { zipFixture } from './zipFixtures.js';
  * `forceSaveBytesExtension`, `resolveSaveImageRequest`) or a name the round-1
  * audit named. The expected values were checked against the HOST's code run
  * directly, not derived from this package's port.
+ *
+ * The 3D model rows (`.glb` / `.fbx`) were run through the host's `prepareSaveBytes` at the head of
+ * the civitai/civitai branch that adds them (1516705974), with the same builders and fixture files.
  *
  * 🔴 What this cannot prove: that the host has not changed since. It pins the
  * mock to the host as of that head; a later host change is invisible here.
@@ -58,6 +65,21 @@ const PNG_WITH_ZIP = () => {
   out.set(zip, PNG.byteLength);
   return out.buffer as ArrayBuffer;
 };
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const fixture = (name: string) => () => abOf(new Uint8Array(readFileSync(path.join(here, 'fixtures', name))));
+const GLB_PLUS_PNG = () => abOf(concatBytes(buildGlb({ binBytes: 8 }), new Uint8Array(PNG)));
+const GLB_LONGER = () => {
+  const glb = buildGlb({ binBytes: 8 });
+  return abOf(withU32(glb, 8, glb.length + 4));
+};
+const GLB_THIRD_CHUNK_TYPE = () => {
+  const glb = buildGlb({ binBytes: 8 });
+  return abOf(withU32(glb, 20 + new DataView(glb.buffer).getUint32(12, true) + 4, 0x58595a57));
+};
+const PNG_PLUS_GLB = () => abOf(concatBytes(new Uint8Array(PNG), buildGlb({ binBytes: 16 })));
+const FBX_LONG_TAIL = () => abOf(buildFbx({ tail: new Uint8Array(672) }));
+const notAllowed = { ok: false as const, error: 'file type is not allowed' };
 
 // prettier-ignore
 const ROWS: Row[] = [
@@ -113,6 +135,21 @@ const ROWS: Row[] = [
   { name: 'empty zip', bytes: () => zipFixture([]), filename: 'a.zip', expected: { ok: false, error: 'zip has no entries' } },
   { name: 'PNG with a zip appended is a PNG', bytes: PNG_WITH_ZIP, filename: 'x.zip', expected: ok('image/png', 'x.png') },
   { name: 'text named .zip is text', bytes: () => textAb('not a zip'), filename: 'd.zip', expected: ok('text/plain', 'd.txt') },
+  // 3D models — cases from the host's saveImageDownload.test.ts ('3D models (.glb / .fbx)')
+  { name: 'real GLB named .exe saves .glb', bytes: fixture('tri.glb'), filename: 'mesh.exe', expected: ok('model/gltf-binary', 'mesh.glb') },
+  { name: 'real FBX with traversal saves .fbx', bytes: fixture('tri.fbx'), filename: 'a/../rig', expected: ok('model/x-fbx', 'rig.fbx') },
+  { name: 'GLB without a BIN chunk', bytes: () => abOf(buildGlb()), filename: 'm.glb', expected: ok('model/gltf-binary', 'm.glb') },
+  { name: 'FBX 7400 (32-bit records)', bytes: () => abOf(buildFbx({ version: 7400, bodyBytes: 12 })), filename: 'rig.png', expected: ok('model/x-fbx', 'rig.fbx') },
+  { name: 'GLB with a PNG appended is refused', bytes: GLB_PLUS_PNG, filename: 'm.glb', expected: notAllowed },
+  { name: 'GLB declaring more than it holds is refused', bytes: GLB_LONGER, filename: 'm.glb', expected: notAllowed },
+  { name: 'GLB with an unknown second chunk is refused', bytes: GLB_THIRD_CHUNK_TYPE, filename: 'm.glb', expected: notAllowed },
+  { name: 'GLB whose JSON is not glTF is refused', bytes: () => abOf(buildGlb({ json: { scenes: [] } })), filename: 'm.glb', expected: notAllowed },
+  { name: 'glTF container version 1 is refused', bytes: () => abOf(withU32(buildGlb(), 4, 1)), filename: 'm.glb', expected: notAllowed },
+  { name: 'FBX header truncated is refused', bytes: () => abOf(concatBytes(FBX_MAGIC, new Uint8Array(8))), filename: 'x.fbx', expected: notAllowed },
+  { name: 'FBX with a long tail is refused', bytes: FBX_LONG_TAIL, filename: 'x.fbx', expected: notAllowed },
+  { name: 'PNG named .glb is a PNG', bytes: () => PNG, filename: 'turnaround.glb', expected: ok('image/png', 'turnaround.png') },
+  { name: 'PNG + GLB polyglot is a PNG', bytes: PNG_PLUS_GLB, filename: 'x.glb', expected: ok('image/png', 'x.png') },
+  { name: 'text starting glTF is text', bytes: () => textAb('glTF is a format'), filename: 'x.glb', expected: ok('text/plain', 'x.txt') },
 ];
 
 describe('saveBytes parity with the host (prepareSaveBytes)', () => {
