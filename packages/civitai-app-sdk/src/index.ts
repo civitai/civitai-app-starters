@@ -17,7 +17,7 @@
  * accident rather than by decision. `./oauth` now re-exports `types.ts`, which
  * fixes it additively: the root's surface did not change.
  *
- * ## The six subpaths deliberately NOT in the root, and why
+ * ## The seven subpaths deliberately NOT in the root, and why
  *
  * "Reachable two ways" is a cost, but an absent export is a worse one, so the
  * bar for staying out is a concrete harm to the importer. Each of these clears
@@ -48,9 +48,11 @@
  *  - **`./save-zip`** — the host's `SAVE_IMAGE` zip validator, the one copy the
  *    civitai.com host and `@civitai/blocks-react`'s `createMockHost` share. An
  *    OAuth app never saves a zip through a block host.
+ *  - **`./save-model3d`** — the host's `SAVE_IMAGE` binary glTF / FBX check,
+ *    shared the same way and for the same reason.
  *
  * The ledger in `test/export-surface.test.ts` carries one of these reasons per
- * `exports` key and fails when the key set GROWS or SHRINKS — so a seventh
+ * `exports` key and fails when the key set GROWS or SHRINKS — so an eighth
  * subpath cannot arrive without a stated reason to exist, and a deleted one
  * cannot leave a stale reason behind.
  *

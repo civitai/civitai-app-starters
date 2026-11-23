@@ -1828,13 +1828,15 @@ export type BlockToParentMessage =
   //   • `bytes` — a file the block PRODUCED IN ITS OWN TAB (an `ArrayBuffer`,
   //     structured-cloned across postMessage — never transferred). PAGE APPS
   //     ONLY. The host classifies by CONTENT: PNG / WebP / JPEG by magic
-  //     bytes; otherwise valid UTF-8 with no NUL byte, which becomes JSON when
+  //     bytes; a zip that passes `@civitai/app-sdk/save-zip`, or a binary glTF
+  //     (.glb) / binary FBX (.fbx) that passes `@civitai/app-sdk/save-model3d`, by
+  //     structure; otherwise valid UTF-8 with no NUL byte, which becomes JSON when
   //     it parses AND `filename` ends `.json` (case-insensitive) once the
   //     host has replaced each `?` and `#` with `_`, else
   //     text/plain; anything else is refused (`file type is not allowed`). An
   //     empty buffer is `invalid save-image request`. The saved extension is
   //     forced from the classified type. The save-bytes cap (not App Storage)
-  //     is 50 MiB of raw bytes. app-storage-quota-guard: allow
+  //     is 50 MiB of raw bytes (a GLB / FBX 100 MiB, a zip 256 MiB). app-storage-quota-guard: allow
   //     The host enforces it and the `useSaveImage` hook pre-checks it before
   //     sending; over it → `file exceeds the maximum save size`. A host that predates this
   //     variant replies `invalid save-image request`.

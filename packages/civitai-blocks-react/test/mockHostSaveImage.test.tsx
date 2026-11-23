@@ -7,6 +7,7 @@ import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 import type { MockHostOptions } from '../src/testing.js';
 import { zipFixture } from './zipFixtures.js';
+import { buildFbx, buildGlb, concatBytes } from '../../civitai-app-sdk/test/model3dFixtures.js';
 
 /**
  * `createMockHost`'s SAVE_IMAGE handler, driven through the REAL hook and
@@ -98,6 +99,31 @@ describe('createMockHost — SAVE_IMAGE bytes variant', () => {
     expect(saved).toHaveLength(1);
     expect(saved[0]!.mimeType).toBe('application/zip');
     expect(saved[0]!.filename).toBe('dataset.zip');
+  });
+
+  it.each([
+    ['GLB', () => buildGlb({ binBytes: 36 }), 'model/gltf-binary', 'turnaround.glb'],
+    ['FBX', () => buildFbx(), 'model/x-fbx', 'turnaround.fbx'],
+  ] as const)('saves a binary %s model under its own extension, whatever the filename says', async (_n, build, mime, name) => {
+    const err = await save({ bytes: buf(build()), filename: 'turnaround.png' });
+    expect(err).toBeNull();
+    expect(saved).toHaveLength(1);
+    expect(saved[0]!.mimeType).toBe(mime);
+    expect(saved[0]!.filename).toBe(name);
+  });
+
+  it('saves a 60 MiB GLB through the real hook (over the 50 MiB cap, under the 100 MiB model cap)', async () => {
+    const err = await save({ bytes: buf(buildGlb({ totalBytes: 60 * 1024 * 1024 })), filename: 'big.glb' });
+    expect(err).toBeNull();
+    expect(saved.map((f) => [f.mimeType, f.filename, f.bytes.byteLength])).toEqual([
+      ['model/gltf-binary', 'big.glb', 60 * 1024 * 1024],
+    ]);
+  });
+
+  it('refuses a GLB with bytes past its declared length (a second file riding after it)', async () => {
+    const err = await save({ bytes: buf(concatBytes(buildGlb({ binBytes: 8 }), PNG)), filename: 'm.glb' });
+    expect(err?.message).toBe('file type is not allowed');
+    expect(saved).toHaveLength(0);
   });
 
   it('refuses a zip with a disallowed entry, with the specific reason', async () => {

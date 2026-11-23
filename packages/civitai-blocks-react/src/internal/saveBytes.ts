@@ -10,7 +10,9 @@
  */
 
 /*
- * 🔴 NO import of `@civitai/app-sdk/save-zip` in this file. It is reached from the MAIN entry
+ * 🔴 NO import of `@civitai/app-sdk/save-zip` or `@civitai/app-sdk/save-model3d` in this file
+ * (the 3D model half of this note is the same: `./save-model3d` ships far above the floor, and
+ * `startsLikeModel3d` + the 100 MiB cap are pinned to it by test/saveBytesModel3dParity.test.ts). It is reached from the MAIN entry
  * (`useSaveImage`), and the main entry must load on every app-sdk the peer floor admits (>=0.57.0),
  * while `./save-zip` first ships in 0.85.0. The two things the hook needs from the zip rules — the
  * zip-candidate test and the 256 MiB cap — are restated below and pinned EQUAL to app-sdk's own
@@ -33,6 +35,13 @@
 export const SAVE_BYTES_MAX_BYTES = 50 * 1024 * 1024;
 
 /**
+ * The cap on a `bytes` payload that STARTS like a binary glTF (`glTF` + version 2) or binary FBX
+ * (`Kaydara FBX Binary  \0`): 100 MiB. A restatement of app-sdk's `SAVE_MODEL3D_MAX_BYTES` (see
+ * the note at the top of this file), pinned equal to it.
+ */
+export const SAVE_BYTES_MODEL_3D_MAX_BYTES = 100 * 1024 * 1024;
+
+/**
  * The cap on a `bytes` payload that STARTS like a zip (a local file header at
  * byte 0, or an empty archive): 256 MiB. A restatement of app-sdk's
  * `SAVE_ZIP_MAX_BYTES` (see the note at the top of this file), pinned equal to it.
@@ -50,20 +59,38 @@ export function startsLikeZip(view: Uint8Array): boolean {
   return (view[2] === 0x03 && view[3] === 0x04) || (view[2] === 0x05 && view[3] === 0x06);
 }
 
+const GLB_PREFIX = [0x67, 0x6c, 0x54, 0x46, 0x02, 0x00, 0x00, 0x00] as const; // glTF + version 2
+// "Kaydara FBX Binary" + two spaces + NUL
+const FBX_MAGIC = [
+  0x4b, 0x61, 0x79, 0x64, 0x61, 0x72, 0x61, 0x20, 0x46, 0x42, 0x58, 0x20, 0x42, 0x69, 0x6e, 0x61, 0x72, 0x79, 0x20,
+  0x20, 0x00,
+] as const;
+
 /**
- * The cap that applies to this buffer, decided on its first four bytes alone —
- * the host's order, so the hook can refuse an over-cap buffer before copying it.
+ * Does this buffer START like a binary glTF or binary FBX model? The same predicate as app-sdk's
+ * `looksLikeSaveModel3d` (pinned equal to it), restated so the main entry needs no
+ * `./save-model3d`. Reads at most the first 21 bytes.
+ */
+export function startsLikeModel3d(view: Uint8Array): boolean {
+  return startsWith(view, GLB_PREFIX) || startsWith(view, FBX_MAGIC);
+}
+
+/**
+ * The cap that applies to this buffer, decided on its first 21 bytes alone (a
+ * zip prefix, then a 3D model prefix) — the host's order, so the hook can
+ * refuse an over-cap buffer before copying it.
  */
 export function saveBytesMaxBytes(bytes: ArrayBuffer): number {
-  return startsLikeZip(new Uint8Array(bytes, 0, Math.min(4, bytes.byteLength)))
-    ? SAVE_BYTES_ZIP_MAX_BYTES
-    : SAVE_BYTES_MAX_BYTES;
+  const head = new Uint8Array(bytes, 0, Math.min(21, bytes.byteLength));
+  if (startsLikeZip(head)) return SAVE_BYTES_ZIP_MAX_BYTES;
+  if (startsLikeModel3d(head)) return SAVE_BYTES_MODEL_3D_MAX_BYTES;
+  return SAVE_BYTES_MAX_BYTES;
 }
 
 /** Host refusal for a buffer over `SAVE_BYTES_MAX_BYTES`. Also the hook's own pre-send refusal. */
 export const SAVE_BYTES_TOO_LARGE_ERROR = 'file exceeds the maximum save size';
 
-/** Host refusal for bytes that classify as none of PNG / WebP / JPEG / UTF-8 text. */
+/** Host refusal for bytes that classify as none of PNG / WebP / JPEG / UTF-8 text / zip / GLB / FBX. */
 export const SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR = 'file type is not allowed';
 
 /**
@@ -97,14 +124,16 @@ export function saveImageRequestKind(p: {
   return hasUrl ? 'url' : 'id';
 }
 
-/** The six types the host can classify a `bytes` payload as. */
+/** The eight types the host can classify a `bytes` payload as. */
 export type SaveBytesType =
   | 'image/png'
   | 'image/webp'
   | 'image/jpeg'
   | 'application/json'
   | 'text/plain'
-  | 'application/zip';
+  | 'application/zip'
+  | 'model/gltf-binary'
+  | 'model/x-fbx';
 
 /** The extension the host forces for each classified type. */
 export const SAVE_BYTES_EXTENSION: Record<SaveBytesType, string> = {
@@ -114,6 +143,8 @@ export const SAVE_BYTES_EXTENSION: Record<SaveBytesType, string> = {
   'application/json': '.json',
   'text/plain': '.txt',
   'application/zip': '.zip',
+  'model/gltf-binary': '.glb',
+  'model/x-fbx': '.fbx',
 };
 
 function startsWith(view: Uint8Array, sig: readonly number[], offset = 0): boolean {

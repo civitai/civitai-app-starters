@@ -55,6 +55,10 @@
       "types": "./dist/save-zip/index.d.ts",
       "import": "./dist/save-zip/index.js"
     },
+    "./save-model3d": {
+      "types": "./dist/save-model3d/index.d.ts",
+      "import": "./dist/save-model3d/index.js"
+    },
     "./schemas/app-block/v1.json": "./schemas/app-block/v1.json"
   },
   "comment-packaging": "`!dist/**/*.map` keeps dangling sourcemaps out of the tarball (#376). Rationale: scripts/check-shipped-sourcemaps.mjs.",

@@ -2992,7 +2992,11 @@ Pass exactly ONE of three inputs, each gated differently by the host:
   > streamed dataset can be refused at random. `DEFLATE`, or stored without
   > `streamFiles`, is never affected.
   - every entry is a folder or ends in `.png`, `.jpg`, `.jpeg`, `.webp`, `.txt`,
-    `.json` or `.csv` (so no nested archives, executables, HTML or SVG);
+    `.json`, `.csv`, `.glb` or `.fbx` (so no nested archives, executables, HTML
+    or SVG). Only an entry's NAME is checked inside a zip, not its content. 🔴
+    `.glb` / `.fbx` entries need a host (and, for `createMockHost`, an
+    installed `@civitai/app-sdk`) on an app-sdk release after 0.92.0; an older
+    one refuses them with `zip entry type is not allowed: glb`;
   - no entry name is absolute, has a `..`, `.` or empty segment, a segment
     ending in a dot or space, a backslash, a colon / drive letter, or a control,
     bidi or byte-order-mark character, and no two names are
@@ -3034,6 +3038,40 @@ Pass exactly ONE of three inputs, each gated differently by the host:
   needs @civitai/app-sdk >= 0.85.0`. The hook itself (`useSaveImage`) needs no
   newer app-sdk.
 
+- **`{ bytes }` holding a 3D model** (e.g. a generated turnaround mesh):
+  binary glTF (`.glb`) or binary FBX (`.fbx`), recognised by its STRUCTURE and
+  saved as `<name>.glb` / `<name>.fbx`, whatever `filename` says.
+  - A GLB must start with `glTF` and container version 2 and declare a length
+    equal to the buffer's. Its first chunk is JSON that parses to a glTF
+    document (with `asset.version`); a `BIN` chunk, if any, is second; chunks
+    of other types may follow (the glTF spec has readers ignore them); every
+    chunk is 4-byte aligned and the chunks fill the file exactly. Export
+    textures embedded: a `.gltf` with sidecar files is text and cannot carry
+    them.
+  - An FBX must be BINARY (`Kaydara FBX Binary  \0`, version 6100–7999), with
+    well-formed top-level node records ending in the null record and no more
+    than 256 bytes after it (the footer).
+  - Anything appended after the model, glTF-JSON, ASCII FBX and OBJ are not
+    saved as a model: a buffer that starts like a GLB / FBX but fails these
+    checks is refused with `file type is not allowed`, and text is saved as
+    text.
+  - The cap for a model is 100 MiB (the hook refuses a larger one before
+    sending), which is the whole per-window budget: a model at the cap leaves
+    no room for another save in the next ~10 seconds (`busy`).
+  - The check is `@civitai/app-sdk/save-model3d`, the same module in the host
+    and in `createMockHost`, like the zip validator. 🔴 **`createMockHost`
+    needs an `@civitai/app-sdk` that has `./save-model3d`** (the release after
+    0.92.0); on an older one a model save rejects with `createMockHost checks a
+    3D model with @civitai/app-sdk/save-model3d, which the installed
+    @civitai/app-sdk does not have`, and everything else still works.
+  - These checks, like the zip entry-name allowlist, are a TYPE gate: they
+    decide what the file is saved as, not whether it is safe to open. They do
+    not judge what a 3D viewer or importer will do with its contents.
+  - 🔴 **A host that predates model saves refuses them with
+    `file type is not allowed`**, and a `@civitai/blocks-react` release from
+    before model saves (0.85.x and older) refuses a model over 50 MiB before
+    sending it.
+
 🔴 **On a host that predates the `bytes` variant, `saveImage({ bytes })` rejects
 with `invalid save-image request`.** The host also replies that when the input
 is not exactly one variant, or when `bytes` is empty or not an `ArrayBuffer`.
@@ -3059,6 +3097,9 @@ try {
   // 'invalid save-image request' here means this host cannot save bytes yet.
   setStatus(`Could not save the sidecar: ${(err as Error).message}`);
 }
+
+// A 3D model generated in the tab (binary glTF). Saved as turnaround.glb after the host checks it.
+await saveImage({ bytes: glb.slice().buffer, filename: 'turnaround.glb' });
 
 // A captioned dataset, zipped in the tab. Saved as dataset.zip after the host validates it.
 const zip = new JSZip();

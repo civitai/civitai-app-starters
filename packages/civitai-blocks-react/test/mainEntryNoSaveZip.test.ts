@@ -24,6 +24,8 @@ import { describe, expect, it } from 'vitest';
 
 const PKG = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SAVE_ZIP = '@civitai/app-sdk/save-zip';
+// The 3D model check is held to the same rule, for the same reason (above the peer floor).
+const SAVE_MODEL3D = '@civitai/app-sdk/save-model3d';
 
 // Statement-anchored, so a JSDoc `@example` line (` * import … from '…'`) is not an import.
 // `from` is required unless the quote follows `import` directly (a bare side-effect import), so a
@@ -82,13 +84,15 @@ describe('built entries vs @civitai/app-sdk/save-zip', () => {
   it.each(['.', './ui', './live'])('%s does not reach @civitai/app-sdk/save-zip at all', (key) => {
     const { files, bare } = graphOf(entryFile(key));
     expect(files.size, 'the walker followed nothing').toBeGreaterThan(key === '.' ? 20 : 1);
-    expect([...bare].filter((s) => s === SAVE_ZIP)).toEqual([]);
+    expect([...bare].filter((s) => s === SAVE_ZIP || s === SAVE_MODEL3D)).toEqual([]);
   });
 
   it('./testing reaches it ONLY dynamically — never at module load (POSITIVE CONTROL: it does reach it)', () => {
     const { files, bare, staticBare } = graphOf(entryFile('./testing'));
     expect(bare.has(SAVE_ZIP)).toBe(true);
     expect(staticBare.has(SAVE_ZIP)).toBe(false);
+    expect(bare.has(SAVE_MODEL3D)).toBe(true);
+    expect(staticBare.has(SAVE_MODEL3D)).toBe(false);
     // The static set is not empty — the static walk works, so `false` above is a real absence.
     expect(staticBare.has('@civitai/app-sdk/blocks')).toBe(true);
     // …and via the mock-only module, not something the main entry also loads.

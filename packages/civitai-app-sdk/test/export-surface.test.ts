@@ -150,6 +150,13 @@ const ENTRY_POINTS: Record<string, EntryPoint> = {
       'civitai.com host and @civitai/blocks-react createMockHost — so they share ONE copy. An ' +
       'OAuth app never saves a zip through a block host, so the root would only carry it.',
   },
+  './save-model3d': {
+    src: 'save-model3d/index',
+    inRoot: false,
+    reason:
+      'NOT on the root: the SAVE_IMAGE 3D model (GLB / FBX) check, imported by the same two ' +
+      'consumers as ./save-zip for the same reason — one copy for the host and createMockHost.',
+  },
 };
 
 /** `exports` keys that publish a FILE rather than a module surface. */

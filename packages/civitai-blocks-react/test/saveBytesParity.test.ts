@@ -2,12 +2,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { saveImageRequestKind } from '../src/internal/saveBytes.js';
 import * as saveZipRules from '@civitai/app-sdk/save-zip';
+import * as saveModel3dRules from '@civitai/app-sdk/save-model3d';
 
 import { prepareSaveBytes } from '../src/internal/saveBytesPrepare.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { createMockHost, resetTransport } from '../src/testing.js';
 import type { MockHostOptions } from '../src/testing.js';
 import { zipFixture } from './zipFixtures.js';
+// The model builders live with the one copy of the model check, in app-sdk's tests.
+import { ab as abOf, buildFbx, buildGlb, concatBytes } from '../../civitai-app-sdk/test/model3dFixtures.js';
 
 /**
  * PARITY between the mock host's `bytes` rules and the production host's
@@ -17,6 +20,12 @@ import { zipFixture } from './zipFixtures.js';
  * `forceSaveBytesExtension`, `resolveSaveImageRequest`) or a name the round-1
  * audit named. The expected values were checked against the HOST's code run
  * directly, not derived from this package's port.
+ *
+ * The 3D model rows (`.glb` / `.fbx`) are not host cases: the model check is
+ * `@civitai/app-sdk/save-model3d`, the one copy, which the host imports from civitai/civitai#10139
+ * on. The rows pin only what the mock does around that check (type order, naming, a refusal's
+ * string). None of them exercises a GLB chunk of an unknown type, the one rule on which this module
+ * and the host's earlier inline copy (civitai/civitai 1516705974) disagree.
  *
  * 🔴 What this cannot prove: that the host has not changed since. It pins the
  * mock to the host as of that head; a later host change is invisible here.
@@ -58,6 +67,10 @@ const PNG_WITH_ZIP = () => {
   out.set(zip, PNG.byteLength);
   return out.buffer as ArrayBuffer;
 };
+
+const GLB_PLUS_PNG = () => abOf(concatBytes(buildGlb({ binBytes: 8 }), new Uint8Array(PNG)));
+const PNG_PLUS_GLB = () => abOf(concatBytes(new Uint8Array(PNG), buildGlb({ binBytes: 16 })));
+const notAllowed = { ok: false as const, error: 'file type is not allowed' };
 
 // prettier-ignore
 const ROWS: Row[] = [
@@ -113,11 +126,21 @@ const ROWS: Row[] = [
   { name: 'empty zip', bytes: () => zipFixture([]), filename: 'a.zip', expected: { ok: false, error: 'zip has no entries' } },
   { name: 'PNG with a zip appended is a PNG', bytes: PNG_WITH_ZIP, filename: 'x.zip', expected: ok('image/png', 'x.png') },
   { name: 'text named .zip is text', bytes: () => textAb('not a zip'), filename: 'd.zip', expected: ok('text/plain', 'd.txt') },
+  // 3D models — the model check itself is @civitai/app-sdk/save-model3d's, tested there. These rows
+  // pin what the mock does around it: the classification order, the name, a refusal's string.
+  { name: 'GLB named .png saves .glb', bytes: () => abOf(buildGlb({ binBytes: 36 })), filename: 'mesh.png', expected: ok('model/gltf-binary', 'mesh.glb') },
+  { name: 'FBX with traversal saves .fbx', bytes: () => abOf(buildFbx()), filename: 'a/../rig', expected: ok('model/x-fbx', 'rig.fbx') },
+  { name: 'GLB with a PNG appended is refused', bytes: GLB_PLUS_PNG, filename: 'm.glb', expected: notAllowed },
+  { name: 'PNG named .glb is a PNG', bytes: () => PNG, filename: 'turnaround.glb', expected: ok('image/png', 'turnaround.png') },
+  { name: 'PNG + GLB polyglot is a PNG', bytes: PNG_PLUS_GLB, filename: 'x.glb', expected: ok('image/png', 'x.png') },
+  { name: 'text starting glTF is text', bytes: () => textAb('glTF is a format'), filename: 'x.glb', expected: ok('text/plain', 'x.txt') },
 ];
 
 describe('saveBytes parity with the host (prepareSaveBytes)', () => {
   it.each(ROWS.map((r) => [r.name, r] as const))('%s', (_n, row) => {
-    expect(prepareSaveBytes({ bytes: row.bytes(), filename: row.filename }, saveZipRules)).toEqual(row.expected);
+    expect(prepareSaveBytes({ bytes: row.bytes(), filename: row.filename }, saveZipRules, saveModel3dRules)).toEqual(
+      row.expected,
+    );
   });
 });
 

@@ -4,7 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BlockInitPayload } from '@civitai/app-sdk/blocks';
 
 import { useSaveImage } from '../src/hooks/useSaveImage.js';
-import { SAVE_BYTES_MAX_BYTES, SAVE_BYTES_ZIP_MAX_BYTES } from '../src/internal/saveBytes.js';
+import {
+  SAVE_BYTES_MAX_BYTES,
+  SAVE_BYTES_MODEL_3D_MAX_BYTES,
+  SAVE_BYTES_ZIP_MAX_BYTES,
+} from '../src/internal/saveBytes.js';
 import { zipLookingBuffer } from './zipFixtures.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { isValidSaveImageResult } from '../src/transport/validate.js';
@@ -308,6 +312,48 @@ describe('useSaveImage — the bytes variant', () => {
 
   it('pins the zip cap to the contract value, 256 MiB', () => {
     expect(SAVE_BYTES_ZIP_MAX_BYTES).toBe(268_435_456);
+  });
+
+  // A buffer of `size` bytes that STARTS like a GLB (`glTF` + version 2) or a binary FBX. Only the
+  // prefix matters to the hook: the host judges the structure.
+  const modelLookingBuffer = (kind: 'glb' | 'fbx', size: number) => {
+    const head =
+      kind === 'glb'
+        ? [0x67, 0x6c, 0x54, 0x46, 0x02, 0x00, 0x00, 0x00]
+        : [...new TextEncoder().encode('Kaydara FBX Binary  '), 0x00];
+    const u8 = new Uint8Array(size);
+    u8.set(head);
+    return u8.buffer;
+  };
+
+  it('pins the 3D model cap to the contract value, 100 MiB', () => {
+    expect(SAVE_BYTES_MODEL_3D_MAX_BYTES).toBe(104_857_600);
+  });
+
+  it.each(['glb', 'fbx'] as const)(
+    'SENDS a %s-looking buffer of 60 MiB (over the 50 MiB cap, under the model cap)',
+    (kind) => {
+      const { result } = renderHook(() => useSaveImage());
+      act(() => {
+        void result.current.saveImage({ bytes: modelLookingBuffer(kind, 60 * 1024 * 1024) }).catch(() => {});
+      });
+      expect(lastSave(postMessageMock).payload.bytes!.byteLength).toBe(60 * 1024 * 1024);
+    },
+  );
+
+  it.each(['glb', 'fbx'] as const)('refuses a %s-looking buffer of 110 MiB before sending', async (kind) => {
+    const err = await refusedLocally({ bytes: modelLookingBuffer(kind, 110 * 1024 * 1024) });
+    expect(err.message).toBe('file exceeds the maximum save size');
+  });
+
+  it('the model cap is decided by the exact prefix: glTF version 1 and the FBX magic without its NUL keep 50 MiB', async () => {
+    // Filled with 'a', not zeros: a zero byte after the 20 magic characters WOULD be the FBX magic's NUL.
+    const glTF1 = new Uint8Array(60 * 1024 * 1024).fill(0x61);
+    glTF1.set([0x67, 0x6c, 0x54, 0x46, 0x01, 0x00, 0x00, 0x00]);
+    expect((await refusedLocally({ bytes: glTF1.buffer })).message).toBe('file exceeds the maximum save size');
+    const noNul = new Uint8Array(60 * 1024 * 1024).fill(0x61);
+    noNul.set(new TextEncoder().encode('Kaydara FBX Binary  '));
+    expect((await refusedLocally({ bytes: noNul.buffer })).message).toBe('file exceeds the maximum save size');
   });
 
   it('surfaces a pre-variant host refusal verbatim', async () => {
