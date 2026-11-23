@@ -41,12 +41,16 @@
  *   name known, version   → FAIL. The package exists, this version does not.
  *   absent                  That is the failed-publish signal.
  *
- * 🔴 The deliberate cost of that trade, stated so nobody reads more into this
- * than it carries: a failed FIRST publish of a brand-new package is
- * indistinguishable from that package merely being introduced, so it WARNS
- * rather than fails. A first publish failing is both rarer and far more visible
- * (the package simply does not exist for anyone) than the repeat case this
- * guard is built for.
+ * 🔴 EXCEPT WHEN THIS RUN ATTEMPTED THE PUBLISH (#435). From the registry alone
+ * a failed FIRST publish of a brand-new package is indistinguishable from that
+ * package merely being introduced — measured on release run 35795796225, where
+ * `@civitai/sdk`'s first publish E404'd and this guard printed `NEW … OK`. The
+ * signal that tells them apart is not on the registry but in the workflow: the
+ * changesets step's `hasChangesets` output, which changesets/action sets BEFORE
+ * it publishes. `false` means PUBLISH mode — every publishable package whose
+ * version is not on npm was a publish target — so a name npm has never heard of
+ * is a FAILED FIRST PUBLISH and FAILS. See `publishAttempt()` for the inputs.
+ * With neither input set (a local run, the Version-PR mode) it still WARNS.
  *
  * FAILS (exit 1) when:
  *   - a known package's exact version is absent (see above), OR
@@ -204,6 +208,26 @@ const DELAY_MS = Math.max(0, Number(process.env.PUBLISH_CHECK_DELAY ?? 3000) || 
 const TIMEOUT_MS = Math.max(1, Number(process.env.PUBLISH_CHECK_TIMEOUT ?? 15000) || 15000);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Did THIS run attempt to publish (#435)? Read from the release workflow's
+ * changesets step, which passes PUBLISH_HAS_CHANGESETS =
+ * steps.<id>.outputs.hasChangesets:
+ *
+ *   "false" -> PUBLISH mode: attempted. Every publishable package whose version
+ *              is not on npm was a `changeset publish` target.
+ *   "true"  -> Version-PR mode: not attempted.
+ *   ""      -> unset: a local run, or the step died before changesets/action
+ *              set it. That output is the action's third setOutput, ahead of
+ *              BOTH mode branches, so an unset value means no publish ran —
+ *              the step is red on its own and needs no second verdict here.
+ */
+function publishAttempt(env = process.env) {
+  if (env.PUBLISH_HAS_CHANGESETS === 'false') {
+    return { attempted: true, why: 'the changesets step ran in PUBLISH mode (hasChangesets=false)' };
+  }
+  return { attempted: false, why: '' };
+}
 
 /** Shape a parsed manifest into a pin, or null if it is not a publish target. */
 function toPublishable(json, dir) {
@@ -765,7 +789,9 @@ async function main() {
 
   const published = [];
   const missing = []; // known package, version absent -> FAIL
-  const neverPublished = []; // name unknown to npm -> WARN
+  const neverPublished = []; // name unknown to npm, no publish attempted -> WARN
+  const failedFirstPublish = []; // name unknown to npm, publish attempted -> FAIL (#435)
+  const attempt = publishAttempt();
   const unexpected = []; // 2xx, wrong shape -> FAIL
   const unreachable = []; // transport/5xx -> graceful skip
 
@@ -782,7 +808,8 @@ async function main() {
     if (res.notFound) {
       // Disambiguate: is the PACKAGE unknown, or just this version?
       const probe = await packageNameExists(pkg.name);
-      if (probe.unknown) neverPublished.push({ pkg });
+      if (probe.unknown && attempt.attempted) failedFirstPublish.push({ pkg, attempts: res.attempts });
+      else if (probe.unknown) neverPublished.push({ pkg });
       else if (probe.exists) missing.push({ pkg, status: res.status, attempts: res.attempts });
       else unreachable.push({ pkg, reason: `version 404, and the name probe failed: ${probe.error}`, attempts: res.attempts });
       continue;
@@ -941,7 +968,22 @@ async function main() {
     console.error('');
   }
 
-  if (missing.length > 0 || unexpected.length > 0) process.exit(1);
+  if (failedFirstPublish.length > 0) {
+    console.error('');
+    console.error('ERROR: FIRST PUBLISH FAILED — a package npm has never heard of was a publish');
+    console.error(`       target of THIS run: ${attempt.why}.`);
+    console.error('       It is not a package being introduced; its first publish did not land.');
+    console.error('       A first publish through npm OIDC trusted publishing cannot CREATE a');
+    console.error('       package that does not exist yet, which is how this happened on release');
+    console.error('       run 35795796225. See RELEASING.md § "Bootstrapping the OIDC trust".');
+    console.error('');
+    for (const f of failedFirstPublish) {
+      console.error(`  ${f.pkg.dir}\n    ${f.pkg.name}@${f.pkg.version} -> unknown to npm after ${f.attempts} attempt(s)`);
+    }
+    console.error('');
+  }
+
+  if (missing.length > 0 || unexpected.length > 0 || failedFirstPublish.length > 0) process.exit(1);
 
   // Only-unreachable -> graceful pass, matching check-starter-pins.mjs.
   if (published.length === 0 && unreachable.length > 0 && neverPublished.length === 0) {

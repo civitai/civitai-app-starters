@@ -1707,7 +1707,6 @@ describe('assert-published-versions', () => {
         NPM_REGISTRY: reg2.origin,
         ...FAST,
         PUBLISH_HAS_CHANGESETS: 'false',
-        PUBLISH_STEP_OUTCOME: 'failure',
       });
       assert.equal(r.code, 1, r.out);
       assert.match(r.out, /FIRST PUBLISH FAILED/);
@@ -1720,10 +1719,11 @@ describe('assert-published-versions', () => {
     }
   });
 
-  test('#435 FAILS in publish mode even when the publish step itself reported success', async () => {
+  test('#435 FAILS in publish mode whatever the publish step itself reported', async () => {
     // The tree, not the step's exit status, is the expectation: in publish mode
     // the package should be on npm. A step that "succeeded" without landing it
-    // is the staged/silent-divert shape RELEASING.md records.
+    // is the staged/silent-divert shape RELEASING.md records — so the guard
+    // reads only the MODE, never the outcome.
     const reg2 = await startFakeRegistry(V());
     const dir = createFixture(withBrandNew());
     try {
@@ -1731,28 +1731,9 @@ describe('assert-published-versions', () => {
         NPM_REGISTRY: reg2.origin,
         ...FAST,
         PUBLISH_HAS_CHANGESETS: 'false',
-        PUBLISH_STEP_OUTCOME: 'success',
       });
       assert.equal(r.code, 1, r.out);
       assert.match(r.out, /FIRST PUBLISH FAILED/);
-    } finally {
-      destroyFixture(dir);
-      await reg2.close();
-    }
-  });
-
-  test('#435 FAILS when the changesets step died before reporting its mode', async () => {
-    const reg2 = await startFakeRegistry(V());
-    const dir = createFixture(withBrandNew());
-    try {
-      const r = await runGuard(dir, SCRIPT, {
-        NPM_REGISTRY: reg2.origin,
-        ...FAST,
-        PUBLISH_HAS_CHANGESETS: '',
-        PUBLISH_STEP_OUTCOME: 'failure',
-      });
-      assert.equal(r.code, 1, r.out);
-      assert.match(r.out, /FAILED before reporting its mode/);
     } finally {
       destroyFixture(dir);
       await reg2.close();
@@ -1770,7 +1751,6 @@ describe('assert-published-versions', () => {
         NPM_REGISTRY: reg2.origin,
         ...FAST,
         PUBLISH_HAS_CHANGESETS: 'true',
-        PUBLISH_STEP_OUTCOME: 'success',
       });
       assert.equal(r.code, 0, r.out);
       assert.match(r.out, /NEW\s+@civitai\/brand-new@0\.2\.0/);
@@ -1796,7 +1776,6 @@ describe('assert-published-versions', () => {
       assertStep,
       new RegExp(`PUBLISH_HAS_CHANGESETS: \\$\\{\\{ steps\\.${id}\\.outputs\\.hasChangesets \\}\\}`),
     );
-    assert.match(assertStep, new RegExp(`PUBLISH_STEP_OUTCOME: \\$\\{\\{ steps\\.${id}\\.outcome \\}\\}`));
   });
 });
 
