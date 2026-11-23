@@ -40,6 +40,17 @@ export type SaveModel3dType = keyof typeof SAVE_MODEL3D_EXTENSION;
  */
 export const SAVE_MODEL3D_MAX_BYTES = 100 * 1024 * 1024;
 
+/**
+ * The largest JSON chunk a GLB may carry: 8 MiB. The check decodes and parses that chunk on the
+ * caller's thread (the host's is the viewer's main thread), and parse cost grows with it: a 49.5 MB
+ * chunk measured 2.6 s and 1.8 GB on node 24, a 99 MB one 7 s and 3.4 GB. Real GLB JSON is the
+ * scene description only — node, mesh, accessor and material records; the geometry and textures
+ * live in the BIN chunk — so it runs from a few KB to a few MB even for large scenes. 8 MiB leaves
+ * room above that while bounding the parse to a fraction of a second. Over it, the file is refused
+ * like any other GLB that fails the check, before anything is decoded.
+ */
+export const SAVE_MODEL3D_MAX_JSON_CHUNK_BYTES = 8 * 1024 * 1024;
+
 /** `glTF` + container version 2 (little-endian u32). */
 const GLB_PREFIX = [0x67, 0x6c, 0x54, 0x46, 0x02, 0x00, 0x00, 0x00] as const;
 const GLB_HEADER_BYTES = 12;
@@ -98,8 +109,9 @@ export function isValidSaveModel3d(view: Uint8Array, type: SaveModel3dType): boo
  * "Client implementations MUST ignore chunks with unknown types to enable glTF extensions to
  * reference additional chunks with new types following the first two chunks." Every chunk length
  * is a multiple of 4 (the spec's alignment rule), every chunk lies inside the declared length, and
- * the chunks end exactly at it. The JSON chunk must be UTF-8 that parses to an object carrying
- * `asset.version`, the one property glTF requires.
+ * the chunks end exactly at it. The JSON chunk must be at most
+ * {@link SAVE_MODEL3D_MAX_JSON_CHUNK_BYTES} (checked before it is decoded) and UTF-8 that parses to
+ * an object carrying `asset.version`, the one property glTF requires.
  */
 function isValidGlb(u8: Uint8Array): boolean {
   if (u8.length < GLB_HEADER_BYTES + GLB_CHUNK_HEADER_BYTES) return false;
@@ -118,6 +130,7 @@ function isValidGlb(u8: Uint8Array): boolean {
     if (chunkLength % 4 !== 0 || chunkLength > length - dataStart) return false;
     if (index === 0) {
       if (chunkType !== GLB_CHUNK_JSON || chunkLength === 0) return false;
+      if (chunkLength > SAVE_MODEL3D_MAX_JSON_CHUNK_BYTES) return false;
       if (!isGltfJson(u8.subarray(dataStart, dataStart + chunkLength))) return false;
     } else if (chunkType === GLB_CHUNK_JSON || (chunkType === GLB_CHUNK_BIN && index !== 1)) {
       // A second JSON chunk, or a BIN chunk anywhere but second: out of the spec's order.

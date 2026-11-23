@@ -8,6 +8,7 @@ import {
   looksLikeSaveModel3d,
   SAVE_MODEL3D_EXTENSION,
   SAVE_MODEL3D_MAX_BYTES,
+  SAVE_MODEL3D_MAX_JSON_CHUNK_BYTES,
 } from '../src/save-model3d/index.js';
 import { buildFbx, buildGlb, buildLargeFbx, concatBytes, FBX_MAGIC, withU32 } from './model3dFixtures.js';
 
@@ -136,6 +137,17 @@ describe('save-model3d — refused GLBs', () => {
     expect(verdict(buildGlb({ json: { scenes: [] } }))).toBe('refused'); // no asset
     expect(verdict(buildGlb({ json: [{ asset: { version: '2.0' } }] }))).toBe('refused'); // an array
     expect(verdict(buildGlb({ json: { asset: { version: 2 } } }))).toBe('refused'); // version not a string
+  });
+
+  it('🔴 a JSON chunk over 8 MiB is refused before it is parsed; one well under it is accepted', () => {
+    expect(SAVE_MODEL3D_MAX_JSON_CHUNK_BYTES).toBe(8 * 1024 * 1024);
+    const MiB = 1024 * 1024;
+    // Valid glTF JSON either way, so only the size bound can refuse the big one.
+    const withExtras = (n: number) => buildGlb({ json: { asset: { version: '2.0' }, extras: 'a'.repeat(n) } });
+    const big = withExtras(10 * MiB);
+    expect(new DataView(big.buffer).getUint32(12, true)).toBeGreaterThan(SAVE_MODEL3D_MAX_JSON_CHUNK_BYTES);
+    expect(verdict(big)).toBe('refused');
+    expect(verdict(withExtras(3 * MiB))).toBe('model/gltf-binary');
   });
 
   it('wrong magic or container version is not a candidate at all', () => {

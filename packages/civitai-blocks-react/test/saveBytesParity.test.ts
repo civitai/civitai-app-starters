@@ -21,8 +21,11 @@ import { ab as abOf, buildFbx, buildGlb, concatBytes } from '../../civitai-app-s
  * audit named. The expected values were checked against the HOST's code run
  * directly, not derived from this package's port.
  *
- * The 3D model rows (`.glb` / `.fbx`) were run through the host's `prepareSaveBytes` at the head of
- * the civitai/civitai branch that adds them (1516705974), with the same builders.
+ * The 3D model rows (`.glb` / `.fbx`) are not host cases: the model check is
+ * `@civitai/app-sdk/save-model3d`, the one copy, which the host imports from civitai/civitai#10139
+ * on. The rows pin only what the mock does around that check (type order, naming, a refusal's
+ * string). None of them exercises a GLB chunk of an unknown type, the one rule on which this module
+ * and the host's earlier inline copy (civitai/civitai 1516705974) disagree.
  *
  * 🔴 What this cannot prove: that the host has not changed since. It pins the
  * mock to the host as of that head; a later host change is invisible here.

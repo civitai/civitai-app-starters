@@ -3064,6 +3064,9 @@ Pass exactly ONE of three inputs, each gated differently by the host:
     0.92.0); on an older one a model save rejects with `createMockHost checks a
     3D model with @civitai/app-sdk/save-model3d, which the installed
     @civitai/app-sdk does not have`, and everything else still works.
+  - These checks, like the zip entry-name allowlist, are a TYPE gate: they
+    decide what the file is saved as, not whether it is safe to open. They do
+    not judge what a 3D viewer or importer will do with its contents.
   - 🔴 **A host that predates model saves refuses them with
     `file type is not allowed`**, and a `@civitai/blocks-react` release from
     before model saves (0.85.x and older) refuses a model over 50 MiB before
