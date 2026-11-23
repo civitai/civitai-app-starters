@@ -1687,4 +1687,116 @@ describe('assert-published-versions', () => {
       await slow.close();
     }
   });
+  // ---- #435: a FAILED first publish must not read as a package being introduced ----
+
+  /** A tree with one package npm has never heard of, beside the five defaults. */
+  const withBrandNew = () => ({
+    scripts: [SCRIPT],
+    packages: { ...DEFAULT_PACKAGES, 'civitai-brand-new': { name: '@civitai/brand-new', version: '0.2.0' } },
+  });
+
+  test('#435 FAILS for a never-published package when this run was in PUBLISH mode (hasChangesets=false)', async () => {
+    // Release run 35795796225: @civitai/sdk's first publish E404'd, and this
+    // guard printed `NEW … treating it as a package being introduced` and `OK`.
+    // In publish mode every unpublished package WAS a publish target, so a name
+    // npm has never heard of is a failed first publish.
+    const reg2 = await startFakeRegistry(V());
+    const dir = createFixture(withBrandNew());
+    try {
+      const r = await runGuard(dir, SCRIPT, {
+        NPM_REGISTRY: reg2.origin,
+        ...FAST,
+        PUBLISH_HAS_CHANGESETS: 'false',
+        PUBLISH_STEP_OUTCOME: 'failure',
+      });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /FIRST PUBLISH FAILED/);
+      assert.match(r.out, /@civitai\/brand-new@0\.2\.0 -> unknown to npm/);
+      assert.doesNotMatch(r.out, /^NEW /m);
+      assert.doesNotMatch(r.out, /^OK: /m);
+    } finally {
+      destroyFixture(dir);
+      await reg2.close();
+    }
+  });
+
+  test('#435 FAILS in publish mode even when the publish step itself reported success', async () => {
+    // The tree, not the step's exit status, is the expectation: in publish mode
+    // the package should be on npm. A step that "succeeded" without landing it
+    // is the staged/silent-divert shape RELEASING.md records.
+    const reg2 = await startFakeRegistry(V());
+    const dir = createFixture(withBrandNew());
+    try {
+      const r = await runGuard(dir, SCRIPT, {
+        NPM_REGISTRY: reg2.origin,
+        ...FAST,
+        PUBLISH_HAS_CHANGESETS: 'false',
+        PUBLISH_STEP_OUTCOME: 'success',
+      });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /FIRST PUBLISH FAILED/);
+    } finally {
+      destroyFixture(dir);
+      await reg2.close();
+    }
+  });
+
+  test('#435 FAILS when the changesets step died before reporting its mode', async () => {
+    const reg2 = await startFakeRegistry(V());
+    const dir = createFixture(withBrandNew());
+    try {
+      const r = await runGuard(dir, SCRIPT, {
+        NPM_REGISTRY: reg2.origin,
+        ...FAST,
+        PUBLISH_HAS_CHANGESETS: '',
+        PUBLISH_STEP_OUTCOME: 'failure',
+      });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /FAILED before reporting its mode/);
+    } finally {
+      destroyFixture(dir);
+      await reg2.close();
+    }
+  });
+
+  test('#435 invariant: Version-PR mode (hasChangesets=true) still WARNS for a package being introduced', async () => {
+    // INVARIANT GUARD (green before and after the fix): the carve-out the
+    // never-published arm exists for must survive, or main goes red on every
+    // push until the Version PR merges.
+    const reg2 = await startFakeRegistry(V());
+    const dir = createFixture(withBrandNew());
+    try {
+      const r = await runGuard(dir, SCRIPT, {
+        NPM_REGISTRY: reg2.origin,
+        ...FAST,
+        PUBLISH_HAS_CHANGESETS: 'true',
+        PUBLISH_STEP_OUTCOME: 'success',
+      });
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /NEW\s+@civitai\/brand-new@0\.2\.0/);
+      assert.match(r.out, /5\/6 publishable package version\(s\) confirmed/);
+      assert.doesNotMatch(r.out, /FIRST PUBLISH FAILED/);
+    } finally {
+      destroyFixture(dir);
+      await reg2.close();
+    }
+  });
+
+  test('#435 SEAM: release.yml hands the assert step the changesets step\'s mode and outcome', () => {
+    // The script can only tell "introduced" from "failed first publish" if the
+    // workflow passes the signal. A component test above sets the env by hand,
+    // so it cannot see the workflow forgetting to — this pins the relationship.
+    const yml = readFileSync(join(REPO_ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
+    const step = /- name: Create release PR or publish\n\s+id: (\S+)\n/.exec(yml);
+    assert.ok(step, 'the changesets step in release.yml has no `id:` directly under its name');
+    const id = step[1];
+    const assertStep = yml.slice(yml.indexOf('- name: Assert the published versions actually exist on npm'));
+    assert.ok(assertStep.length > 0, 'could not find the assert step in release.yml');
+    assert.match(
+      assertStep,
+      new RegExp(`PUBLISH_HAS_CHANGESETS: \\$\\{\\{ steps\\.${id}\\.outputs\\.hasChangesets \\}\\}`),
+    );
+    assert.match(assertStep, new RegExp(`PUBLISH_STEP_OUTCOME: \\$\\{\\{ steps\\.${id}\\.outcome \\}\\}`));
+  });
 });
+
