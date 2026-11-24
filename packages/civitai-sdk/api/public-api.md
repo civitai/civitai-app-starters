@@ -4464,7 +4464,11 @@ export interface FakeTransport extends BlockTransport {
     handle(type: string, handler: (params: unknown) => unknown): void;
     /** Answer the next request of this type with the value it resolves to. */
     reply(type: string, result: unknown): void;
-    /** Answer the next request of this type with a failure the host classified. */
+    /**
+     * Answer the next request of this type with a failure the host classified. A `rateLimit` is read
+     * as the transport reads the host's: only its known fields are kept, a malformed one is dropped,
+     * and a valid one makes the code `rate-limited`.
+     */
     fail(type: string, error: {
         code: BridgeFailureCode;
         message: string;

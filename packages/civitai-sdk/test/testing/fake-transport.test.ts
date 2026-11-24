@@ -36,6 +36,29 @@ describe('createFakeTransport().handle', () => {
     expect(refused).toBeInstanceOf(CivitaiError);
   });
 
+  it('fails with a rateLimit exactly as the transport would read it', async () => {
+    const t = createFakeTransport();
+    const rateLimit = { retryAfterSeconds: 41, retryAt: '2031-04-05T06:07:49.000Z', id: 'apps.publish' };
+    t.fail('PUBLISH_GENERATION_OUTPUTS', { code: 'unavailable', message: 'slow down', rateLimit });
+    t.fail('PUBLISH_GENERATION_OUTPUTS', {
+      code: 'unavailable',
+      message: 'slow down',
+      rateLimit: {} as typeof rateLimit,
+    });
+    const host = createHost(t);
+    const call = () =>
+      host.publishGenerationOutputs({ workflowId: 'wf_1' }).then(
+        () => expect.fail('the refusal resolved'),
+        (e: unknown) => e as BridgeError,
+      );
+
+    const limited = await call();
+    expect([limited.code, limited.rateLimit]).toEqual(['rate-limited', rateLimit]);
+    const malformed = await call();
+    expect(malformed.code).toBe('unavailable');
+    expect('rateLimit' in malformed).toBe(false);
+  });
+
   it('lets a queued reply depart from the standing answer for one call', async () => {
     const t = createFakeTransport();
     t.handle('OPEN_BUZZ_PURCHASE', () => ({ purchased: false }));

@@ -1,5 +1,5 @@
 import { EMPTY_SNAPSHOT, type BlockSnapshot, type BlockTransport } from './core/transport.js';
-import { BridgeError, type BridgeFailureCode, type RateLimitMeta } from './core/errors.js';
+import { BridgeError, parseRateLimitMeta, type BridgeFailureCode, type RateLimitMeta } from './core/errors.js';
 
 export { __resetTransport } from './core/get-transport.js';
 export { createFakeStorage, FAKE_STORAGE_MODERATION } from './doc-store/fake.js';
@@ -26,7 +26,11 @@ export interface FakeTransport extends BlockTransport {
   handle(type: string, handler: (params: unknown) => unknown): void;
   /** Answer the next request of this type with the value it resolves to. */
   reply(type: string, result: unknown): void;
-  /** Answer the next request of this type with a failure the host classified. */
+  /**
+   * Answer the next request of this type with a failure the host classified. A `rateLimit` is read
+   * as the transport reads the host's: only its known fields are kept, a malformed one is dropped,
+   * and a valid one makes the code `rate-limited`.
+   */
   fail(type: string, error: { code: BridgeFailureCode; message: string; rateLimit?: RateLimitMeta }): void;
   /** Never answer requests of this type; for deadline and abort tests. */
   stall(type: string): void;
@@ -129,9 +133,12 @@ export function createFakeTransport(snapshot: Partial<BlockSnapshot> = {}): Fake
       answer(type, result);
     },
     fail(type, error) {
+      const rateLimit = parseRateLimitMeta(error.rateLimit);
       answer(
         type,
-        new BridgeError(error.code, type, error.message, error.rateLimit ? { rateLimit: error.rateLimit } : undefined),
+        rateLimit
+          ? new BridgeError('rate-limited', type, error.message, { rateLimit })
+          : new BridgeError(error.code, type, error.message),
       );
     },
     stall(type) {
