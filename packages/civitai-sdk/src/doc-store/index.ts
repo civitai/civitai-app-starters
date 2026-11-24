@@ -66,11 +66,26 @@ export interface StorageDocument<T extends object = Record<string, unknown>> {
   createdAt: Date;
   updatedAt: Date;
   author: DocumentAuthor;
-  /** Declared counters of a shared collection; `{}` on a private one. */
+  /**
+   * Declared counters of a shared collection; `{}` on a private one.
+   *
+   * @deprecated Counters are being removed: there is no server-side count. Keep what each
+   * viewer did in a viewer-keyed collection (`keyedBy`) and count by listing it.
+   */
   counters: Record<string, number>;
-  /** Declared mark counts of a shared collection (never `report`'s); `{}` on a private one. */
+  /**
+   * Declared mark counts of a shared collection (never `report`'s); `{}` on a private one.
+   *
+   * @deprecated Marks are being removed. Count a viewer-keyed collection's documents for this
+   * key by listing it with `keyPrefix` set to `<key>:`.
+   */
   marks: Record<string, number>;
-  /** The viewer's own marks on this document; `null` for an anonymous viewer. */
+  /**
+   * The viewer's own marks on this document; `null` for an anonymous viewer.
+   *
+   * @deprecated Marks are being removed. Read the viewer's own vote or like with
+   * {@link StorageCollection.getMine}.
+   */
   viewer: { marks: string[] } | null;
 }
 
@@ -84,14 +99,27 @@ export interface DocumentListQuery {
    */
   where?: Record<string, DocumentWhereValue>;
   /**
-   * `[-]key | createdAt | updatedAt | <index> | counter:<name> | mark:<name>`; a
-   * leading `-` is descending. The server's default is `key`.
+   * `[-]key | createdAt | updatedAt | <index>`; a leading `-` is descending. The server's
+   * default is `key`. `counter:<name>` and `mark:<name>` still sort, but are DEPRECATED with
+   * counters and marks: there is no sort by count. Count a viewer-keyed collection by listing
+   * it with `keyPrefix` set to `<parent>:`, and sort in the app.
    */
   sort?: string;
   /** Only documents the viewer authored. */
   author?: 'me';
-  /** With {@link DocumentListQuery.mark}: only documents the viewer marked with it. */
+  /**
+   * With {@link DocumentListQuery.mark}: only documents the viewer marked with it.
+   *
+   * @deprecated Marks are being removed. Keep each viewer's vote or like in
+   * a viewer-keyed collection (`keyedBy`) and list it with `author: 'me'`.
+   */
   markedBy?: 'me';
+  /**
+   * The mark {@link DocumentListQuery.markedBy} filters by.
+   *
+   * @deprecated Marks are being removed. Keep each viewer's vote or like in
+   * a viewer-keyed collection (`keyedBy`) and list it with `author: 'me'`.
+   */
   mark?: string;
   keyPrefix?: string;
   /** The server bounds it and applies its own default; this client sends none. */
@@ -120,6 +148,10 @@ export interface WriteOptions extends DocumentCallOptions {
  * wire has no default), so `{ $inc: { plays: undefined } }` does not type-check; the
  * server takes an integer from 1 to 100. The type cannot say "exactly one counter":
  * naming two is refused `invalid_request` (`malformed_operator`).
+ *
+ * @deprecated Counters and {@link StorageCollection.update} are being removed: there is no
+ * server-side counter. Keep what each viewer did in a viewer-keyed collection (`keyedBy`) and
+ * count by listing it.
  */
 export interface StorageIncrementOp {
   $inc: Record<string, number>;
@@ -127,14 +159,25 @@ export interface StorageIncrementOp {
   $unmark?: never;
 }
 
-/** Set the viewer's mark: `{ $mark: 'vote' }` — a declared mark, or the built-in `report`. */
+/**
+ * Set the viewer's mark: `{ $mark: 'vote' }` — a declared mark, or the built-in `report`.
+ *
+ * @deprecated Marks and {@link StorageCollection.update} are being removed. A vote or like is
+ * the viewer's own document in a viewer-keyed collection: {@link StorageCollection.putMine}.
+ * A report is `app.moderation.report`.
+ */
 export interface StorageMarkOp {
   $mark: string;
   $inc?: never;
   $unmark?: never;
 }
 
-/** Remove the viewer's mark: `{ $unmark: 'vote' }`. A `report` cannot be withdrawn. */
+/**
+ * Remove the viewer's mark: `{ $unmark: 'vote' }`. A `report` cannot be withdrawn.
+ *
+ * @deprecated Marks and {@link StorageCollection.update} are being removed. Withdraw a vote or
+ * like in a viewer-keyed collection with {@link StorageCollection.deleteMine}.
+ */
 export interface StorageUnmarkOp {
   $unmark: string;
   $inc?: never;
@@ -145,10 +188,19 @@ export interface StorageUnmarkOp {
  * ONE update operator for {@link StorageCollection.update}. Each member forbids the
  * other two, so a second operator is a type error, and an unknown one is an excess
  * property.
+ *
+ * @deprecated {@link StorageCollection.update} is being removed with counters and marks. Use
+ * a viewer-keyed collection: {@link StorageCollection.getMine}, {@link StorageCollection.putMine},
+ * {@link StorageCollection.deleteMine}.
  */
 export type StorageUpdateOp = StorageIncrementOp | StorageMarkOp | StorageUnmarkOp;
 
-/** What {@link StorageCollection.publish} copies, and from where. */
+/**
+ * What {@link StorageCollection.publish} copies, and from where.
+ *
+ * @deprecated Server-side publish is being removed. Read the private documents and write the
+ * shared copies one by one with {@link StorageCollection.put} / {@link StorageCollection.delete}.
+ */
 export interface StoragePublishRequest {
   /**
    * One of THIS app's PRIVATE collections: the viewer's own documents are read from it by the
@@ -171,10 +223,16 @@ export interface StoragePublishRequest {
  * Why a key was not copied. `missing`: the viewer has no document at that key in `from`.
  * `not_author`: another user's copy holds the key; it is never touched. `hidden`: the viewer's
  * own copy was hidden by a moderator; it is never rewritten. Open-ended for a later server.
+ *
+ * @deprecated Server-side publish is being removed; see {@link StorageCollection.publish}.
  */
 export type StoragePublishSkipReason = 'missing' | 'not_author' | 'hidden' | (string & {});
 
-/** Every list is in key order. */
+/**
+ * Every list is in key order.
+ *
+ * @deprecated Server-side publish is being removed; see {@link StorageCollection.publish}.
+ */
 export interface StoragePublishResult {
   created: string[];
   updated: string[];
@@ -186,6 +244,7 @@ export interface StoragePublishResult {
   pruneIncomplete: boolean;
 }
 
+/** @deprecated Server-side unpublish is being removed; see {@link StorageCollection.unpublish}. */
 export interface StorageUnpublishResult {
   deleted: string[];
   /** `missing`: nothing visible at that key. `not_author`: another user's copy, never touched. */
@@ -249,6 +308,12 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
    * Needs a civitai.com that serves the PATCH route (civitai/civitai#8292); the
    * deprecated methods below keep their own routes and do not.
    *
+   * @deprecated Counters, marks and this PATCH route are being removed. A vote, like or
+   * per-viewer entry is the viewer's own document in a viewer-keyed collection (`keyedBy`): read it
+   * with {@link StorageCollection.getMine}, set it with {@link StorageCollection.putMine},
+   * clear it with {@link StorageCollection.deleteMine}, and count by listing with `keyPrefix`.
+   * There is no server-side counter. A report is `app.moderation.report`.
+   *
    * @example
    * ```ts
    * await plays.update('model-123', { $inc: { plays: 1 } }); // { value }
@@ -257,9 +322,15 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
    * ```
    */
   update(key: string, op: StorageIncrementOp, opts?: DocumentCallOptions): Promise<{ value: number }>;
+  /** @deprecated Counters, marks and `update` are being removed; see the first overload. */
   update(key: string, op: StorageMarkOp, opts?: DocumentCallOptions): Promise<{ marked: true; count?: number }>;
+  /** @deprecated Counters, marks and `update` are being removed; see the first overload. */
   update(key: string, op: StorageUnmarkOp, opts?: DocumentCallOptions): Promise<{ marked: false; count?: number }>;
-  /** An operator chosen at run time; the reply is the one its operator gives. */
+  /**
+   * An operator chosen at run time; the reply is the one its operator gives.
+   *
+   * @deprecated Counters, marks and `update` are being removed; see the first `update` overload.
+   */
   update(
     key: string,
     op: StorageUpdateOp,
@@ -270,7 +341,9 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
    * `write: "none"` collection the first increment of an absent key creates the
    * document. Sends `POST …/:key/counters/:counter`, the deprecated per-tally route.
    *
-   * @deprecated Use {@link StorageCollection.update} with `{ $inc: { [counter]: by } }`.
+   * @deprecated Counters are being removed, and {@link StorageCollection.update} with them, so
+   * do not move to `update`. Keep what each viewer did in a viewer-keyed collection (`keyedBy`)
+   * ({@link StorageCollection.putMine}) and count by listing it; there is no server-side counter.
    */
   increment(
     key: string,
@@ -283,7 +356,10 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
    * built-in `report`. Idempotent. `count` is absent for `report`, whose count is
    * never exposed. Sends `PUT …/:key/marks/:name`, the deprecated per-tally route.
    *
-   * @deprecated Use {@link StorageCollection.update} with `{ $mark: name }`.
+   * @deprecated Marks are being removed, and {@link StorageCollection.update} with them, so do
+   * not move to `update`. A vote or like is the viewer's own document in
+   * a viewer-keyed collection (`keyedBy`): set it with {@link StorageCollection.putMine}. A report
+   * is `app.moderation.report`.
    */
   mark(key: string, name: string, opts?: DocumentCallOptions): Promise<{ marked: true; count?: number }>;
   /**
@@ -291,7 +367,9 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
    * server refuses it `invalid_request` (400) for every caller. Sends
    * `DELETE …/:key/marks/:name`, the deprecated per-tally route.
    *
-   * @deprecated Use {@link StorageCollection.update} with `{ $unmark: name }`.
+   * @deprecated Marks are being removed, and {@link StorageCollection.update} with them, so do
+   * not move to `update`. Withdraw a vote or like in a viewer-keyed collection (`keyedBy`) with
+   * {@link StorageCollection.deleteMine}.
    */
   unmark(key: string, name: string, opts?: DocumentCallOptions): Promise<{ marked: false; count?: number }>;
   /**
@@ -323,12 +401,20 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
    * ```ts
    * const r = await app.storage.collection('clips').publish({ from: 'my_clips', keys, prune: true });
    * ```
+   *
+   * @deprecated Server-side publish is being removed. Read the private documents with
+   * {@link StorageCollection.get} / {@link StorageCollection.getMany} and write the shared
+   * copies one by one with {@link StorageCollection.put}, the fallback an app already uses
+   * when publish is unavailable.
    */
   publish(request: StoragePublishRequest, opts?: DocumentCallOptions): Promise<StoragePublishResult>;
   /**
    * Delete the viewer's own documents at `keys` (1 to 500) from this SHARED collection in ONE
    * transaction. Another user's document at a key is skipped as `not_author`, never touched.
    * Sends `POST …/_unpublish/:collection`. Same `publish_unavailable` as {@link publish}.
+   *
+   * @deprecated Server-side unpublish is being removed. Delete the shared copies one by one with
+   * {@link StorageCollection.delete}.
    */
   unpublish(keys: readonly string[], opts?: DocumentCallOptions): Promise<StorageUnpublishResult>;
   /**
@@ -383,7 +469,9 @@ export interface StorageCollectionInfo {
   visibility: 'private' | 'shared';
   /** Shared collections only. */
   write?: string;
+  /** @deprecated Counters are being removed; a viewer-keyed collection reports `keyedBy`. */
   counters: string[];
+  /** @deprecated Marks are being removed; a viewer-keyed collection reports `keyedBy`. */
   marks: string[];
   indexes: Record<string, StorageIndexType>;
   showAuthor: boolean;
