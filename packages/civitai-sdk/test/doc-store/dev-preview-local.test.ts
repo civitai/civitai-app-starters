@@ -474,3 +474,61 @@ describe('dev-tunnel preview: requestGrants and the document-store scopes', () =
     await expect(pending).resolves.toBe(false);
   });
 });
+
+describe('dev-tunnel preview: viewer-keyed documents and reports, in the tab', () => {
+  const KEYED_MANIFEST = {
+    scopes: ['apps:storage', 'apps:storage:publish', 'user:read:self'],
+    storage: {
+      collections: {
+        records: { visibility: 'shared', write: 'own' },
+        votes: { visibility: 'shared', write: 'own', keyedBy: 'parent+viewer' },
+      },
+    },
+  };
+
+  it('one vote per viewer per record, a report, and nothing sent', async () => {
+    injectManifest(KEYED_MANIFEST);
+    const { fetch, calls } = realRoutes();
+    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
+    const votes = app.storage.collection<{ value: number }>('votes');
+
+    const first = await settle(votes.putMine({ value: 1 }, { parent: 'r1' }));
+    const second = await settle(votes.putMine({ value: -1 }, { parent: 'r1' }));
+    const mine = await settle(votes.getMine('r1'));
+    const info = await settle(app.storage.info());
+    await app.storage.collection('records').put('r1', { title: 'a' });
+    const reported = await settle(app.moderation.report({ collection: 'records', key: 'r1' }));
+    const again = await settle(app.moderation.report({ collection: 'records', key: 'r1' }));
+
+    // First, so a store or report that reached the real routes fails HERE.
+    expect(calls).toEqual([]);
+    const key = (first as { value: { key: string } }).value.key;
+    expect(key).toMatch(/^r1:[a-z2-7]{26}$/);
+    expect(second).toMatchObject({ value: { key, version: 2, data: { value: -1 } } });
+    expect(mine).toMatchObject({ value: { key, version: 2 } });
+    expect(info).toMatchObject({ value: { collections: { votes: { keyedBy: 'parent+viewer', open: true } } } });
+    expect([reported, again]).toEqual([{ value: { reported: true } }, { value: { reported: true } }]);
+  });
+
+  it('a report through an import is refused locally as the server refuses a dev token, nothing sent', async () => {
+    injectManifest(KEYED_MANIFEST);
+    const { fetch, calls } = realRoutes();
+    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
+    const error = (await app.moderation
+      .report({ collection: 'records', key: 'r1', from: 'parent-app' })
+      .catch((e: unknown) => e)) as StorageError;
+    expect(calls).toEqual([]);
+    expect([error.status, error.code, error.details]).toEqual([403, 'not_eligible', { reason: 'import_dev_token' }]);
+  });
+
+  it('with no manifest, the report rejects locally too', async () => {
+    const { fetch, calls } = realRoutes();
+    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
+    await expect(app.moderation.report({ collection: 'records', key: 'r1' })).rejects.toMatchObject({
+      code: 'local_preview_no_manifest',
+    });
+    await expect(app.storage.collection('votes').getMine('r1')).rejects.toMatchObject({ code: 'local_preview_no_manifest' });
+    expect(app.storage.collection('votes').parentOf('r1:gq4z7m2k5w6c3t6y7b2d4f7h3j')).toBe('r1');
+    expect(calls).toEqual([]);
+  });
+});

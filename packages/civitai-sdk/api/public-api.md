@@ -79,6 +79,13 @@ export interface AppClient {
      */
     readonly sharedStorage: SharedStorageClient;
     /**
+     * Moderation of this app's SHARED storage: `report({ collection, key, from? })` reports one
+     * document to civitai.com's moderators (`POST /api/v1/blocks/moderation/reports`). Needs the
+     * block token and a signed-in viewer. In a dev-tunnel local preview it files against the
+     * tab's in-memory store, like `app.storage`; nothing is sent.
+     */
+    readonly moderation: ModerationClient;
+    /**
      * The viewer's own App Store items for this app: `upsert`, `withdraw`, `mine`
      * over the `blocks/sub-listings/*` routes. A refusal the server explained is a
      * `SubListingError` with a typed `code`.
@@ -698,6 +705,13 @@ export declare class StorageError extends ApiError {
  */
 export declare function storageImportRefusal(error: unknown): StorageImportRefusal | null;
 
+/**
+ * The viewer-keyed refusal `error` is, typed — or `null` for anything else. Reads the server's
+ * `code` and `details.reason` (both must match: a `reason` under another code is not this), and
+ * for `sign_in_required`, whether the refused call was a `…Mine` call.
+ */
+export declare function storageViewerKeyedRefusal(error: unknown): StorageViewerKeyedRefusal | null;
+
 export interface DocumentCallOptions {
     signal?: AbortSignal;
 }
@@ -857,6 +871,27 @@ export interface StorageUnpublishResult {
     }[];
 }
 
+/**
+ * How a VIEWER-KEYED collection's keys are made (the manifest's `keyedBy`). The server derives
+ * every key from the signed-in viewer, never from the request:
+ *
+ * - `viewer` — at most one document per viewer in the collection. Its key is an opaque digest.
+ * - `parent+viewer` — at most one per viewer per PARENT key (a record, a model, …) the app names.
+ *   Its key is `<parent>:<digest>`, so `list({ keyPrefix: `${parent}:` })` lists exactly one
+ *   parent's documents and {@link StorageCollection.parentOf} reads the parent back.
+ */
+export type StorageKeyedBy = 'viewer' | 'parent+viewer';
+
+/** Options for {@link StorageCollection.putMine} and {@link StorageCollection.deleteMine}. */
+export interface ViewerKeyedOptions extends WriteOptions {
+    /**
+     * The parent key, on a `parent+viewer` collection only (a `viewer` collection refuses one,
+     * `parent_not_allowed`). 1 to 96 characters of `[A-Za-z0-9._-]`, not only dots: anything else
+     * is refused before sending, `invalid_request` with `details.reason: 'invalid_parent'`.
+     */
+    parent?: string;
+}
+
 export interface StorageCollection<T extends object = Record<string, unknown>> {
     /** The document, or `null` when there is none (missing, hidden and absent read alike). */
     get(key: string, opts?: DocumentCallOptions): Promise<StorageDocument<T> | null>;
@@ -987,6 +1022,50 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
      * Sends `POST …/_unpublish/:collection`. Same `publish_unavailable` as {@link publish}.
      */
     unpublish(keys: readonly string[], opts?: DocumentCallOptions): Promise<StorageUnpublishResult>;
+    /**
+     * VIEWER-KEYED collections (`keyedBy` in the manifest): the signed-in viewer's own document,
+     * or `null` when they have none. `parent` names the parent key on a `parent+viewer`
+     * collection and is omitted on a `viewer` one. Sends `GET …/:collection/@me[/:parent]`; the
+     * key is derived by the server and never sent. An anonymous viewer is refused
+     * `sign_in_required` (401), even though they may read the collection by key or by list. A
+     * closed switch does not refuse a read; a host that cannot derive keys does (503
+     * `service_unavailable`, `details.reason: 'viewer_keys_unconfigured'`).
+     *
+     * @example
+     * ```ts
+     * const vote = await votes.getMine(record.key); // null: not voted yet
+     * ```
+     */
+    getMine(parent?: string, opts?: DocumentCallOptions): Promise<StorageDocument<T> | null>;
+    /**
+     * Create or replace the signed-in viewer's own document in a viewer-keyed collection, at the
+     * key the server derives (`PUT …/:collection/@me[/:parent]` with `{ data, ifVersion? }`).
+     * Exactly a {@link put} otherwise: `ifVersion: 0` writes only if the viewer has none yet, and
+     * a shared write's scope (`apps:storage:publish`), trust gate, budget, schema, ownership and
+     * moderation all apply (moderation scans `data` and the parent, never the derived key).
+     *
+     * Refused: `write_policy` (403, `details.reason: 'viewer_keyed_closed'`) while the
+     * collection's switch is closed (`info()` reports it as `open: false`), and
+     * `service_unavailable` (503, `'viewer_keys_unconfigured'`) while the host cannot derive keys.
+     * {@link storageViewerKeyedRefusal} reads each one.
+     */
+    putMine(data: T, opts?: ViewerKeyedOptions): Promise<StorageDocument<T>>;
+    /**
+     * Delete the signed-in viewer's own document in a viewer-keyed collection
+     * (`DELETE …/:collection/@me[/:parent][?ifVersion=N]`). Idempotent, as {@link delete}:
+     * `deleted: false` means there was nothing to delete. Needs only `apps:storage`. Refused
+     * while the switch is closed or keys cannot be derived, as {@link putMine} is.
+     */
+    deleteMine(opts?: ViewerKeyedOptions): Promise<{
+        deleted: boolean;
+    }>;
+    /**
+     * The parent key a `parent+viewer` document's key names (`<parent>:<digest>` → `parent`), or
+     * `null` for any other key — a `viewer` collection's digest, an ordinary key. Pure: it only
+     * reads the key. The digest is the server's and cannot be computed here, so to reach a
+     * viewer's own document use {@link getMine}, never a key built by hand.
+     */
+    parentOf(key: string): string | null;
 }
 
 export type StorageIndexType = 'string' | 'number' | 'boolean' | 'time';
@@ -1001,6 +1080,14 @@ export interface StorageCollectionInfo {
     marks: string[];
     indexes: Record<string, StorageIndexType>;
     showAuthor: boolean;
+    /** Present on a viewer-keyed collection only: how its keys are derived. */
+    keyedBy?: StorageKeyedBy;
+    /**
+     * Present exactly when `keyedBy` is: whether `putMine` / `deleteMine` can land now. `false`
+     * while the collection's switch is closed (a collection being migrated) or while the host
+     * cannot derive keys; reads are unaffected.
+     */
+    open?: boolean;
 }
 
 export interface StorageUsage {
@@ -1106,7 +1193,12 @@ export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unaut
  * LOCAL, never sent by the server: `publish` / `unpublish` reached a civitai.com that does not
  * serve them (an older release, or the app's host flag off), which answered `404 not_found`.
  */
- | 'publish_unavailable' | (string & {});
+ | 'publish_unavailable'
+/**
+ * LOCAL, never sent by the server: `app.moderation.report` reached a civitai.com that does not
+ * serve the report API (an older release without the route, or the app's host flag off).
+ */
+ | 'report_unavailable' | (string & {});
 
 /**
  * `details.reason` of a `not_eligible` that only an import gets — every one the server's
@@ -1180,6 +1272,73 @@ export type StorageImportRefusal = {
     kind: 'not_eligible';
     reason: StorageImportNotEligibleReason;
 };
+
+/**
+ * Why a VIEWER-KEYED call was refused, as the server says it (civitai/civitai#10216):
+ *
+ * - `viewer_keyed` — 400 `invalid_request`: a `create`, or a `put` / `delete` by key, on a
+ *   viewer-keyed collection. Use `putMine` / `deleteMine`.
+ * - `not_viewer_keyed` — 400: a `…Mine` call on a collection that declares no `keyedBy`.
+ * - `parent_required` — 400: a `…Mine` call without `parent` on a `parent+viewer` collection.
+ * - `parent_not_allowed` — 400: a `parent` on a `viewer` collection.
+ * - `invalid_parent` — 400: a `parent` outside `[A-Za-z0-9._-]{1,96}`, or only dots. This client
+ *   refuses one before sending, with the server's code, reason and `details.collection`.
+ * - `viewer_keyed_closed` — 403 `write_policy`: a `putMine` / `deleteMine` while the
+ *   collection's switch is closed (`info()` says `open: false`). Reads still work.
+ * - `viewer_keys_unconfigured` — 503 `service_unavailable`: the host cannot derive keys at all;
+ *   every `…Mine` call, reads included, is refused until it can.
+ * - `sign_in_required` — 401: an anonymous viewer on any `…Mine` call (they have no document of
+ *   their own to address).
+ */
+export type StorageViewerKeyedRefusalReason = 'viewer_keyed' | 'not_viewer_keyed' | 'parent_required' | 'parent_not_allowed' | 'invalid_parent' | 'viewer_keyed_closed' | 'viewer_keys_unconfigured' | 'sign_in_required';
+
+export interface StorageViewerKeyedRefusal {
+    reason: StorageViewerKeyedRefusalReason;
+    /** The collection, when the server named it. */
+    collection?: string;
+}
+
+/** What {@link ModerationClient.report} reports. */
+export interface StorageReportRequest {
+    /** A SHARED collection the app declares (a private one is refused `invalid_request`). */
+    collection: string;
+    /** The document's key, as a read returned it. */
+    key: string;
+    /**
+     * Another app's blockId: report a document in THAT app's collection, through an import this
+     * app's manifest declares (`storage.imports`), as `collection(name, { from })` reaches it.
+     * When the key is present its value must be a string: `{ from: undefined }` would report a
+     * document in this app's own collection, so it is refused before sending.
+     */
+    from?: string;
+}
+
+/** Moderation on `app.moderation`. */
+export interface ModerationClient {
+    /**
+     * Report one document to the moderators. Idempotent: reporting it again answers the same and
+     * files nothing new. There is no withdrawal and no count, so show the viewer "reported" from
+     * your own state, not from a read.
+     *
+     * Signed-in viewers only (`sign_in_required`, 401). Needs `apps:storage`; spends the daily
+     * report budget (about 20 per viewer per app, `rate_limited` with `retryAfter` past it) and
+     * passes the shared-write trust gate (`not_eligible`). A document that is not there, or not
+     * visible, is `not_found` (404). Through an import, the source app's rules apply, and a
+     * source that needs the viewer's publish grant there is asked for it once, as a write is.
+     *
+     * A civitai.com that does not serve the report API — an older release, or the app's host flag
+     * off — rejects with the LOCAL code `report_unavailable` (404). Hide the report action then;
+     * a `report` mark (`update(key, { $mark: 'report' })`) is the older route.
+     *
+     * @example
+     * ```ts
+     * await app.moderation.report({ collection: 'posts', key: post.key }); // { reported: true }
+     * ```
+     */
+    report(request: StorageReportRequest, opts?: DocumentCallOptions): Promise<{
+        reported: true;
+    }>;
+}
 
 /**
  * The host could not learn whether a submit created a run. **The run may be
@@ -4337,6 +4496,26 @@ export interface FakeStorageOptions {
      * app's default tests exercise its fallback. `true` serves them, to test the publish path.
      */
     publish?: boolean;
+    /**
+     * Serve the report API (`POST blocks/moderation/reports`). Default `false`, as on civitai.com,
+     * where it sits behind a per-app flag that is off: it answers as an unknown route (404
+     * `not_found`), which the client reports as `report_unavailable`. `true` serves it.
+     */
+    reports?: boolean;
+    /**
+     * This app's viewer-keyed collections whose write switch is CLOSED (a collection being
+     * migrated): `putMine` / `deleteMine` are refused 403 `write_policy`
+     * (`reason: 'viewer_keyed_closed'`) and `info()` reports `open: false`; reads still work. As on
+     * the server, only the production namespace has switches: a `dev` caller is always open.
+     * Default: none closed.
+     */
+    viewerKeyedClosed?: readonly string[];
+    /**
+     * Answer every `@me` call 503 `service_unavailable` (`reason: 'viewer_keys_unconfigured'`) and
+     * report every viewer-keyed collection `open: false`, as a host whose key-derivation secret is
+     * unset does. Default `false`.
+     */
+    viewerKeysUnconfigured?: boolean;
 }
 
 /** One request as the fake received it, and what it answered. */
@@ -4354,6 +4533,8 @@ export interface FakeStorageSession {
     readonly http: Http;
     /** The real client over that seam. */
     readonly storage: DocumentStorage;
+    /** The real report API client over that seam (`app.moderation`). */
+    readonly moderation: ModerationClient;
 }
 
 export interface FakeStorage extends FakeStorageSession {

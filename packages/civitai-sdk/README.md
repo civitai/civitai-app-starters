@@ -60,6 +60,7 @@ Both give you:
 | `app.workflows` | Generation for a **block**, through the host's `blocks/workflows/*` routes: `estimate`, `submit`, `get`, `watch`, `wait`, `cancel`, `list`. Needs the block token: an OAuth access token is answered `401`, and a block holding one generates through `app.orchestration`. See [Multi-step workflows](#multi-step-workflows) |
 | `app.orchestration` | The orchestrator itself, for an app holding an OAuth access token: `submitWorkflow`, `estimateWorkflow`, `getWorkflow`, `watchWorkflow`, `waitForWorkflow`, `cancelWorkflow`, `queryWorkflows` |
 | `app.storage` | Document storage: `collection(name)` and `info()` over the collections the manifest declares. Needs the block token. See [Document storage](#document-storage). Its legacy `get`/`set`/`delete`/`list`/`getQuota` are `@deprecated` and reject with `410` |
+| `app.moderation` | `report({ collection, key, from? })`: report one shared document to civitai.com's moderators. Needs the block token and a signed-in viewer. See [Reporting a document](#reporting-a-document) |
 | `app.sharedStorage` | `@deprecated`: the legacy shared store, removed on 2026-11-10, so every call rejects with `410`. Use a `shared` collection. See [Shared storage](#shared-storage) |
 | `app.subListings` | The viewer's own App Store items for this app: `upsert`, `withdraw`, `mine`. Needs the block token and `apps:store:items:write`. See [Store sub-listings](#store-sub-listings) |
 | `app.requestGrants(scopes)` | Asks for more scopes; resolves `false` when they cannot be granted |
@@ -326,6 +327,104 @@ before moderation and before any write budget. An absent field is allowed;
 ownership is checked only when the document is written. Only phase-one operations exist: no batch writes, change feed, TTL or
 owner-written documents yet (server-side publish, below, is the one multi-document write).
 
+### Viewer-keyed documents: one per viewer
+
+A shared `write: "own"` collection that declares **`keyedBy`** holds at most one document
+per viewer (`"viewer"`) or one per viewer per parent key (`"parent+viewer"`) — a vote on
+a record, a rating of a model, a profile. The server derives each key from the signed-in
+viewer, so the app never names one and no viewer can write another's (civitai/civitai#10216).
+
+```json
+"storage": { "collections": {
+  "records": { "visibility": "shared", "write": "own" },
+  "votes":   { "visibility": "shared", "write": "own", "keyedBy": "parent+viewer",
+               "schema": { "type": "object", "properties": { "value": { "type": "integer", "minimum": -1, "maximum": 1 } } } }
+}}
+```
+
+```ts
+import { storageViewerKeyedRefusal } from '@civitai/sdk';
+
+const votes = app.storage.collection<{ value: number }>('votes');
+
+const mine = await votes.getMine('r1'); // null: not voted on record r1 yet
+await votes.putMine({ value: 1 }, { parent: 'r1', ifVersion: mine?.version ?? 0 });
+await votes.deleteMine({ parent: 'r1' }); // { deleted }
+
+// Every viewer's vote on r1, and the record each of my votes is on:
+const onR1 = await votes.list({ keyPrefix: 'r1:' });
+const myVotes = await votes.list({ author: 'me' });
+for (const doc of myVotes.items) console.log(votes.parentOf(doc.key), doc.data.value, onR1.items.length);
+
+try {
+  await votes.putMine({ value: 1 }, { parent: 'r1' });
+} catch (error) {
+  const refusal = storageViewerKeyedRefusal(error);
+  if (refusal?.reason === 'viewer_keyed_closed') showMessage('Voting reopens shortly.');
+  else if (refusal?.reason === 'sign_in_required') app.host.requestSignIn();
+  else throw error;
+}
+```
+
+- **`getMine(parent?)`, `putMine(data, { parent?, ifVersion? })`, `deleteMine({ parent?,
+  ifVersion? })`** send `GET`/`PUT`/`DELETE …/:collection/@me[/:parent]`, with `?from=`
+  through an import. `parent` is required on a `parent+viewer` collection and refused on a
+  `viewer` one. Otherwise each is exactly a `get`, `put` or `delete`: `ifVersion: 0` writes
+  only if the viewer has none yet, a put needs `apps:storage:publish` and passes the
+  trust gate, the shared-write budget, the `schema` and moderation (which scans `data` and
+  the parent, never the derived key); a delete needs only `apps:storage`.
+- **Keys are the server's.** A key is an opaque digest (`viewer`) or `<parent>:<digest>`
+  (`parent+viewer`); `parentOf(key)` reads the parent back (`null` for any other key).
+  Never build a key by hand. Reads by key and lists are unchanged and open to anonymous
+  viewers; `list({ keyPrefix: `${parent}:` })` lists exactly one parent's documents, since a
+  parent never contains `:`. There is no count route: count by listing.
+- **The parent grammar** is the server's: 1 to 96 characters of `[A-Za-z0-9._-]`, not
+  only dots. Anything else is refused before sending, `invalid_request` with
+  `details.reason: 'invalid_parent'`.
+- **Refusals** — `storageViewerKeyedRefusal(error)` returns `{ reason, collection? }` or
+  `null`. `viewer_keyed` (400: a `create`, or a `put`/`delete` by key, on a viewer-keyed
+  collection), `not_viewer_keyed`, `parent_required`, `parent_not_allowed`,
+  `invalid_parent` (all 400 `invalid_request`), `viewer_keyed_closed` (403 `write_policy`:
+  the collection's switch is closed while it is migrated; reads still work),
+  `viewer_keys_unconfigured` (503 `service_unavailable`: the host cannot derive keys) and
+  `sign_in_required` (401: every `…Mine` call, reads included, needs a signed-in viewer).
+- **`info()`** reports `keyedBy` and `open` on each viewer-keyed collection; `open: false`
+  means a `putMine`/`deleteMine` would be refused right now.
+- `keyedBy` is immutable once a version declaring it is approved: declare a new
+  collection to change it.
+
+### Reporting a document
+
+`app.moderation.report({ collection, key, from? })` reports one document of a SHARED
+collection to civitai.com's moderators (`POST /api/v1/blocks/moderation/reports`,
+civitai/civitai#10215) and resolves `{ reported: true }` — the same whether or not the
+viewer had reported it already. A report cannot be withdrawn and is never counted in any
+answer, so show "reported" from your own state.
+
+```ts
+import { StorageError } from '@civitai/sdk';
+
+try {
+  await app.moderation.report({ collection: 'records', key: 'r1' });
+  markReported('r1');
+} catch (error) {
+  if (error instanceof StorageError && error.code === 'report_unavailable') hideReportButton();
+  else if (error instanceof StorageError && error.code === 'rate_limited') console.log('retry in', error.retryAfter, 's');
+  else throw error;
+}
+```
+
+- Signed-in viewers only (`sign_in_required`), with `apps:storage`; a report spends the
+  daily report budget (about 20 per viewer per app: `rate_limited`, `details.bucket:
+  'report'`) and passes the trust gate (`not_eligible`). A private collection is refused
+  `invalid_request`; a document that is not there, or not visible, `not_found`.
+- **`from`** reports a document in another app's collection through a declared import,
+  with that import's refusals (`storageImportRefusal`); `{ from: undefined }` is refused
+  before sending rather than reporting in this app's own collection.
+- **Older hosts.** civitai.com serves the report API behind a per-app flag. A host that
+  does not serve it rejects with the LOCAL code `report_unavailable` (404); the
+  `{ $mark: 'report' }` update is the route it had before.
+
 ### Publishing private documents in one call
 
 `collection(to).publish({ from, keys, prune? })` asks the server to copy
@@ -519,7 +618,10 @@ if (app.storage.mode === 'local-preview') {
 - **One viewer, one tab, gone on reload.** It cannot show other people's entries,
   real vote totals, ranking across users, the minimum-trust gate on shared writes,
   or moderation of real content.
-- **No imports.** `collection(name, { from })` is refused locally with the server's own
+- **Viewer-keyed collections and reports work in the tab.** `getMine`/`putMine`/
+  `deleteMine` keep one document per (parent and) viewer, every switch is open (as in any
+  development namespace), and `app.moderation.report` files against the tab's documents.
+- **No imports.** `collection(name, { from })` (and a report with `from`) is refused locally with the server's own
   answer to a dev token, 403 `not_eligible` (`import_dev_token`); nothing is sent. Test
   a fork reading its parent with [the fake's `sources`](#a-fake-document-store).
 - **Only the document store.** The deprecated `app.storage.get/set/…` and
@@ -1296,6 +1398,14 @@ shared write budget — when you want to test how the app handles `rate_limited`
 behind a per-app flag: both answer as an unknown route, which the client reports as
 `publish_unavailable`, so your default tests exercise the fallback. Pass
 `publish: true` to serve them with the server's rules and budget.
+
+The report API is OFF by default too, for the same reason (`fake.moderation.report`
+rejects `report_unavailable`); pass `reports: true` to serve it. Viewer-keyed
+collections are served at `@me` with the server's rules; `viewerKeyedClosed:
+['votes']` closes a collection's write switch and `viewerKeysUnconfigured: true` makes
+every `@me` call answer 503, so the app's handling of each can be tested. The fake's
+derived keys have the server's shape but not its values: never compare a key across the
+two.
 
 Where it differs from the server on purpose:
 

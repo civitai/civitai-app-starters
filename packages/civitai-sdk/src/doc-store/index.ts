@@ -27,6 +27,19 @@ const GET_MANY = '_get';
 /** Server-side publish and unpublish sit there too (civitai/civitai, behind a per-app host flag). */
 const PUBLISH = '_publish';
 const UNPUBLISH = '_unpublish';
+/**
+ * The viewer's own document in a VIEWER-KEYED collection sits at the KEY position as `@me`
+ * (civitai/civitai#10216): `@` is outside the key grammar, so it is never a key.
+ */
+const MINE = '@me';
+/**
+ * A parent key, exactly as the server checks it (`VIEWER_KEY_PARENT_RE` and its dot-only rule):
+ * the key grammar without `:`, 1 to 96 characters, not only dots.
+ */
+const PARENT = /^[A-Za-z0-9._-]{1,96}$/;
+const DOT_ONLY = /^\.+$/;
+/** The server's digest in a derived key: 26 characters of lowercase RFC 4648 base32, no padding. */
+const DIGEST = /^[a-z2-7]{26}$/;
 
 export interface DocumentCallOptions {
   signal?: AbortSignal;
@@ -179,6 +192,27 @@ export interface StorageUnpublishResult {
   skipped: { key: string; reason: 'missing' | 'not_author' | (string & {}) }[];
 }
 
+/**
+ * How a VIEWER-KEYED collection's keys are made (the manifest's `keyedBy`). The server derives
+ * every key from the signed-in viewer, never from the request:
+ *
+ * - `viewer` — at most one document per viewer in the collection. Its key is an opaque digest.
+ * - `parent+viewer` — at most one per viewer per PARENT key (a record, a model, …) the app names.
+ *   Its key is `<parent>:<digest>`, so `list({ keyPrefix: `${parent}:` })` lists exactly one
+ *   parent's documents and {@link StorageCollection.parentOf} reads the parent back.
+ */
+export type StorageKeyedBy = 'viewer' | 'parent+viewer';
+
+/** Options for {@link StorageCollection.putMine} and {@link StorageCollection.deleteMine}. */
+export interface ViewerKeyedOptions extends WriteOptions {
+  /**
+   * The parent key, on a `parent+viewer` collection only (a `viewer` collection refuses one,
+   * `parent_not_allowed`). 1 to 96 characters of `[A-Za-z0-9._-]`, not only dots: anything else
+   * is refused before sending, `invalid_request` with `details.reason: 'invalid_parent'`.
+   */
+  parent?: string;
+}
+
 export interface StorageCollection<T extends object = Record<string, unknown>> {
   /** The document, or `null` when there is none (missing, hidden and absent read alike). */
   get(key: string, opts?: DocumentCallOptions): Promise<StorageDocument<T> | null>;
@@ -295,6 +329,48 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
    * Sends `POST …/_unpublish/:collection`. Same `publish_unavailable` as {@link publish}.
    */
   unpublish(keys: readonly string[], opts?: DocumentCallOptions): Promise<StorageUnpublishResult>;
+  /**
+   * VIEWER-KEYED collections (`keyedBy` in the manifest): the signed-in viewer's own document,
+   * or `null` when they have none. `parent` names the parent key on a `parent+viewer`
+   * collection and is omitted on a `viewer` one. Sends `GET …/:collection/@me[/:parent]`; the
+   * key is derived by the server and never sent. An anonymous viewer is refused
+   * `sign_in_required` (401), even though they may read the collection by key or by list. A
+   * closed switch does not refuse a read; a host that cannot derive keys does (503
+   * `service_unavailable`, `details.reason: 'viewer_keys_unconfigured'`).
+   *
+   * @example
+   * ```ts
+   * const vote = await votes.getMine(record.key); // null: not voted yet
+   * ```
+   */
+  getMine(parent?: string, opts?: DocumentCallOptions): Promise<StorageDocument<T> | null>;
+  /**
+   * Create or replace the signed-in viewer's own document in a viewer-keyed collection, at the
+   * key the server derives (`PUT …/:collection/@me[/:parent]` with `{ data, ifVersion? }`).
+   * Exactly a {@link put} otherwise: `ifVersion: 0` writes only if the viewer has none yet, and
+   * a shared write's scope (`apps:storage:publish`), trust gate, budget, schema, ownership and
+   * moderation all apply (moderation scans `data` and the parent, never the derived key).
+   *
+   * Refused: `write_policy` (403, `details.reason: 'viewer_keyed_closed'`) while the
+   * collection's switch is closed (`info()` reports it as `open: false`), and
+   * `service_unavailable` (503, `'viewer_keys_unconfigured'`) while the host cannot derive keys.
+   * {@link storageViewerKeyedRefusal} reads each one.
+   */
+  putMine(data: T, opts?: ViewerKeyedOptions): Promise<StorageDocument<T>>;
+  /**
+   * Delete the signed-in viewer's own document in a viewer-keyed collection
+   * (`DELETE …/:collection/@me[/:parent][?ifVersion=N]`). Idempotent, as {@link delete}:
+   * `deleted: false` means there was nothing to delete. Needs only `apps:storage`. Refused
+   * while the switch is closed or keys cannot be derived, as {@link putMine} is.
+   */
+  deleteMine(opts?: ViewerKeyedOptions): Promise<{ deleted: boolean }>;
+  /**
+   * The parent key a `parent+viewer` document's key names (`<parent>:<digest>` → `parent`), or
+   * `null` for any other key — a `viewer` collection's digest, an ordinary key. Pure: it only
+   * reads the key. The digest is the server's and cannot be computed here, so to reach a
+   * viewer's own document use {@link getMine}, never a key built by hand.
+   */
+  parentOf(key: string): string | null;
 }
 
 export type StorageIndexType = 'string' | 'number' | 'boolean' | 'time';
@@ -309,6 +385,14 @@ export interface StorageCollectionInfo {
   marks: string[];
   indexes: Record<string, StorageIndexType>;
   showAuthor: boolean;
+  /** Present on a viewer-keyed collection only: how its keys are derived. */
+  keyedBy?: StorageKeyedBy;
+  /**
+   * Present exactly when `keyedBy` is: whether `putMine` / `deleteMine` can land now. `false`
+   * while the collection's switch is closed (a collection being migrated) or while the host
+   * cannot derive keys; reads are unaffected.
+   */
+  open?: boolean;
 }
 
 export interface StorageUsage {
@@ -440,6 +524,11 @@ export type StorageErrorCode =
    * serve them (an older release, or the app's host flag off), which answered `404 not_found`.
    */
   | 'publish_unavailable'
+  /**
+   * LOCAL, never sent by the server: `app.moderation.report` reached a civitai.com that does not
+   * serve the report API (an older release without the route, or the app's host flag off).
+   */
+  | 'report_unavailable'
   | (string & {});
 
 /**
@@ -617,6 +706,104 @@ export function storageImportRefusal(error: unknown): StorageImportRefusal | nul
 }
 
 /**
+ * Why a VIEWER-KEYED call was refused, as the server says it (civitai/civitai#10216):
+ *
+ * - `viewer_keyed` — 400 `invalid_request`: a `create`, or a `put` / `delete` by key, on a
+ *   viewer-keyed collection. Use `putMine` / `deleteMine`.
+ * - `not_viewer_keyed` — 400: a `…Mine` call on a collection that declares no `keyedBy`.
+ * - `parent_required` — 400: a `…Mine` call without `parent` on a `parent+viewer` collection.
+ * - `parent_not_allowed` — 400: a `parent` on a `viewer` collection.
+ * - `invalid_parent` — 400: a `parent` outside `[A-Za-z0-9._-]{1,96}`, or only dots. This client
+ *   refuses one before sending, with the server's code, reason and `details.collection`.
+ * - `viewer_keyed_closed` — 403 `write_policy`: a `putMine` / `deleteMine` while the
+ *   collection's switch is closed (`info()` says `open: false`). Reads still work.
+ * - `viewer_keys_unconfigured` — 503 `service_unavailable`: the host cannot derive keys at all;
+ *   every `…Mine` call, reads included, is refused until it can.
+ * - `sign_in_required` — 401: an anonymous viewer on any `…Mine` call (they have no document of
+ *   their own to address).
+ */
+export type StorageViewerKeyedRefusalReason =
+  | 'viewer_keyed'
+  | 'not_viewer_keyed'
+  | 'parent_required'
+  | 'parent_not_allowed'
+  | 'invalid_parent'
+  | 'viewer_keyed_closed'
+  | 'viewer_keys_unconfigured'
+  | 'sign_in_required';
+
+export interface StorageViewerKeyedRefusal {
+  reason: StorageViewerKeyedRefusalReason;
+  /** The collection, when the server named it. */
+  collection?: string;
+}
+
+/** Each refusal's (code, `details.reason`) pair as the server sends it. */
+const VIEWER_KEYED_CODE: Record<string, StorageErrorCode> = {
+  viewer_keyed: 'invalid_request',
+  not_viewer_keyed: 'invalid_request',
+  parent_required: 'invalid_request',
+  parent_not_allowed: 'invalid_request',
+  invalid_parent: 'invalid_request',
+  viewer_keyed_closed: 'write_policy',
+  viewer_keys_unconfigured: 'service_unavailable',
+};
+
+/**
+ * The refusals of `…Mine` calls (set where the reply is read). `sign_in_required` carries no
+ * reason, so this is how {@link storageViewerKeyedRefusal} tells an anonymous `…Mine` call from
+ * any other anonymous refusal.
+ */
+const refusedAtMine = new WeakSet<StorageError>();
+
+/**
+ * The viewer-keyed refusal `error` is, typed — or `null` for anything else. Reads the server's
+ * `code` and `details.reason` (both must match: a `reason` under another code is not this), and
+ * for `sign_in_required`, whether the refused call was a `…Mine` call.
+ */
+export function storageViewerKeyedRefusal(error: unknown): StorageViewerKeyedRefusal | null {
+  if (!(error instanceof StorageError)) return null;
+  const collection = typeof error.details?.collection === 'string' ? error.details.collection : undefined;
+  const at = (reason: StorageViewerKeyedRefusalReason): StorageViewerKeyedRefusal =>
+    collection === undefined ? { reason } : { reason, collection };
+  if (error.code === 'sign_in_required') return refusedAtMine.has(error) ? at('sign_in_required') : null;
+  const reason = error.details?.reason;
+  if (typeof reason !== 'string' || !Object.prototype.hasOwnProperty.call(VIEWER_KEYED_CODE, reason)) return null;
+  return VIEWER_KEYED_CODE[reason] === error.code ? at(reason as StorageViewerKeyedRefusalReason) : null;
+}
+
+/** `<parent>:<digest>` → `parent`; `null` for every other key. Internal (`collection().parentOf`). */
+export function parentOfKey(key: unknown): string | null {
+  if (typeof key !== 'string') return null;
+  const colon = key.indexOf(':');
+  if (colon < 0) return null;
+  const parent = key.slice(0, colon);
+  return PARENT.test(parent) && !DOT_ONLY.test(parent) && DIGEST.test(key.slice(colon + 1)) ? parent : null;
+}
+
+/** The `@me` path, refusing a parent the server would refuse (and a URL would rewrite), before sending. */
+function minePath(collection: string, parent: unknown): string {
+  const base = `${BASE}/${collection}/${MINE}`;
+  if (parent === undefined) return base;
+  if (typeof parent !== 'string' || !PARENT.test(parent) || DOT_ONLY.test(parent)) {
+    const message = 'parent must be 1–96 characters of [A-Za-z0-9._-], not only dots (refused before sending)';
+    const details = { reason: 'invalid_parent', collection };
+    throw new StorageError(400, 'invalid_request', message, { code: 'invalid_request', message, error: message, details }, details);
+  }
+  return `${base}/${encodeURIComponent(parent)}`;
+}
+
+/**
+ * The server's own answer to a path it has no route for (an older civitai.com without `@me`
+ * routes, asked for `…/@me/:parent`), told apart from a document miss only by its sentence:
+ * the envelope carries no other field. Matched exactly, so a reworded miss still reads as a miss.
+ */
+const NO_SUCH_STORAGE_ROUTE = 'no such storage route';
+
+const isRouteMiss = (error: StorageError): boolean =>
+  isRecord(error.body) && error.body.message === NO_SUCH_STORAGE_ROUTE;
+
+/**
  * Appended to a REAL route's `insufficient_scope`, after the server's own sentence.
  * The server cannot tell a published app whose manifest forgot the scope from a
  * dev-tunnel preview (which is never granted it), so the message covers both —
@@ -666,7 +853,7 @@ function isSourcePublishRefusal(error: unknown, from: string): boolean {
  * refusal, a refused retry surfaces ITS refusal (the second), and a caller abort during
  * the wait surfaces the abort.
  */
-async function withSourcePublishGrant<R>(
+export async function withSourcePublishGrant<R>(
   ask: DocumentStorageOptions['requestGrants'],
   from: string | undefined,
   signal: AbortSignal | undefined,
@@ -757,21 +944,37 @@ function segment(what: string, value: string): string {
   return encodeURIComponent(value);
 }
 
-export function createDocumentStorage(http: Http, options: DocumentStorageOptions = {}): DocumentStorage {
-  const ask = options.requestGrants;
-  const call = async <R>(
-    method: string,
-    path: string,
-    opts: { query?: Query; body?: unknown; signal?: AbortSignal } = {},
-  ): Promise<R> => {
+/** How a storage-envelope call is sent; internal, shared with the report API's client. */
+export type StorageCall = <R>(
+  method: string,
+  path: string,
+  opts?: { query?: Query; body?: unknown; signal?: AbortSignal },
+  how?: { throughImport?: boolean; mine?: boolean },
+) => Promise<R>;
+
+/**
+ * One call in the store's envelope: a refusal becomes a {@link StorageError}, remembered as a
+ * call through an import (a `?from=`, or `how.throughImport`) or a `…Mine` call where it was one.
+ * Internal: the document store and the report API's client both send through it.
+ */
+export function createStorageCall(http: Http, options: DocumentStorageOptions = {}): StorageCall {
+  return async (method, path, opts = {}, how = {}) => {
     try {
-      return await http<R>(method, path, opts);
+      return await http(method, path, opts);
     } catch (error) {
       const refused = toStorageError(error, options);
-      if (refused instanceof StorageError && typeof opts.query?.from === 'string') refusedThroughImport.add(refused);
+      if (refused instanceof StorageError) {
+        if (how.throughImport || typeof opts.query?.from === 'string') refusedThroughImport.add(refused);
+        if (how.mine) refusedAtMine.add(refused);
+      }
       throw refused;
     }
   };
+}
+
+export function createDocumentStorage(http: Http, options: DocumentStorageOptions = {}): DocumentStorage {
+  const ask = options.requestGrants;
+  const call = createStorageCall(http, options);
 
   return {
     collection<T extends object = Record<string, unknown>>(name: string, options?: CollectionOptions): StorageCollection<T> {
@@ -939,6 +1142,43 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
           );
           return toUnpublishResult(reply, `${name}.unpublish`);
         },
+
+        // VIEWER-KEYED (`@me`): the server derives the key from the verified viewer, so none is
+        // sent. Every call carries `?from=` when importing, as any collection call does.
+        async getMine(parent, { signal } = {}) {
+          try {
+            return doc(await call('GET', minePath(coll(), parent), { query: q(), signal }, { mine: true }), 'getMine');
+          } catch (error) {
+            // Only a DOCUMENT miss is "none yet". The same code for a path the server has no
+            // route for (a civitai.com without `@me`) must never read as "not voted".
+            if (error instanceof StorageError && error.code === 'not_found' && !isRouteMiss(error)) return null;
+            throw error;
+          }
+        },
+
+        async putMine(data, { parent, ifVersion, signal } = {}) {
+          return authoring(signal, async () =>
+            doc(
+              await call('PUT', minePath(coll(), parent), { query: q(), body: { data, ifVersion }, signal }, { mine: true }),
+              'putMine',
+            ),
+          );
+        },
+
+        async deleteMine({ parent, ifVersion, signal } = {}) {
+          const reply = await call<{ deleted?: unknown }>(
+            'DELETE',
+            minePath(coll(), parent),
+            { query: q({ ifVersion }), signal },
+            { mine: true },
+          );
+          if (typeof reply?.deleted !== 'boolean') {
+            throw new CivitaiError(`storage ${name}.deleteMine: reply carried no \`deleted\` flag`);
+          }
+          return { deleted: reply.deleted };
+        },
+
+        parentOf: (key) => parentOfKey(key),
       };
     },
 
@@ -1028,7 +1268,7 @@ function toUnpublishResult(reply: unknown, op: string): StorageUnpublishResult {
 }
 
 /** Refused with the code the server gives an unusable `from`, so a caller branches once. */
-function invalidFrom(message: string, from: unknown): StorageError {
+export function invalidFrom(message: string, from: unknown): StorageError {
   const details = { from };
   return new StorageError(400, 'invalid_request', message, { code: 'invalid_request', message, error: message, details }, details);
 }

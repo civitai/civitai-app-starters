@@ -1,5 +1,6 @@
 import { ApiError, type Http, type RequestOptions } from '../http/index.js';
 import { createDocumentStorage, type DocumentStorage } from './index.js';
+import { createModerationClient, REPORTS_PATH, type ModerationClient } from './moderation.js';
 import {
   compileCollectionSchema,
   countSchemaPatterns,
@@ -54,6 +55,19 @@ import {
  * `requestGrants` is the host's prompt for the publish grant in a source (civitai/civitai#7586):
  * Allow records it there and the client's one retry lands, as on a real app page.
  *
+ * VIEWER-KEYED collections (`keyedBy`, civitai/civitai#10216) are served at `…/:c/@me[/:parent]`
+ * with the server's refusals in its order. The derived key is an opaque digest of (app,
+ * namespace, collection, mode, parent, viewer) — `<parent>:<digest>` under `parent+viewer` — so
+ * one viewer has one document per parent and no key carries their id. It is NOT the server's
+ * digest (that one is keyed by a secret the fake does not have): never compare keys across the
+ * two. `viewerKeyedClosed` closes a collection's write switch, `viewerKeysUnconfigured` answers
+ * every `@me` call 503, as a host without its derivation secret does.
+ *
+ * THE REPORT API (`POST blocks/moderation/reports`, civitai/civitai#10215) is served with
+ * `reports: true`; off, as on civitai.com by default, it answers as an unknown route, which the
+ * client reports as `report_unavailable`. A report is one per (document, viewer), idempotent,
+ * cannot be withdrawn, and is never counted in any answer.
+ *
  * NOT MODELLED: moderator hides (a hidden document reads as not found on the server;
  * nothing here hides one), moderator exemption from the scanner, the review-preview
  * namespace, the token middleware's other refusals (revoked instance, context
@@ -83,6 +97,10 @@ const KEY = /^[A-Za-z0-9._:-]{1,128}$/;
 const DOT_ONLY = /^\.+$/;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 const REPORT = 'report';
+/** The viewer's own document's path segment, and a parent key's grammar (the key's, without `:`). */
+const MINE = '@me';
+const PARENT = /^[A-Za-z0-9._-]{1,96}$/;
+const KEYED_BY = ['viewer', 'parent+viewer'] as const;
 /** The update operators a PATCH may carry, and the deprecated tally route each one runs as. */
 const TALLY_OPERATORS = { $inc: 'increment', $mark: 'mark', $unmark: 'unmark' } as const;
 const INDEX_TYPES = ['string', 'number', 'boolean', 'time'] as const;
@@ -171,6 +189,7 @@ const STATUS: Record<string, number> = {
   storage_disabled: 503,
   moderation_unavailable: 503,
   consent_unavailable: 503,
+  service_unavailable: 503,
 };
 
 // ---------------------------------------------------------------------------
@@ -295,6 +314,26 @@ export interface FakeStorageOptions {
    * app's default tests exercise its fallback. `true` serves them, to test the publish path.
    */
   publish?: boolean;
+  /**
+   * Serve the report API (`POST blocks/moderation/reports`). Default `false`, as on civitai.com,
+   * where it sits behind a per-app flag that is off: it answers as an unknown route (404
+   * `not_found`), which the client reports as `report_unavailable`. `true` serves it.
+   */
+  reports?: boolean;
+  /**
+   * This app's viewer-keyed collections whose write switch is CLOSED (a collection being
+   * migrated): `putMine` / `deleteMine` are refused 403 `write_policy`
+   * (`reason: 'viewer_keyed_closed'`) and `info()` reports `open: false`; reads still work. As on
+   * the server, only the production namespace has switches: a `dev` caller is always open.
+   * Default: none closed.
+   */
+  viewerKeyedClosed?: readonly string[];
+  /**
+   * Answer every `@me` call 503 `service_unavailable` (`reason: 'viewer_keys_unconfigured'`) and
+   * report every viewer-keyed collection `open: false`, as a host whose key-derivation secret is
+   * unset does. Default `false`.
+   */
+  viewerKeysUnconfigured?: boolean;
 }
 
 /** One request as the fake received it, and what it answered. */
@@ -312,6 +351,8 @@ export interface FakeStorageSession {
   readonly http: Http;
   /** The real client over that seam. */
   readonly storage: DocumentStorage;
+  /** The real report API client over that seam (`app.moderation`). */
+  readonly moderation: ModerationClient;
 }
 
 export interface FakeStorage extends FakeStorageSession {
@@ -340,6 +381,8 @@ interface Decl {
   schema?: (data: unknown) => SchemaFailure | null;
   /** `false` refuses every import of this collection (`not_exportable`). */
   exportable: boolean;
+  /** A viewer-keyed collection's key derivation; absent for ordinary keys. */
+  keyedBy?: (typeof KEYED_BY)[number];
 }
 
 /** One of the manifest's `storage.imports`. */
@@ -446,6 +489,22 @@ function parseManifest(manifest: unknown): Map<string, Decl> {
     };
     if (shared && (raw.write === 'own' || raw.write === 'none')) decl.write = raw.write;
     if (schema) decl.schema = schema;
+    // The server's parser rules and texts (`parseCollection` in block-storage.constants.ts).
+    if (raw.keyedBy !== undefined) {
+      if (typeof raw.keyedBy !== 'string' || !(KEYED_BY as readonly string[]).includes(raw.keyedBy)) {
+        errors.push(`${at}.keyedBy must be one of ${KEYED_BY.join(', ')}`);
+      } else if (!shared) {
+        errors.push(`${at}.keyedBy applies only to shared collections — a private collection already has one key space per viewer`);
+      } else if (raw.write !== undefined && raw.write !== 'own') {
+        errors.push(`${at}.keyedBy applies only to write "own" — the viewer must be the author of the document their key names`);
+      } else if (raw.counters !== undefined || raw.marks !== undefined) {
+        errors.push(
+          `${at}.keyedBy cannot be combined with counters or marks — each viewer's document is itself their vote or entry`,
+        );
+      } else {
+        decl.keyedBy = raw.keyedBy as (typeof KEYED_BY)[number];
+      }
+    }
     if (parsedSchema && errors.length === before) patterns += countSchemaPatterns(parsedSchema);
     out.set(name, decl);
   }
@@ -559,6 +618,8 @@ interface AppState {
   scopes: readonly string[];
   status: string;
   consent?: { revoked: readonly string[] } | 'unavailable';
+  /** Viewer-keyed collections whose write switch is closed (production namespace only). */
+  closed: ReadonlySet<string>;
 }
 
 interface Ctx {
@@ -624,6 +685,49 @@ function storedSize(data: unknown): number {
   return utf8Length(JSON.stringify(data)) + separators;
 }
 
+/**
+ * A 128-bit digest of `text` as 26 characters of lowercase RFC 4648 base32 (no padding), the
+ * shape of the server's derived-key digest. Not a MAC and not the server's value: an opaque,
+ * deterministic stand-in (cyrb128), synchronous so the fake runs in a browser tab too.
+ */
+function opaqueDigest(text: string): string {
+  let h1 = 1779033703;
+  let h2 = 3144134277;
+  let h3 = 1013904242;
+  let h4 = 2773480762;
+  for (let i = 0; i < text.length; i++) {
+    const k = text.charCodeAt(i);
+    h1 = h2 ^ Math.imul(h1 ^ k, 597399067);
+    h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
+    h3 = h4 ^ Math.imul(h3 ^ k, 951274213);
+    h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+  }
+  h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067);
+  h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
+  h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213);
+  h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
+  h1 ^= h2 ^ h3 ^ h4;
+  h2 ^= h1;
+  h3 ^= h1;
+  h4 ^= h1;
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz234567';
+  let bits = 0;
+  let value = 0;
+  let out = '';
+  for (const word of [h1, h2, h3, h4]) {
+    for (const shift of [24, 16, 8, 0]) {
+      value = (value << 8) | ((word >>> shift) & 0xff);
+      bits += 8;
+      while (bits >= 5) {
+        out += alphabet[(value >>> (bits - 5)) & 31];
+        bits -= 5;
+      }
+      value &= (1 << bits) - 1;
+    }
+  }
+  return bits > 0 ? out + alphabet[(value << (5 - bits)) & 31] : out;
+}
+
 // ---------------------------------------------------------------------------
 // The fake
 // ---------------------------------------------------------------------------
@@ -637,6 +741,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     scopes: options.manifest.scopes ?? [],
     status: options.appStatus ?? 'approved',
     ...(options.consent === undefined ? {} : { consent: options.consent }),
+    closed: new Set(options.viewerKeyedClosed ?? []),
   };
   const apps = new Map<string, AppState>([[ownId, thisApp]]);
   for (const [id, source] of Object.entries(options.sources ?? {})) {
@@ -648,6 +753,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       scopes: source.manifest.scopes ?? [],
       status: source.status ?? 'approved',
       ...(source.consent === undefined ? {} : { consent: source.consent }),
+      closed: new Set(),
     });
   }
   const importGrants: Record<string, FakeStorageImportGrant> =
@@ -784,6 +890,52 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
   const requireShared = (decl: Decl, what: string) => {
     if (decl.visibility !== 'shared') throw invalid(`${what} exist on shared collections only`);
   };
+
+  /** Every path that names keys itself or writes beside the document, on a viewer-keyed collection. */
+  function refuseViewerKeyed(coll: string, decl: Decl, what: string) {
+    if (decl.keyedBy === undefined) return;
+    throw invalid(
+      `${what} is not available on viewer-keyed collection ${coll}: write the viewer's own document at /${coll}/${MINE}`,
+      { reason: 'viewer_keyed', collection: coll },
+    );
+  }
+
+  /** The server's `isViewerKeyedOpen`: switches exist in the production namespace only. */
+  const viewerKeyedOpen = (ctx: Ctx, coll: string) => !ctx.ns.endsWith('\u0000prod') || !ctx.app.closed.has(coll);
+
+  /**
+   * The key of the viewer's own document for a `@me` call, refusing in the server's order
+   * (`viewerKeyedDocKey`): not viewer-keyed, a parent unwanted, missing or outside its grammar
+   * (400), a write while the switch is closed (403), sign-in, keys not derivable (503).
+   */
+  function viewerKeyedDocKey(ctx: Ctx, coll: string, decl: Decl, parent: string | null, write: boolean): string {
+    const mode = decl.keyedBy;
+    const refusal = (reason: string, message: string) => invalid(message, { reason, collection: coll });
+    if (mode === undefined) {
+      throw refusal('not_viewer_keyed', `collection ${coll} is not viewer-keyed: address its documents by key`);
+    }
+    if (mode === 'viewer' && parent !== null) {
+      throw refusal('parent_not_allowed', `collection ${coll} is keyed by viewer only: use /${coll}/${MINE}`);
+    }
+    if (mode === 'parent+viewer') {
+      if (parent === null) {
+        throw refusal('parent_required', `collection ${coll} is keyed by parent and viewer: use /${coll}/${MINE}/:parent`);
+      }
+      if (!PARENT.test(parent) || DOT_ONLY.test(parent)) {
+        throw refusal('invalid_parent', 'parent must be 1–96 characters of [A-Za-z0-9._-], not only dots');
+      }
+    }
+    if (write && !viewerKeyedOpen(ctx, coll)) {
+      throw refuse('write_policy', 'this collection is not open for writes yet', { collection: coll, reason: 'viewer_keyed_closed' });
+    }
+    const uid = requireViewer(ctx);
+    // The server's sentence for every 503 `service_unavailable` (its CLIENT_MESSAGE).
+    if (options.viewerKeysUnconfigured) {
+      throw refuse('service_unavailable', 'storage is temporarily unavailable', { reason: 'viewer_keys_unconfigured' });
+    }
+    const d = opaqueDigest(JSON.stringify([ctx.app.id, ctx.ns, coll, mode, parent ?? '', uid]));
+    return mode === 'parent+viewer' ? `${parent}:${d}` : d;
+  }
 
   function assertStoredString(s: string) {
     if (s.includes('\u0000') || LONE_SURROGATE.test(s)) throw invalid('data contains a NUL character or an unpaired surrogate');
@@ -1000,6 +1152,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     const decl = declOf(ctx, coll);
     assertKey(key);
     requireShared(decl, 'counters');
+    refuseViewerKeyed(coll, decl, 'counters');
     if (!TALLY_NAME.test(counter) || !decl.counters.includes(counter)) {
       throw invalid(`counter ${counter} is not declared`, { counter });
     }
@@ -1036,16 +1189,18 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     return { value };
   }
 
-  function assertMarkName(decl: Decl, name: string) {
+  function assertMarkName(decl: Decl, name: string, coll: string) {
     requireShared(decl, 'marks');
+    // A report stays possible on every shared document, a viewer-keyed one included.
     if (name === REPORT) return;
+    refuseViewerKeyed(coll, decl, 'marks');
     if (!TALLY_NAME.test(name) || !decl.marks.includes(name)) throw invalid(`mark ${name} is not declared`, { mark: name });
   }
 
   function setMark(ctx: Ctx, coll: string, key: string, name: string, on: boolean) {
     const decl = declOf(ctx, coll);
     assertKey(key);
-    assertMarkName(decl, name);
+    assertMarkName(decl, name, coll);
     const viewer = requireViewer(ctx);
     storageOn();
     const row = docs.get(docId(ctx, coll, 0, key));
@@ -1142,7 +1297,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     }
     if (q.markedBy !== undefined || q.mark !== undefined) {
       if (q.markedBy !== 'me' || q.mark === undefined) throw invalid('markedBy=me and mark are required together');
-      assertMarkName(decl, q.mark);
+      assertMarkName(decl, q.mark, coll);
       const id = `${requireViewer(ctx)}:${q.mark}`;
       rows = rows.filter((d) => d.marks.has(id));
     }
@@ -1195,6 +1350,9 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     | { op: 'list' | 'create' | 'getMany'; collection: string }
     | { op: 'publish' | 'unpublish'; collection: string }
     | { op: 'get' | 'put' | 'delete'; collection: string; key: string }
+    // The viewer's own document in a viewer-keyed collection; run as get / put / delete at the
+    // derived key. `parent` is the raw path segment, checked by `viewerKeyedDocKey`.
+    | { op: 'getMine' | 'putMine' | 'deleteMine'; collection: string; parent: string | null }
     | { op: 'increment' | 'mark' | 'unmark'; collection: string; key: string; name: string }
     // One update operator on one document; translated by `parseTallyPatch` before it runs.
     | { op: 'patch'; collection: string; key: string };
@@ -1204,6 +1362,12 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     const [a, b, c, d] = s;
     const pick = (table: Record<string, Route>) =>
       table[method] ? { route: table[method]! } : { methods: Object.keys(table) };
+    const pickMine = (collection: string, parent: string | null) =>
+      pick({
+        GET: { op: 'getMine', collection, parent },
+        PUT: { op: 'putMine', collection, parent },
+        DELETE: { op: 'deleteMine', collection, parent },
+      });
     switch (s.length) {
       case 0:
         return pick({ GET: { op: 'info' } });
@@ -1216,12 +1380,16 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
         if (a === '_publish' && options.publish === true) return pick({ POST: { op: 'publish', collection: b! } });
         if (a === '_unpublish' && options.publish === true) return pick({ POST: { op: 'unpublish', collection: b! } });
         if (a!.startsWith('_')) return null;
+        if (b === MINE) return pickMine(a!, null);
         return pick({
           GET: { op: 'get', collection: a!, key: b! },
           PUT: { op: 'put', collection: a!, key: b! },
           DELETE: { op: 'delete', collection: a!, key: b! },
           PATCH: { op: 'patch', collection: a!, key: b! },
         });
+      case 3:
+        if (a!.startsWith('_') || b !== MINE) return null;
+        return pickMine(a!, c!);
       case 4:
         if (a!.startsWith('_')) return null;
         if (c === 'counters') return pick({ POST: { op: 'increment', collection: a!, key: b!, name: d! } });
@@ -1443,12 +1611,14 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     sent: unknown,
   ) {
     const segments = path.replace(/^\/+/, '').split('/').filter(Boolean);
-    if (segments[0] !== 'blocks' || segments[1] !== 'storage') {
+    // The report API is its own page beside the storage catch-all, behind the same middleware.
+    const reporting = segments.join('/') === REPORTS_PATH;
+    if (!reporting && (segments[0] !== 'blocks' || segments[1] !== 'storage')) {
       throw new Error(`fake storage: no route for ${path}`);
     }
     let rest: string[];
     try {
-      rest = segments.slice(2).map((s) => decodeURIComponent(s));
+      rest = reporting ? [] : segments.slice(2).map((s) => decodeURIComponent(s));
     } catch {
       throw refuse('not_found', 'no such storage route');
     }
@@ -1473,6 +1643,12 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       (s) => !(CONSENT_GATED.has(s) && (consentUnavailable || revoked.includes(s))),
     );
     if (!tokenScopes.includes(BASE_SCOPE)) throw refuse('insufficient_scope', `${BASE_SCOPE} scope required`);
+    if (reporting) {
+      const reporter = viewer === null ? null : uidOf(viewer);
+      if (caller.token === 'dev' && reporter === null) throw refuse('sign_in_required', 'sign in required');
+      const reporterCtx: Ctx = { app, ns: `${app.id}\u0000${caller.token === 'dev' ? `dev:${reporter}` : 'prod'}`, uid: reporter };
+      return reportDoc(caller, method, query, body, viewer, reporterCtx, tokenScopes, consentUnavailable);
+    }
 
     const m = match(method, rest);
     if (!m) throw refuse('not_found', 'no such storage route');
@@ -1482,7 +1658,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     const allowedQuery =
       route.op === 'list'
         ? null
-        : route.op === 'delete'
+        : route.op === 'delete' || route.op === 'deleteMine'
           ? ['ifVersion', 'from']
           : route.op === 'info' || route.op === 'publish' || route.op === 'unpublish'
             ? []
@@ -1499,7 +1675,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     const imported =
       route.op === 'info' || route.op === 'publish' || route.op === 'unpublish'
         ? null
-        : resolveImport(caller, route, query, ownCtx, tokenScopes, consentUnavailable);
+        : resolveImport(caller, route.collection, importOpOf(route), query.from, ownCtx, tokenScopes, consentUnavailable);
     const ctx = imported?.ctx ?? ownCtx;
     const scopes: readonly string[] = imported?.scopes ?? tokenScopes;
     const consentGone = imported ? false : consentUnavailable;
@@ -1527,8 +1703,10 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       return uid;
     };
 
-    if (route.op === 'info') requireSignedIn();
-    if (route.op === 'info' || route.op === 'list' || route.op === 'get' || route.op === 'getMany') {
+    const mine = route.op === 'getMine' || route.op === 'putMine' || route.op === 'deleteMine';
+    // Every `@me` op, reads included, is the signed-in viewer's own: anonymous is refused first.
+    if (route.op === 'info' || mine) requireSignedIn();
+    if (route.op === 'info' || route.op === 'list' || route.op === 'get' || route.op === 'getMany' || route.op === 'getMine') {
       charge('read', uid, ctx.app.id);
     }
     if (route.op === 'info') {
@@ -1549,6 +1727,10 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
                 marks: [...d.marks],
                 indexes: Object.fromEntries(d.indexes),
                 showAuthor: d.showAuthor,
+                // `open`: whether a `@me` write can land at all (`isViewerKeyedWritable`).
+                ...(d.keyedBy
+                  ? { keyedBy: d.keyedBy, open: !options.viewerKeysUnconfigured && viewerKeyedOpen(ctx, name) }
+                  : {}),
               },
             ]),
           ),
@@ -1580,8 +1762,24 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     const coll = route.collection;
     const decl = declOf(ctx, coll);
     const shared = decl.visibility === 'shared';
+    // VIEWER-KEYED: a `@me` route becomes exactly the get, put or delete of the viewer's own
+    // document at the derived key, so every check below applies to it as to any document; its
+    // parent is what a put's moderation scan sees in place of the key. A create, or a write by
+    // key, to a viewer-keyed collection is refused.
+    let keyed: { parent: string | null } | null = null;
+    if (route.op === 'getMine' || route.op === 'putMine' || route.op === 'deleteMine') {
+      const key = viewerKeyedDocKey(ctx, coll, decl, route.parent, route.op !== 'getMine');
+      keyed = { parent: route.parent };
+      route = { op: route.op === 'getMine' ? 'get' : route.op === 'putMine' ? 'put' : 'delete', collection: coll, key };
+    } else if (route.op === 'create' || route.op === 'put' || route.op === 'delete') {
+      refuseViewerKeyed(coll, decl, 'writing by key');
+    }
 
     switch (route.op) {
+      case 'getMine':
+      case 'putMine':
+      case 'deleteMine':
+        throw new Error('fake storage: a @me route is translated above');
       case 'list':
         return { status: 200, body: list(ctx, coll, parseListQuery(query, decl)) };
       case 'get': {
@@ -1623,7 +1821,9 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
             return { status: 201, body: doc };
           }
           if (putIn && route.op === 'put') {
-            if (moderated) moderateWrite({ data: putIn.data as Record<string, unknown>, key: route.key });
+            // A viewer-keyed document's key is a digest, not client text: only its parent is scanned.
+            const scannedKey = keyed ? (keyed.parent ?? undefined) : route.key;
+            if (moderated) moderateWrite({ data: putIn.data as Record<string, unknown>, key: scannedKey });
             const doc = writeDoc(ctx, coll, route.key, putIn.data, putIn.ifVersion as number | undefined);
             landed();
             return { status: 200, body: doc };
@@ -1716,6 +1916,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       throw invalid('publish copies from a private collection into a shared one', { reason: 'publish_visibility' });
     }
     assertShareWritable(toDecl);
+    refuseViewerKeyed(to, toDecl, 'publish');
     if (!scopes.includes(PUBLISH_SCOPE)) throw publishRefusal();
     // One token of the private-write / delete window per call, never given back, before the
     // trust gate and any read: the server's throttle on publishes that change nothing.
@@ -1847,6 +2048,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       throw invalid('unpublish removes documents from a shared collection', { reason: 'publish_visibility' });
     }
     assertShareWritable(toDecl);
+    refuseViewerKeyed(to, toDecl, 'unpublish');
     charge('write', me, ctx.app.id);
     storageOn();
     const result = { deleted: [] as string[], skipped: [] as { key: string; reason: string }[] };
@@ -1885,19 +2087,86 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
   }
 
   /**
+   * What a route does, for an import (the server's `importOpOf`): a read, a delete, or an
+   * authoring write — the only kind that can need the viewer's publish consent in the source.
+   */
+  function importOpOf(route: Exclude<Route, { op: 'info' }>): 'read' | 'delete' | 'author' {
+    if (route.op === 'list' || route.op === 'get' || route.op === 'getMany' || route.op === 'getMine') return 'read';
+    return route.op === 'delete' || route.op === 'deleteMine' ? 'delete' : 'author';
+  }
+
+  /**
+   * `POST blocks/moderation/reports {collection, key, from?}`, as the server's report handler
+   * runs it, in its order: the per-app switch (`reports`), the method, the query and the body,
+   * an import (an authoring call), the collection, sign-in, shared only, the import's publish
+   * scope, the daily report budget, the trust gate, then the document. One row per (document,
+   * viewer); the answer is the same whether or not it was new, and never a count.
+   */
+  function reportDoc(
+    caller: FakeStorageCaller & { token: NonNullable<FakeStorageCaller['token']> },
+    method: string,
+    query: Record<string, string | string[]>,
+    body: unknown,
+    viewer: FakeStorageViewer | null,
+    ownCtx: Ctx,
+    tokenScopes: readonly string[],
+    consentUnavailable: boolean,
+  ) {
+    if (options.reports !== true) throw refuse('not_found', 'no such route');
+    if (method !== 'POST') throw refuse('method_not_allowed', 'method not allowed');
+    const stray = Object.keys(query)[0];
+    if (stray !== undefined) throw invalid(`unknown query parameter ${stray}`);
+    const isString = (v: unknown) => typeof v === 'string';
+    const input = parseBody(body, { collection: isString, key: isString, from: isString }, ['collection', 'key']);
+    const coll = input.collection as string;
+    const imported = resolveImport(
+      caller,
+      coll,
+      'author',
+      input.from as string | undefined,
+      ownCtx,
+      tokenScopes,
+      consentUnavailable,
+    );
+    const ctx = imported?.ctx ?? ownCtx;
+    if (!COLLECTION_NAME.test(coll) || !ctx.app.collections.has(coll)) {
+      throw refuse('collection_not_declared', `collection ${coll} is not declared`, { collection: coll });
+    }
+    const decl = declOf(ctx, coll);
+    const uid = requireViewer(ctx);
+    if (decl.visibility !== 'shared') throw invalid('reports exist on shared collections only');
+    if (imported && !imported.scopes.includes(PUBLISH_SCOPE)) {
+      throw refuse('consent_required', `${PUBLISH_SCOPE} has not been granted in ${imported.from}`, {
+        scope: PUBLISH_SCOPE,
+        from: imported.from,
+      });
+    }
+    charge('report', uid, ctx.app.id);
+    assertTrusted(viewer!);
+    const key = input.key as string;
+    assertKey(key);
+    storageOn();
+    const row = docs.get(docId(ctx, coll, 0, key));
+    if (!row) throw refuse('not_found', 'document not found');
+    // The `report` mark's row, without a tally: nothing a reader sees counts reports.
+    row.marks.add(`${uid}:${REPORT}`);
+    return { status: 200, body: { reported: true } };
+  }
+
+  /**
    * `?from=<blockId>` on a collection route, as the server's `resolveImportAccess` checks it,
    * in its order — or `null` without one. Charged to the CONSUMER's read bucket first, so
    * every refusal below is charged too.
    */
   function resolveImport(
     caller: FakeStorageCaller & { token: NonNullable<FakeStorageCaller['token']> },
-    route: Exclude<Route, { op: 'info' }>,
-    query: Record<string, string | string[]>,
+    coll: string,
+    op: 'read' | 'delete' | 'author',
+    from: string | string[] | undefined,
     consumer: Ctx,
     tokenScopes: readonly string[],
     consentUnavailable: boolean,
   ): { ctx: Ctx; scopes: string[]; from: string } | null {
-    const from = query.from;
     if (from === undefined) return null;
     if (Array.isArray(from)) throw invalid('from must be given once');
     charge('read', consumer.uid, consumer.app.id);
@@ -1906,7 +2175,6 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     if (caller.token === 'dev') {
       throw refuse('not_eligible', 'a development token cannot reach another app', { reason: 'import_dev_token' });
     }
-    const coll = route.collection;
     const declared = consumer.app.imports.get(from);
     if (!declared || !declared.collections.has(coll)) {
       throw refuse('import_not_declared', `this app does not declare an import of ${coll} from ${from}`, {
@@ -1914,7 +2182,6 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
         collection: coll,
       });
     }
-    const op = route.op === 'list' || route.op === 'get' || route.op === 'getMany' ? 'read' : route.op === 'delete' ? 'delete' : 'author';
     if (op !== 'read' && declared.access === 'read') {
       throw refuse('write_policy', `the import from ${from} is read-only`, { from, reason: 'import_read_only' });
     }
@@ -2003,7 +2270,8 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
         }
         return allowed;
       });
-    return { http, storage: createDocumentStorage(http, requestGrants ? { requestGrants } : {}) };
+    const grants = requestGrants ? { requestGrants } : {};
+    return { http, storage: createDocumentStorage(http, grants), moderation: createModerationClient(http, grants) };
   }
 
   const own = session({});
