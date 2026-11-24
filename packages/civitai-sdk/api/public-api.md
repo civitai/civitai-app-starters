@@ -4113,11 +4113,23 @@ export declare class CivitaiError extends Error {
     constructor(message: string, options?: ErrorOptions);
 }
 
+/**
+ * Reads a `rateLimit` the host sent: a copy holding only the known fields, or `undefined` when
+ * `retryAfterSeconds` or `retryAt` is malformed. A malformed optional field is dropped on its own.
+ */
+export declare function parseRateLimitMeta(value: unknown): RateLimitMeta | undefined;
+
 export declare class BridgeError extends CivitaiError {
     readonly code: BridgeErrorCode;
     /** The message type that failed, e.g. `SAVE_IMAGE`. */
     readonly operation: string;
-    constructor(code: BridgeErrorCode, operation: string, message: string, options?: ErrorOptions);
+    /**
+     * Set when the host refused the call under a rate limit and sent its retry metadata: which
+     * limit, when to retry (`retryAfterSeconds`, `retryAt`) and, where the limit publishes them,
+     * its counts. `code` is then `rate-limited`. Absent on an older host that does not send it.
+     */
+    readonly rateLimit?: RateLimitMeta;
+    constructor(code: BridgeErrorCode, operation: string, message: string, options?: BridgeErrorOptions);
 }
 
 /** Every failure the host classifies, so a caller branches on a code not a string. */
@@ -4129,6 +4141,36 @@ export type BridgeFailureCode = 'forbidden'
 export type BridgeErrorCode = BridgeFailureCode
 /** The transport got an answer it could not read as a result. */
  | 'malformed';
+
+/**
+ * Retry metadata the host attaches to a rate-limit refusal (Civitai's standard `rateLimit`), so a
+ * caller renders the wait instead of parsing it out of the message.
+ */
+export interface RateLimitMeta {
+    /** Whole seconds until the call may be tried again; at least 1. */
+    retryAfterSeconds: number;
+    /** ISO-8601 instant at which the call may be tried again. */
+    retryAt: string;
+    /** Stable id of the refusing limit, e.g. `apps.publish`. */
+    id?: string;
+    /**
+     * `product`: an allowance the viewer may see and buy more of. `abuse`: an anti-flood or
+     * money/safety bound. Informational: an abuse limit can carry counts too.
+     */
+    kind?: 'product' | 'abuse';
+    /** The counts below are sent only for a limit that publishes them. */
+    limit?: number;
+    /** Attempts in the window; can exceed `limit`. */
+    used?: number;
+    remaining?: number;
+    windowSeconds?: number;
+    /** ISO-8601 instant at which the whole window is clear. */
+    resetAt?: string;
+}
+
+export interface BridgeErrorOptions extends ErrorOptions {
+    rateLimit?: RateLimitMeta;
+}
 
 /** Options apply on first call only; `__resetTransport()` to re-detect. */
 export declare function getTransport(opts?: DetectOptions): BlockTransport;
@@ -4432,6 +4474,7 @@ export interface FakeTransport extends BlockTransport {
     fail(type: string, error: {
         code: BridgeFailureCode;
         message: string;
+        rateLimit?: RateLimitMeta;
     }): void;
     /** Never answer requests of this type; for deadline and abort tests. */
     stall(type: string): void;

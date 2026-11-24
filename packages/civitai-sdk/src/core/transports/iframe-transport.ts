@@ -13,7 +13,13 @@ import {
   type BlockTransport,
   type RequestOptions,
 } from '../transport.js';
-import { BridgeError, classifyHostError, type BridgeFailureCode } from '../errors.js';
+import {
+  BridgeError,
+  classifyHostError,
+  parseRateLimitMeta,
+  type BridgeFailureCode,
+  type RateLimitMeta,
+} from '../errors.js';
 import { OriginMatcher } from '../origin-matcher.js';
 import { HOST_NOTIFICATIONS, HOST_REPLIES, HOST_SNAPSHOT, type HostReply } from './host-replies.generated.js';
 import { VERSION } from '../../version.generated.js';
@@ -26,7 +32,7 @@ import { VERSION } from '../../version.generated.js';
 interface Envelope<T> {
   requestId: string;
   result?: T;
-  error?: { code: BridgeFailureCode; message: string };
+  error?: { code: BridgeFailureCode; message: string; rateLimit?: RateLimitMeta };
 }
 
 /**
@@ -40,7 +46,11 @@ function fromLegacyReply(reply: LegacyReply, keys: HostReply['keys']): Envelope<
   const { requestId, error, ...fields } = reply;
   // An empty string is how the host spells "no failure" on these replies.
   if (typeof error === 'string' && error !== '') {
-    return { requestId, error: { code: classifyHostError(error), message: error } };
+    // The host puts a refusal's retry metadata beside `error`; its presence marks the refusal as
+    // rate-limited whatever the message says.
+    const rateLimit = parseRateLimitMeta(fields.rateLimit);
+    if (!rateLimit) return { requestId, error: { code: classifyHostError(error), message: error } };
+    return { requestId, error: { code: 'rate-limited', message: error, rateLimit } };
   }
   // Some of these replies nest their value under `result` and others put its
   // fields straight in the payload. The snapshot says which; where the host's
@@ -97,7 +107,13 @@ export function unwrap(type: string, reply: unknown, expected: HostReply): unkno
       : (reply as Envelope<unknown>);
 
   if (envelope.error !== undefined) {
-    throw new BridgeError(envelope.error.code, type, envelope.error.message || `${type} failed`);
+    const rateLimit = parseRateLimitMeta(envelope.error.rateLimit);
+    throw new BridgeError(
+      rateLimit ? 'rate-limited' : envelope.error.code,
+      type,
+      envelope.error.message || `${type} failed`,
+      rateLimit ? { rateLimit } : undefined,
+    );
   }
   if (envelope.result === undefined) {
     throw new BridgeError('malformed', type, `${type} reply carried no result`);

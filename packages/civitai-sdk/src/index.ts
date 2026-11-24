@@ -181,8 +181,8 @@ export type {
 
 export { ApiError } from './http/index.js';
 export type { Http, Query, QueryValue, RequestOptions } from './http/index.js';
-export { BridgeError, CivitaiError } from './core/errors.js';
-export type { BridgeErrorCode, BridgeFailureCode } from './core/errors.js';
+export { BridgeError, CivitaiError, parseRateLimitMeta } from './core/errors.js';
+export type { BridgeErrorCode, BridgeErrorOptions, BridgeFailureCode, RateLimitMeta } from './core/errors.js';
 
 export { getTransport } from './core/get-transport.js';
 export type { DetectOptions } from './core/get-transport.js';

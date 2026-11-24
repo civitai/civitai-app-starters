@@ -1,5 +1,5 @@
 import { EMPTY_SNAPSHOT, type BlockSnapshot, type BlockTransport } from './core/transport.js';
-import { BridgeError, type BridgeFailureCode } from './core/errors.js';
+import { BridgeError, type BridgeFailureCode, type RateLimitMeta } from './core/errors.js';
 
 export { __resetTransport } from './core/get-transport.js';
 export { createFakeStorage, FAKE_STORAGE_MODERATION } from './doc-store/fake.js';
@@ -27,7 +27,7 @@ export interface FakeTransport extends BlockTransport {
   /** Answer the next request of this type with the value it resolves to. */
   reply(type: string, result: unknown): void;
   /** Answer the next request of this type with a failure the host classified. */
-  fail(type: string, error: { code: BridgeFailureCode; message: string }): void;
+  fail(type: string, error: { code: BridgeFailureCode; message: string; rateLimit?: RateLimitMeta }): void;
   /** Never answer requests of this type; for deadline and abort tests. */
   stall(type: string): void;
   /** Deliver an unsolicited host push to `on` subscribers. */
@@ -129,7 +129,10 @@ export function createFakeTransport(snapshot: Partial<BlockSnapshot> = {}): Fake
       answer(type, result);
     },
     fail(type, error) {
-      answer(type, new BridgeError(error.code, type, error.message));
+      answer(
+        type,
+        new BridgeError(error.code, type, error.message, error.rateLimit ? { rateLimit: error.rateLimit } : undefined),
+      );
     },
     stall(type) {
       stalled.add(type);

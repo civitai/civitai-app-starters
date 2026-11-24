@@ -1218,6 +1218,21 @@ viewer to reload the page. Timeouts are the host's to set; pass a
 `signal` to cancel. `ApiError` and `BridgeError` both extend `CivitaiError`, so
 one `catch` can tell a refusal from a bug.
 
+A call refused under a rate limit is `rate-limited`, and its `rateLimit` holds
+the host's retry metadata when the host sent it (`RateLimitMeta`: which limit
+refused it as `id` and `kind`, when to retry as `retryAfterSeconds` and
+`retryAt`, and, for a limit that publishes them, `limit`, `used`, `remaining`
+and `resetAt`). Render the wait from it, never from the message:
+
+```ts
+try {
+  await app.host.publishGenerationOutputs({ workflowId });
+} catch (err) {
+  if (err instanceof BridgeError && err.rateLimit) showRetryAt(err.rateLimit.retryAt);
+  else throw err;
+}
+```
+
 ### Uploading an image
 
 The host owns the upload: it opens its own modal, takes the file through the
