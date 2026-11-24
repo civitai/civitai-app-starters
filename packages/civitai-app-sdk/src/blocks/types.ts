@@ -3658,8 +3658,8 @@ export type BlockStorageMigrationOp =
   | { op: 'acknowledge'; path: string; keyword: BlockStorageMigrationKeyword };
 
 /**
- * RESERVED — civitai.com refuses this field until permission hooks are enabled,
- * so do not declare it yet. A collection's permission hook: one ES module of the
+ * In a limited rollout — civitai.com accepts a new or changed hook only from
+ * authors the rollout includes, and refuses it otherwise. A collection's permission hook: one ES module of the
  * bundle whose default export decides, for every write to the collection,
  * whether the write is allowed. It runs after the collection `schema` check,
  * never instead of it. Mirrors the canonical schema's
@@ -3695,7 +3695,7 @@ export interface BlockStorageCollectionHook {
  * A PRIVATE collection — a separate key space per viewer, read and written
  * only by that viewer. Carries none of the shared-only fields (`write`,
  * `counters`, `marks`, `showAuthor`, `dailyWritesPerAuthor`,
- * `ownedModelVersions`, `registry`); the canonical
+ * `ownedModelVersions`, `registry`, `keyedBy`); the canonical
  * forbids them here. See {@link BlockStorageSharedCollectionDeclaration} for
  * the fields both kinds share.
  */
@@ -3716,7 +3716,7 @@ export interface BlockStoragePrivateCollectionDeclaration {
   schema?: BlockStorageCollectionSchema;
   /** See {@link BlockStorageSharedCollectionDeclaration.migrations}. */
   migrations?: BlockStorageMigrationOp[];
-  /** RESERVED — see {@link BlockStorageSharedCollectionDeclaration.hook}. */
+  /** Limited rollout — see {@link BlockStorageSharedCollectionDeclaration.hook}. */
   hook?: BlockStorageCollectionHook;
 }
 
@@ -3830,6 +3830,27 @@ export interface BlockStorageSharedCollectionDeclaration {
    */
   registry?: 'public';
   /**
+   * Viewer-keyed documents. `write` `'own'` collections only, never with
+   * `kind` `'log'`, and never beside `counters` or `marks` — the canonical
+   * refuses it under `'anyone'`, `'owner'` and `'none'`, on log and private
+   * collections, and with either of those fields.
+   *
+   * The server derives each document's key from the signed-in viewer, so each
+   * viewer has at most one document (`'viewer'`) or at most one per parent key
+   * the app names (`'parent+viewer'`), and no viewer can write another's. The
+   * app reads and writes it at `/:collection/@me` or `/:collection/@me/:parent`,
+   * where a parent is 1 to 96 characters of `A-Z`, `a-z`, `0-9`, `.`, `_` or
+   * `-` (not only dots); a `'parent+viewer'` key is `<parent>:<digest>`, so
+   * listing with `keyPrefix=<parent>:` returns one parent's documents. Writing
+   * such a collection by key, creating in it and publishing into it are
+   * refused.
+   *
+   * Cannot be added, removed or changed on a collection any approved version
+   * declared: declare a new collection instead. That is checked at submit, not
+   * by `defineBlock` — see `KNOWN_GAPS['storage-keyedBy-immutable']`.
+   */
+  keyedBy?: 'viewer' | 'parent+viewer';
+  /**
    * The schema every document's `data` must match — see {@link BlockStorageCollectionSchema}.
    * Not allowed with `write` `'none'` (no document bodies are written there).
    */
@@ -3841,8 +3862,8 @@ export interface BlockStorageSharedCollectionDeclaration {
    */
   migrations?: BlockStorageMigrationOp[];
   /**
-   * RESERVED — civitai.com refuses this field until permission hooks are
-   * enabled, so do not declare it yet. A permission hook that decides, for every
+   * In a limited rollout — civitai.com accepts a new or changed hook only from
+   * authors the rollout includes, and refuses it otherwise. A permission hook that decides, for every
    * write to this collection, whether it is allowed — see
    * {@link BlockStorageCollectionHook}. Allowed on every collection kind,
    * private and shared alike.

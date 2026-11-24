@@ -290,6 +290,51 @@ defineBlock({
   },
 });
 
+// --- keyedBy (viewer-keyed documents) -------------------------------------------
+expectTypeOf<BlockStorageSharedCollectionDeclaration['keyedBy']>().toEqualTypeOf<
+  'viewer' | 'parent+viewer' | undefined
+>();
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        likes: { visibility: 'shared', write: 'own', keyedBy: 'viewer' },
+        votes: { visibility: 'shared', write: 'own', keyedBy: 'parent+viewer' },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        // @ts-expect-error — `keyedBy` is shared-only
+        notes: { visibility: 'private', keyedBy: 'viewer' },
+      },
+    },
+  },
+});
+
+defineBlock({
+  manifest: {
+    ...base,
+    storage: {
+      collections: {
+        votes: {
+          visibility: 'shared',
+          write: 'own',
+          // @ts-expect-error — 'viewer' or 'parent+viewer' only
+          keyedBy: 'parent',
+        },
+      },
+    },
+  },
+});
+
 // --- hook (civitai/civitai#7832), RESERVED -------------------------------------
 expectTypeOf<BlockStorageCollectionHook>().toEqualTypeOf<{ file: string; sha256: string; timeoutMs?: number }>();
 expectTypeOf<BlockStorageSharedCollectionDeclaration['hook']>().toEqualTypeOf<BlockStorageCollectionHook | undefined>();
