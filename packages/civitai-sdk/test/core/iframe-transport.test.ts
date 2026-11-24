@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { BridgeError } from '../../src/core/errors.js';
 import { HOST, init, mountTransport } from '../support/iframe-host.js';
 
 // Read from package.json, NOT from `src/version.generated.ts`: the expectation
@@ -289,5 +290,78 @@ describe('IframeTransport legacy replies', () => {
     await expect(
       exchange('OPEN_RESOURCE_PICKER', () => ({ error: '' }), 'RESOURCE_PICKER_RESULT'),
     ).resolves.toEqual({});
+  });
+
+  // The host forwards a refusal's standard `rateLimit` beside `error` on every bridge reply
+  // (civitai/civitai#10367). The prose here classifies as `unavailable`, so only the meta can
+  // make the code `rate-limited`.
+  const refusedPost = (rateLimit: unknown) =>
+    exchange(
+      'PUBLISH_GENERATION_OUTPUTS',
+      () => ({ error: 'Slow down, publishing again soon', rateLimit }),
+      'PUBLISH_RESULT',
+    ).then(
+      () => expect.fail('the refusal resolved'),
+      (err: unknown) => err as BridgeError,
+    );
+
+  it('surfaces a refusal’s rateLimit on the BridgeError, as rate-limited', async () => {
+    const err = await refusedPost({
+      retryAfterSeconds: 37,
+      retryAt: '2031-04-05T06:07:08.000Z',
+      id: 'apps.publish',
+      kind: 'abuse',
+      internal: 'bucket:42',
+    });
+    expect(err).toBeInstanceOf(BridgeError);
+    expect([err.code, err.operation, err.message]).toEqual([
+      'rate-limited',
+      'PUBLISH_GENERATION_OUTPUTS',
+      'Slow down, publishing again soon',
+    ]);
+    // Only the known fields, so nothing else the host put there reaches the app.
+    expect(err.rateLimit).toEqual({
+      retryAfterSeconds: 37,
+      retryAt: '2031-04-05T06:07:08.000Z',
+      id: 'apps.publish',
+      kind: 'abuse',
+    });
+  });
+
+  it('carries the counts of a limit that publishes them', async () => {
+    const err = await refusedPost({
+      retryAfterSeconds: 3600,
+      retryAt: '2031-04-05T07:00:00.000Z',
+      id: 'apps.tip-daily',
+      kind: 'abuse',
+      limit: 20,
+      used: 23,
+      remaining: 0,
+      windowSeconds: 86400,
+      resetAt: '2031-04-06T00:00:00.000Z',
+    });
+    expect(err.rateLimit).toEqual({
+      retryAfterSeconds: 3600,
+      retryAt: '2031-04-05T07:00:00.000Z',
+      id: 'apps.tip-daily',
+      kind: 'abuse',
+      limit: 20,
+      used: 23,
+      remaining: 0,
+      windowSeconds: 86400,
+      resetAt: '2031-04-06T00:00:00.000Z',
+    });
+  });
+
+  it.each([
+    ['no rateLimit', undefined],
+    ['a zero retryAfterSeconds', { retryAfterSeconds: 0, retryAt: '2031-04-05T06:07:08.000Z' }],
+    ['an unparseable retryAt', { retryAfterSeconds: 37, retryAt: 'soon' }],
+    ['a string', 'retry later'],
+  ])('leaves rateLimit unset and the prose classification alone on %s', async (_label, rateLimit) => {
+    const err = await refusedPost(rateLimit);
+    expect(err).toBeInstanceOf(BridgeError);
+    expect(err.code).toBe('unavailable');
+    expect('rateLimit' in err).toBe(false);
   });
 });
