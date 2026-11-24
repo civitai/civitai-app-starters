@@ -29,7 +29,8 @@ import {
   type SharedStorageClient,
 } from '../shared-storage/index.js';
 import { createDocumentStorage, type DocumentStorage } from '../doc-store/index.js';
-import { createLocalPreviewStorage, readInjectedManifest } from '../doc-store/local-preview.js';
+import { createLocalPreviewStorage, readInjectedManifest, type LocalPreviewStorage } from '../doc-store/local-preview.js';
+import { createModerationClient, type ModerationClient } from '../doc-store/moderation.js';
 import { createSiteClient, DEFAULT_SITE_URL, type SiteClient } from '../site/index.js';
 import { createStorageClient, type StorageClient } from '../storage/index.js';
 import { createSubListingsClient, type SubListingsClient } from '../sub-listings/index.js';
@@ -101,6 +102,13 @@ export interface AppClient {
    * clear a server-side minimum-trust gate.
    */
   readonly sharedStorage: SharedStorageClient;
+  /**
+   * Moderation of this app's SHARED storage: `report({ collection, key, from? })` reports one
+   * document to civitai.com's moderators (`POST /api/v1/blocks/moderation/reports`). Needs the
+   * block token and a signed-in viewer. In a dev-tunnel local preview it files against the
+   * tab's in-memory store, like `app.storage`; nothing is sent.
+   */
+  readonly moderation: ModerationClient;
   /**
    * The viewer's own App Store items for this app: `upsert`, `withdraw`, `mine`
    * over the `blocks/sub-listings/*` routes. A refusal the server explained is a
@@ -284,22 +292,30 @@ function createAppClient(
   options: ClientOptions,
   holdsBlockTokenNow: () => boolean = () => false,
   holdsOAuthTokenNow: () => boolean = () => false,
-  /** A local preview's document store; when present, the site HTTP client never reaches the document store. */
-  localDocuments?: DocumentStorage,
+  /**
+   * A local preview's document store and report API; when present, the site HTTP client never
+   * reaches either.
+   */
+  local?: LocalPreviewStorage,
 ): AppClient {
   const http = (baseUrl: string) => createHttp({ session, baseUrl, fetch: options.fetch });
   // One instance for every site-hosted surface: the storage, sub-listings and
   // workflows clients' routes live under the same base URL, so a `siteUrl`
   // override redirects them together.
   // Wrapped once, so `BLOCK_NAMESPACE` is the single place that decides where the
-  // diagnosis applies. None of the five `blocks/*` clients needs an exemption
+  // diagnosis applies. None of the six `blocks/*` clients needs an exemption
   // of its own: their routes are `blocks/app-storage/*`, `blocks/shared-storage/*`,
-  // `blocks/storage/*`, `blocks/sub-listings/*` and `blocks/workflows/*`, which that
-  // namespace already excludes, and `test/storage/seam.test.ts`,
-  // `test/shared-storage/seam.test.ts`, `test/doc-store/client.test.ts`,
+  // `blocks/storage/*`, `blocks/moderation/reports`, `blocks/sub-listings/*` and
+  // `blocks/workflows/*`, which that namespace already excludes, and
+  // `test/storage/seam.test.ts`, `test/shared-storage/seam.test.ts`,
+  // `test/doc-store/client.test.ts`, `test/doc-store/moderation.test.ts`,
   // `test/sub-listings/sub-listings.test.ts` and `test/workflows/seam.test.ts` pin the
-  // five `BASE` values there textually.
+  // six route bases there textually.
   const siteHttp = explainApiRefusal(http(options.siteUrl ?? DEFAULT_SITE_URL), holdsBlockTokenNow);
+  const localDocuments: DocumentStorage | undefined = local?.storage;
+  // A write or report through an import asks the host for the viewer's publish grant in the
+  // source by itself (civitai/civitai#7586).
+  const requestGrants = (scopes: readonly Scope[], opts: GrantOptions) => session.requestGrants(scopes, opts);
   return {
     site: createSiteClient(siteHttp),
     // One object, two stores, no shared names: the legacy five and the document
@@ -311,15 +327,10 @@ function createAppClient(
     // legacy key/value methods are out of scope and keep the real routes.
     storage: {
       ...createStorageClient(siteHttp),
-      // `requestGrants`: a write through an import asks the host for the viewer's publish
-      // grant in the source by itself (civitai/civitai#7586).
-      ...(localDocuments ??
-        createDocumentStorage(siteHttp, {
-          explainInsufficientScope: true,
-          requestGrants: (scopes, opts) => session.requestGrants(scopes, opts),
-        })),
+      ...(localDocuments ?? createDocumentStorage(siteHttp, { explainInsufficientScope: true, requestGrants })),
       mode: localDocuments ? 'local-preview' : 'remote',
     },
+    moderation: local?.moderation ?? createModerationClient(siteHttp, { requestGrants }),
     sharedStorage: createSharedStorageClient(siteHttp),
     subListings: createSubListingsClient(siteHttp),
     workflows: createWorkflowsClient(explainWorkflowRefusal(siteHttp, holdsOAuthTokenNow)),

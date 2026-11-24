@@ -1,7 +1,14 @@
 import type { ViewerInfo } from '../core/handshake.js';
 import { ApiError, type Http } from '../http/index.js';
 import type { Scope } from '../session/index.js';
-import { createDocumentStorage, StorageError, type DocumentStorage, type StorageCollection } from './index.js';
+import {
+  createDocumentStorage,
+  parentOfKey,
+  StorageError,
+  type DocumentStorage,
+  type StorageCollection,
+} from './index.js';
+import { createModerationClient, REPORTS_PATH, type ModerationClient } from './moderation.js';
 
 /**
  * The document store for a DEV-TUNNEL PREVIEW: the host marked the frame
@@ -75,15 +82,22 @@ const NO_MANIFEST =
  */
 export const LOCAL_PREVIEW_ERROR_STATUS = 404;
 
+/** A preview's document store and the report API over the same in-memory store. */
+export interface LocalPreviewStorage {
+  storage: DocumentStorage;
+  moderation: ModerationClient;
+}
+
 /**
- * Builds the preview's document store. Never throws: a missing or unusable
- * manifest, or a local store that fails to load, yields a store whose every call
+ * Builds the preview's document store, and `app.moderation` over the same store: a report in a
+ * preview files against the tab's documents and is never sent. Never throws: a missing or
+ * unusable manifest, or a local store that fails to load, yields a store whose every call
  * rejects, so storage cannot stop the rest of the app from starting.
  */
 export async function createLocalPreviewStorage(
   manifest: LocalPreviewManifest | undefined,
   viewer: ViewerInfo | null,
-): Promise<DocumentStorage> {
+): Promise<LocalPreviewStorage> {
   if (manifest === undefined) return refusingStorage('local_preview_no_manifest', NO_MANIFEST);
   let createFakeStorage: typeof import('./fake.js').createFakeStorage;
   try {
@@ -116,14 +130,19 @@ export async function createLocalPreviewStorage(
       manifest: { scopes: manifest.scopes, storage: manifest.storage },
       // Latched at init, like the mode: a sign-in remounts the frame.
       viewer: localViewer,
+      // A preview is a development namespace: on the server its viewer-keyed collections are
+      // always open, and the fake's defaults (open, keys derivable) already say so. The report
+      // API is served, so the app's report path runs in the tab; on civitai.com it is per-app.
+      reports: true,
     });
     const http: Http = (method, path, opts) => {
-      const from = opts?.query?.from;
+      // An import travels in the query on a storage route, and in the BODY of a report.
+      const from = opts?.query?.from ?? (path === REPORTS_PATH ? bodyFrom(opts?.body) : undefined);
       if (from !== undefined && from !== null) return Promise.reject(importRefusal(String(from)));
       collectIds(opts?.body, owned);
       return fake.http(method, path, opts);
     };
-    return createDocumentStorage(http);
+    return { storage: createDocumentStorage(http), moderation: createModerationClient(http) };
   } catch (error) {
     return refusingStorage(
       'local_preview_invalid_manifest',
@@ -162,8 +181,11 @@ function collectIds(value: unknown, into: number[]): void {
   }
 }
 
+const bodyFrom = (body: unknown): unknown =>
+  body !== null && typeof body === 'object' ? (body as { from?: unknown }).from : undefined;
+
 /** A store that refuses every call with one LOCAL, non-retryable error. */
-function refusingStorage(code: string, message: string): DocumentStorage {
+function refusingStorage(code: string, message: string): LocalPreviewStorage {
   const refuse = (): Promise<never> =>
     Promise.reject(
       new StorageError(LOCAL_PREVIEW_ERROR_STATUS, code, message, { code, message, error: message }),
@@ -182,9 +204,17 @@ function refusingStorage(code: string, message: string): DocumentStorage {
     unmark: refuse,
     publish: refuse,
     unpublish: refuse,
-  } satisfies Record<keyof StorageCollection, () => Promise<never>>;
+    getMine: refuse,
+    putMine: refuse,
+    deleteMine: refuse,
+    // Pure: it reads the key and sends nothing, so it works without a store.
+    parentOf: parentOfKey,
+  } satisfies Record<keyof StorageCollection, (...args: never[]) => unknown>;
   return {
-    collection: <T extends object>() => collection as StorageCollection<T>,
-    info: refuse,
+    storage: {
+      collection: <T extends object>() => collection as unknown as StorageCollection<T>,
+      info: refuse,
+    },
+    moderation: { report: refuse },
   };
 }

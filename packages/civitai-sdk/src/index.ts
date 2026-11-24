@@ -58,7 +58,7 @@ export type {
   SubListingUpsertResult,
   SubListingWithdrawResult,
 } from './sub-listings/index.js';
-export { StorageError, storageImportRefusal } from './doc-store/index.js';
+export { StorageError, storageImportRefusal, storageViewerKeyedRefusal } from './doc-store/index.js';
 export type {
   CollectionOptions,
   DocumentAuthor,
@@ -76,6 +76,7 @@ export type {
   StorageIncrementOp,
   StorageIndexType,
   StorageInfo,
+  StorageKeyedBy,
   StorageLimits,
   StorageMarkOp,
   StoragePublishRequest,
@@ -85,8 +86,12 @@ export type {
   StorageUnpublishResult,
   StorageUpdateOp,
   StorageUsage,
+  StorageViewerKeyedRefusal,
+  StorageViewerKeyedRefusalReason,
+  ViewerKeyedOptions,
   WriteOptions,
 } from './doc-store/index.js';
+export type { ModerationClient, StorageReportRequest } from './doc-store/moderation.js';
 export { estimatedCost, SubmissionUnconfirmedError } from './workflows/index.js';
 export type {
   WorkflowCallOptions,
