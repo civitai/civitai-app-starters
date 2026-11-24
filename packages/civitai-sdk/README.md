@@ -342,6 +342,12 @@ viewer, so the app never names one and no viewer can write another's (civitai/ci
 }}
 ```
 
+> 🔴 **`keyedBy` needs the civitai.com release that enables it.** Until the release that
+> turns viewer-keyed documents on for submit (civitai/civitai#10246) is live, `civitai app
+> submit` refuses a manifest declaring `keyedBy`. `createFakeStorage` and the dev-tunnel
+> local preview already accept it, so you can build and test against it now; they match
+> production once that release ships.
+
 ```ts
 import { storageViewerKeyedRefusal } from '@civitai/sdk';
 
@@ -379,8 +385,11 @@ try {
   viewers; `list({ keyPrefix: `${parent}:` })` lists exactly one parent's documents, since a
   parent never contains `:`. There is no count route: count by listing.
 - **The parent grammar** is the server's: 1 to 96 characters of `[A-Za-z0-9._-]`, not
-  only dots. Anything else is refused before sending, `invalid_request` with
-  `details.reason: 'invalid_parent'`.
+  only dots. The server refuses anything else `invalid_request` with `details.reason:
+  'invalid_parent'`, after it has checked the collection's mode (so a `parent` on a
+  `viewer` collection is `parent_not_allowed` whatever it is). The client sends every
+  parent, encoded, except `''`, `.` and `..`, which no URL can carry as one segment: those
+  are refused before sending with the same code and reason.
 - **Refusals** — `storageViewerKeyedRefusal(error)` returns `{ reason, collection? }` or
   `null`. `viewer_keyed` (400: a `create`, or a `put`/`delete` by key, on a viewer-keyed
   collection), `not_viewer_keyed`, `parent_required`, `parent_not_allowed`,
@@ -417,12 +426,16 @@ try {
 - Signed-in viewers only (`sign_in_required`), with `apps:storage`; a report spends the
   daily report budget (about 20 per viewer per app: `rate_limited`, `details.bucket:
   'report'`) and passes the trust gate (`not_eligible`). A private collection is refused
-  `invalid_request`; a document that is not there, or not visible, `not_found`.
+  `invalid_request`; a document that is not there, or not visible, `not_found`. A `key`
+  outside the server's key grammar (1 to 128 characters of `[A-Za-z0-9._:-]`, not only
+  dots) is refused before sending, `invalid_request`, so it spends no report budget.
 - **`from`** reports a document in another app's collection through a declared import,
   with that import's refusals (`storageImportRefusal`); `{ from: undefined }` is refused
   before sending rather than reporting in this app's own collection.
 - **Older hosts.** civitai.com serves the report API behind a per-app flag. A host that
-  does not serve it rejects with the LOCAL code `report_unavailable` (404); the
+  does not serve it rejects with the LOCAL code `report_unavailable` (404): the flag off
+  (the route's exact `404 not_found` "no such route") or no such page (a 404 without the
+  storage envelope). Any other 404 surfaces as it is; the
   `{ $mark: 'report' }` update is the route it had before.
 
 ### Publishing private documents in one call

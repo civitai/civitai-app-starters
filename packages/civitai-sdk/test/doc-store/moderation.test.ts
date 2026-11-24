@@ -66,6 +66,23 @@ describe('request shape', () => {
     expect(r.sent).toEqual([]);
   });
 
+  it.each([[''], ['..'], ['.'], ['a b'], ['a/b'], ['é'], ['k'.repeat(129)], [42], [undefined]])(
+    'key %j outside the key grammar is refused before sending, so it spends no report budget',
+    async (key) => {
+      const r = recorder();
+      const error = await refusal(r.moderation.report({ collection: 'posts', key: key as string }));
+      expect(error).toBeInstanceOf(StorageError);
+      expect([error.status, error.code]).toEqual([400, 'invalid_request']);
+      expect(r.sent).toEqual([]);
+    },
+  );
+
+  it.each([['k'.repeat(128)], ['a.b:c_d-E9'], ['.a'], [`r1:gq4z7m2k5w6c3t6y7b2d4f7h3j`]])('key %s is sent', async (key) => {
+    const r = recorder();
+    await r.moderation.report({ collection: 'posts', key });
+    expect(r.sent).toHaveLength(1);
+  });
+
   it('reads the reply strictly: anything but `{ reported: true }` is a CivitaiError', async () => {
     for (const reply of [{}, { reported: 'yes' }, { reported: false }, null, undefined]) {
       const r = recorder(() => reply);
@@ -95,6 +112,11 @@ describe('the route not served is report_unavailable; a missing document is not'
     const r = recorder(() => envelope(404, 'not_found', 'document not found'));
     const error = await refusal(r.moderation.report({ collection: 'posts', key: 'p1' }));
     expect([error.status, error.code]).toEqual([404, 'not_found']);
+  });
+
+  it('any other not_found sentence surfaces as it is, never as report_unavailable', async () => {
+    const r = recorder(() => envelope(404, 'not_found', 'No such route.'));
+    expect((await refusal(r.moderation.report({ collection: 'posts', key: 'p1' }))).code).toBe('not_found');
   });
 
   it('collection_not_declared (also 404) stays itself', async () => {
@@ -191,6 +213,27 @@ describe('fake: the report API', () => {
     await fake.storage.collection('posts').put('p1', { t: 'x' });
     const error = await refusal(fake.moderation.report({ collection: 'posts', key: 'p1' }));
     expect([error.status, error.code]).toEqual([404, 'report_unavailable']);
+  });
+
+  it('off, the route-miss comes before sign-in, for an anonymous viewer and a dev token alike', async () => {
+    const fake = createFakeStorage({ manifest: MANIFEST });
+    for (const caller of [{ viewer: null }, { viewer: null, token: 'dev' as const }]) {
+      const error = await refusal(fake.as(caller).moderation.report({ collection: 'posts', key: 'p1' }));
+      expect([error.status, error.code]).toEqual([404, 'report_unavailable']);
+    }
+    // Control: served, the same callers are refused sign_in_required.
+    const served = fakeWith();
+    for (const caller of [{ viewer: null }, { viewer: null, token: 'dev' as const }]) {
+      expect((await refusal(served.as(caller).moderation.report({ collection: 'posts', key: 'p1' }))).code).toBe('sign_in_required');
+    }
+  });
+
+  it('a malformed key costs no report: 20 good reports still fit after it', async () => {
+    const fake = fakeWith({ enforceRateLimits: true, now: () => 1_756_000_000_123 });
+    const posts = fake.storage.collection('posts');
+    for (let i = 0; i < 20; i++) await posts.put(`p${i}`, { t: 'x' });
+    expect((await refusal(fake.moderation.report({ collection: 'posts', key: '..' }))).code).toBe('invalid_request');
+    for (let i = 0; i < 20; i++) await fake.moderation.report({ collection: 'posts', key: `p${i}` });
   });
 
   it('idempotent and countless: the same answer twice, and no reader sees a count', async () => {

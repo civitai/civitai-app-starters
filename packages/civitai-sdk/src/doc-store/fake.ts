@@ -1645,7 +1645,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     if (!tokenScopes.includes(BASE_SCOPE)) throw refuse('insufficient_scope', `${BASE_SCOPE} scope required`);
     if (reporting) {
       const reporter = viewer === null ? null : uidOf(viewer);
-      if (caller.token === 'dev' && reporter === null) throw refuse('sign_in_required', 'sign in required');
+      // Its dev-token sign-in refusal comes after the route's own existence check (reportDoc).
       const reporterCtx: Ctx = { app, ns: `${app.id}\u0000${caller.token === 'dev' ? `dev:${reporter}` : 'prod'}`, uid: reporter };
       return reportDoc(caller, method, query, body, viewer, reporterCtx, tokenScopes, consentUnavailable);
     }
@@ -2112,7 +2112,9 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     tokenScopes: readonly string[],
     consentUnavailable: boolean,
   ) {
+    // Off, the path is not a route at all, before any other answer (sign-in and a 405 included).
     if (options.reports !== true) throw refuse('not_found', 'no such route');
+    if (caller.token === 'dev' && ownCtx.uid === null) throw refuse('sign_in_required', 'sign in required');
     if (method !== 'POST') throw refuse('method_not_allowed', 'method not allowed');
     const stray = Object.keys(query)[0];
     if (stray !== undefined) throw invalid(`unknown query parameter ${stray}`);

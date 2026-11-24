@@ -886,8 +886,10 @@ export type StorageKeyedBy = 'viewer' | 'parent+viewer';
 export interface ViewerKeyedOptions extends WriteOptions {
     /**
      * The parent key, on a `parent+viewer` collection only (a `viewer` collection refuses one,
-     * `parent_not_allowed`). 1 to 96 characters of `[A-Za-z0-9._-]`, not only dots: anything else
-     * is refused before sending, `invalid_request` with `details.reason: 'invalid_parent'`.
+     * `parent_not_allowed`). 1 to 96 characters of `[A-Za-z0-9._-]`, not only dots: the server
+     * refuses anything else `invalid_request` with `details.reason: 'invalid_parent'`, after it has
+     * checked the collection's mode. Only `''`, `.` and `..` (which no URL path can carry as a
+     * segment) are refused here, before sending, with that same code and reason.
      */
     parent?: string;
 }
@@ -1281,8 +1283,9 @@ export type StorageImportRefusal = {
  * - `not_viewer_keyed` — 400: a `…Mine` call on a collection that declares no `keyedBy`.
  * - `parent_required` — 400: a `…Mine` call without `parent` on a `parent+viewer` collection.
  * - `parent_not_allowed` — 400: a `parent` on a `viewer` collection.
- * - `invalid_parent` — 400: a `parent` outside `[A-Za-z0-9._-]{1,96}`, or only dots. This client
- *   refuses one before sending, with the server's code, reason and `details.collection`.
+ * - `invalid_parent` — 400: a `parent` outside `[A-Za-z0-9._-]{1,96}`, or only dots, judged by the
+ *   server after the mode. This client refuses only `''`, `.` and `..` before sending (no URL
+ *   carries them), with the server's code, reason and `details.collection`.
  * - `viewer_keyed_closed` — 403 `write_policy`: a `putMine` / `deleteMine` while the
  *   collection's switch is closed (`info()` says `open: false`). Reads still work.
  * - `viewer_keys_unconfigured` — 503 `service_unavailable`: the host cannot derive keys at all;
@@ -1323,11 +1326,15 @@ export interface ModerationClient {
      * Signed-in viewers only (`sign_in_required`, 401). Needs `apps:storage`; spends the daily
      * report budget (about 20 per viewer per app, `rate_limited` with `retryAfter` past it) and
      * passes the shared-write trust gate (`not_eligible`). A document that is not there, or not
-     * visible, is `not_found` (404). Through an import, the source app's rules apply, and a
+     * visible, is `not_found` (404). A `key` outside the key grammar (1 to 128 characters of
+     * `[A-Za-z0-9._:-]`, not only dots) is refused before sending, `invalid_request` (400), so it
+     * spends no report budget. Through an import, the source app's rules apply, and a
      * source that needs the viewer's publish grant there is asked for it once, as a write is.
      *
      * A civitai.com that does not serve the report API — an older release, or the app's host flag
-     * off — rejects with the LOCAL code `report_unavailable` (404). Hide the report action then;
+     * off — rejects with the LOCAL code `report_unavailable` (404): only the route's exact
+     * `not_found` "no such route", or a 404 without the storage envelope. Any other 404 surfaces
+     * as it is. Hide the report action then;
      * a `report` mark (`update(key, { $mark: 'report' })`) is the older route.
      *
      * @example

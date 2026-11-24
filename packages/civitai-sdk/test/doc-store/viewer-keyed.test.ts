@@ -105,12 +105,23 @@ describe('request shapes', () => {
   });
 });
 
-describe('the parent grammar, refused before sending exactly as the server refuses it', () => {
-  // The server's `VIEWER_KEY_PARENT_RE` is /^[A-Za-z0-9._-]{1,96}$/ plus "not only dots".
-  const refused: unknown[] = ['', '.', '..', '...', 'a:b', 'a/b', 'a b', 'é', 'x'.repeat(97), null, 7];
-  const accepted = ['a', 'Z', '-', '_', '.a', 'a.', '01JD3Q8M5Z4X2V7K9C6B1N0RTA', 'x'.repeat(96)];
+describe('a parent: only what no URL can carry is refused before sending; the server judges the rest', () => {
+  // `''` collapses the segment (reaching `@me` alone), `.` and `..` are path steps.
+  const unaddressable: unknown[] = ['', '.', '..', null, 7];
+  // Sent encoded; the server answers them (mode first, then its grammar).
+  const sent: [string, string][] = [
+    ['a', 'a'],
+    ['.a', '.a'],
+    ['...', '...'],
+    ['a:b', 'a%3Ab'],
+    ['a/b', 'a%2Fb'],
+    ['a b', 'a%20b'],
+    ['é', '%C3%A9'],
+    ['x'.repeat(96), 'x'.repeat(96)],
+    ['x'.repeat(97), 'x'.repeat(97)],
+  ];
 
-  it.each(refused.map((p) => [JSON.stringify(p), p]))('%s is invalid_request / invalid_parent, nothing sent', async (_, parent) => {
+  it.each(unaddressable.map((p) => [JSON.stringify(p), p]))('%s is invalid_request / invalid_parent, nothing sent', async (_, parent) => {
     const r = recorder();
     const votes = r.storage.collection('votes');
     for (const call of [
@@ -126,10 +137,22 @@ describe('the parent grammar, refused before sending exactly as the server refus
     expect(r.sent).toEqual([]);
   });
 
-  it.each(accepted)('%s is sent, as its own path segment', async (parent) => {
+  it.each(sent)('%s is sent as one encoded segment', async (parent, segment) => {
     const r = recorder();
     await r.storage.collection('votes').getMine(parent);
-    expect(r.sent.map((s) => s.path)).toEqual([`blocks/storage/votes/@me/${parent}`]);
+    expect(r.sent.map((s) => s.path)).toEqual([`blocks/storage/votes/@me/${segment}`]);
+  });
+
+  it('the server (here, the fake) checks the mode BEFORE the grammar', async () => {
+    const fake = fakeWith();
+    const reason = async (p: Promise<unknown>) => storageViewerKeyedRefusal(await refusal(p))?.reason;
+    // The same bad parent: `parent_not_allowed` on a `viewer` collection, `not_viewer_keyed` on
+    // an ordinary one, `invalid_parent` only where a parent belongs.
+    expect(await reason(fake.storage.collection('picks').getMine('a:b'))).toBe('parent_not_allowed');
+    expect(await reason(fake.storage.collection('records').getMine('a:b'))).toBe('not_viewer_keyed');
+    expect(await reason(fake.storage.collection('votes').getMine('a:b'))).toBe('invalid_parent');
+    expect(await reason(fake.storage.collection('votes').getMine('x'.repeat(97)))).toBe('invalid_parent');
+    expect(await reason(fake.storage.collection('votes').getMine('...'))).toBe('invalid_parent');
   });
 
   it('a bad collection name is refused before the parent is looked at', async () => {
@@ -150,6 +173,18 @@ describe('getMine reads only a DOCUMENT miss as null', () => {
     const r = recorder(() => envelope(404, 'not_found', 'no such storage route'));
     const error = await refusal(r.storage.collection('votes').getMine('r7'));
     expect([error.status, error.code]).toEqual([404, 'not_found']);
+  });
+
+  it('any other 404 not_found sentence rejects too: only the exact miss reads as "none yet"', async () => {
+    const r = recorder(() => envelope(404, 'not_found', 'Document not found.'));
+    expect((await refusal(r.storage.collection('votes').getMine('r7'))).code).toBe('not_found');
+  });
+
+  it('a 404 without the storage envelope (no such page) rejects as a plain ApiError', async () => {
+    const r = recorder(() => new ApiError(404, 'Not Found', '<html>404</html>'));
+    const error = await refusal(r.storage.collection('votes').getMine('r7'));
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).not.toBeInstanceOf(StorageError);
   });
 
   it('a 404 `collection_not_declared` rejects', async () => {

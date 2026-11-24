@@ -207,8 +207,10 @@ export type StorageKeyedBy = 'viewer' | 'parent+viewer';
 export interface ViewerKeyedOptions extends WriteOptions {
   /**
    * The parent key, on a `parent+viewer` collection only (a `viewer` collection refuses one,
-   * `parent_not_allowed`). 1 to 96 characters of `[A-Za-z0-9._-]`, not only dots: anything else
-   * is refused before sending, `invalid_request` with `details.reason: 'invalid_parent'`.
+   * `parent_not_allowed`). 1 to 96 characters of `[A-Za-z0-9._-]`, not only dots: the server
+   * refuses anything else `invalid_request` with `details.reason: 'invalid_parent'`, after it has
+   * checked the collection's mode. Only `''`, `.` and `..` (which no URL path can carry as a
+   * segment) are refused here, before sending, with that same code and reason.
    */
   parent?: string;
 }
@@ -713,8 +715,9 @@ export function storageImportRefusal(error: unknown): StorageImportRefusal | nul
  * - `not_viewer_keyed` — 400: a `…Mine` call on a collection that declares no `keyedBy`.
  * - `parent_required` — 400: a `…Mine` call without `parent` on a `parent+viewer` collection.
  * - `parent_not_allowed` — 400: a `parent` on a `viewer` collection.
- * - `invalid_parent` — 400: a `parent` outside `[A-Za-z0-9._-]{1,96}`, or only dots. This client
- *   refuses one before sending, with the server's code, reason and `details.collection`.
+ * - `invalid_parent` — 400: a `parent` outside `[A-Za-z0-9._-]{1,96}`, or only dots, judged by the
+ *   server after the mode. This client refuses only `''`, `.` and `..` before sending (no URL
+ *   carries them), with the server's code, reason and `details.collection`.
  * - `viewer_keyed_closed` — 403 `write_policy`: a `putMine` / `deleteMine` while the
  *   collection's switch is closed (`info()` says `open: false`). Reads still work.
  * - `viewer_keys_unconfigured` — 503 `service_unavailable`: the host cannot derive keys at all;
@@ -781,12 +784,19 @@ export function parentOfKey(key: unknown): string | null {
   return PARENT.test(parent) && !DOT_ONLY.test(parent) && DIGEST.test(key.slice(colon + 1)) ? parent : null;
 }
 
-/** The `@me` path, refusing a parent the server would refuse (and a URL would rewrite), before sending. */
+/**
+ * The `@me` path. A parent is refused before sending ONLY when no URL can carry it as one
+ * segment — not a string, `''` (the segment collapses, reaching `@me` alone), `.` or `..` (path
+ * steps) — because then the server would answer a different request. Every other parent is
+ * sent, encoded, and the SERVER judges it in its own order: the collection's mode first
+ * (`not_viewer_keyed`, `parent_not_allowed`, `parent_required`), then the grammar
+ * (`invalid_parent`). This client does not know the mode, so it cannot reproduce that order.
+ */
 function minePath(collection: string, parent: unknown): string {
   const base = `${BASE}/${collection}/${MINE}`;
   if (parent === undefined) return base;
-  if (typeof parent !== 'string' || !PARENT.test(parent) || DOT_ONLY.test(parent)) {
-    const message = 'parent must be 1–96 characters of [A-Za-z0-9._-], not only dots (refused before sending)';
+  if (typeof parent !== 'string' || parent === '' || parent === '.' || parent === '..') {
+    const message = `parent ${JSON.stringify(parent)} cannot be addressed in a URL path: it must be 1–96 characters of [A-Za-z0-9._-], not only dots (refused before sending)`;
     const details = { reason: 'invalid_parent', collection };
     throw new StorageError(400, 'invalid_request', message, { code: 'invalid_request', message, error: message, details }, details);
   }
@@ -794,14 +804,16 @@ function minePath(collection: string, parent: unknown): string {
 }
 
 /**
- * The server's own answer to a path it has no route for (an older civitai.com without `@me`
- * routes, asked for `…/@me/:parent`), told apart from a document miss only by its sentence:
- * the envelope carries no other field. Matched exactly, so a reworded miss still reads as a miss.
+ * The server's sentence for a DOCUMENT miss (`404 not_found`, "document not found"). The same
+ * code also answers a path the server has no route for (an older civitai.com without `@me`:
+ * "no such storage route"), and the envelope carries no other field to tell them apart. So
+ * `getMine` reads a 404 as "none yet" only on exactly this sentence; any other 404, a reworded
+ * one included, surfaces as an error — loud, never a false "not voted".
  */
-const NO_SUCH_STORAGE_ROUTE = 'no such storage route';
+const DOCUMENT_NOT_FOUND = 'document not found';
 
-const isRouteMiss = (error: StorageError): boolean =>
-  isRecord(error.body) && error.body.message === NO_SUCH_STORAGE_ROUTE;
+const isDocumentMiss = (error: StorageError): boolean =>
+  error.status === 404 && error.code === 'not_found' && isRecord(error.body) && error.body.message === DOCUMENT_NOT_FOUND;
 
 /**
  * Appended to a REAL route's `insufficient_scope`, after the server's own sentence.
@@ -1149,9 +1161,8 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
           try {
             return doc(await call('GET', minePath(coll(), parent), { query: q(), signal }, { mine: true }), 'getMine');
           } catch (error) {
-            // Only a DOCUMENT miss is "none yet". The same code for a path the server has no
-            // route for (a civitai.com without `@me`) must never read as "not voted".
-            if (error instanceof StorageError && error.code === 'not_found' && !isRouteMiss(error)) return null;
+            // Only the server's exact document miss is "none yet" (see DOCUMENT_NOT_FOUND).
+            if (error instanceof StorageError && isDocumentMiss(error)) return null;
             throw error;
           }
         },
