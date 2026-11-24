@@ -4113,12 +4113,6 @@ export declare class CivitaiError extends Error {
     constructor(message: string, options?: ErrorOptions);
 }
 
-/**
- * Reads a `rateLimit` the host sent: a copy holding only the known fields, or `undefined` when
- * `retryAfterSeconds` or `retryAt` is malformed. A malformed optional field is dropped on its own.
- */
-export declare function parseRateLimitMeta(value: unknown): RateLimitMeta | undefined;
-
 export declare class BridgeError extends CivitaiError {
     readonly code: BridgeErrorCode;
     /** The message type that failed, e.g. `SAVE_IMAGE`. */

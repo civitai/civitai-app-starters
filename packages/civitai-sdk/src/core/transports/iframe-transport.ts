@@ -107,13 +107,10 @@ export function unwrap(type: string, reply: unknown, expected: HostReply): unkno
       : (reply as Envelope<unknown>);
 
   if (envelope.error !== undefined) {
-    const rateLimit = parseRateLimitMeta(envelope.error.rateLimit);
-    throw new BridgeError(
-      rateLimit ? 'rate-limited' : envelope.error.code,
-      type,
-      envelope.error.message || `${type} failed`,
-      rateLimit ? { rateLimit } : undefined,
-    );
+    // `rateLimit` is set only by fromLegacyReply, which has already parsed it and set the code; no
+    // host type uses envelope framing, so an envelope's own error carries none.
+    const { code, message, rateLimit } = envelope.error;
+    throw new BridgeError(code, type, message || `${type} failed`, rateLimit ? { rateLimit } : undefined);
   }
   if (envelope.result === undefined) {
     throw new BridgeError('malformed', type, `${type} reply carried no result`);

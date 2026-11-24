@@ -8,4 +8,4 @@
 - A refusal that carries the metadata has the code `rate-limited`, whatever its message says. A refusal without it is classified from its message, as before.
 - The host sends the metadata on every bridge error reply from civitai/civitai#10367 on. On an older host, `rateLimit` is absent (not even an own property), and nothing else changes.
 - `kind` is informational: an `abuse` limit can carry counts too (the App Platform's tip and goods daily caps do), so branch on whether the counts are present, not on `kind`.
-- New exports: `RateLimitMeta`, `BridgeErrorOptions` and `parseRateLimitMeta`. `@civitai/sdk/testing`'s `fail(type, { code, message, rateLimit })` accepts the metadata, so an app can test how it handles the refusal.
+- New exported types: `RateLimitMeta` and `BridgeErrorOptions`. `@civitai/sdk/testing`'s `fail(type, { code, message, rateLimit })` accepts the metadata, so an app can test how it handles the refusal.
