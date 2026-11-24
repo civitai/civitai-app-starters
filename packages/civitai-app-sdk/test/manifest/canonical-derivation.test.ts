@@ -246,6 +246,28 @@ describe('NOT ABOVE THE CANONICAL: rules the previous implementation invented', 
         },
       }),
     ],
+    // `keyedBy` (viewer-keyed documents). RED before the re-vendor: an unknown key on
+    // the closed collection object. Both values, on a shared write:"own" collection,
+    // once with `kind` "docs" stated and alongside the fields it may sit beside.
+    [
+      'storage: keyedBy "viewer" and "parent+viewer" on shared write:"own" collections',
+      valid({
+        storage: {
+          collections: {
+            likes: { visibility: 'shared', write: 'own', keyedBy: 'viewer' },
+            votes: {
+              kind: 'docs',
+              visibility: 'shared',
+              write: 'own',
+              keyedBy: 'parent+viewer',
+              showAuthor: true,
+              indexes: { choice: 'string' },
+              schema: { type: 'object', properties: { choice: { type: 'string', maxLength: 16 } } },
+            },
+          },
+        },
+      }),
+    ],
     // -- storage imports (civitai/civitai#7494). RED before the re-vendor: `storage`
     // was `additionalProperties: false` with `collections` required, `exportable` was
     // an unknown key on a collection, and `apps:storage:import` was not in the scope enum.
@@ -625,6 +647,49 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
       valid({ storage: { collections: { posts: { visibility: 'shared', write: 'own', registry: 'private' } } } }),
       'storage.collections.posts.registry',
     ],
+    // keyedBy (viewer-keyed documents): its two values, shared write:"own" docs only, and
+    // no counters or marks beside it are all the canonical's; nothing in this package
+    // writes any of them down. The server's parser refuses each of these too.
+    [
+      'storage: keyedBy is "viewer" or "parent+viewer"',
+      valid({ storage: { collections: { votes: { visibility: 'shared', write: 'own', keyedBy: 'parent' } } } }),
+      'storage.collections.votes.keyedBy',
+    ],
+    [
+      'storage: no keyedBy on a private collection',
+      valid({ storage: { collections: { notes: { visibility: 'private', keyedBy: 'viewer' } } } }),
+      'storage.collections.notes.keyedBy',
+    ],
+    [
+      'storage: no keyedBy on a write:"anyone" collection',
+      valid({ storage: { collections: { board: { visibility: 'shared', write: 'anyone', keyedBy: 'viewer' } } } }),
+      'storage.collections.board.keyedBy',
+    ],
+    [
+      'storage: no keyedBy on a write:"owner" collection',
+      valid({ storage: { collections: { feed: { visibility: 'shared', write: 'owner', keyedBy: 'parent+viewer' } } } }),
+      'storage.collections.feed.keyedBy',
+    ],
+    [
+      'storage: no keyedBy on a write:"none" collection',
+      valid({ storage: { collections: { tally: { visibility: 'shared', write: 'none', marks: ['vote'], keyedBy: 'viewer' } } } }),
+      'storage.collections.tally.keyedBy',
+    ],
+    [
+      'storage: no keyedBy on a kind:"log" collection',
+      valid({ storage: { collections: { events: { kind: 'log', visibility: 'shared', write: 'own', keyedBy: 'viewer' } } } }),
+      'storage.collections.events.keyedBy',
+    ],
+    [
+      'storage: keyedBy cannot be combined with counters',
+      valid({ storage: { collections: { votes: { visibility: 'shared', write: 'own', keyedBy: 'viewer', counters: ['plays'] } } } }),
+      'storage.collections.votes.counters',
+    ],
+    [
+      'storage: keyedBy cannot be combined with marks',
+      valid({ storage: { collections: { votes: { visibility: 'shared', write: 'own', keyedBy: 'parent+viewer', marks: ['vote'] } } } }),
+      'storage.collections.votes.marks',
+    ],
     [
       'storage: `key` is a built-in sort key, not an index name',
       valid({ storage: { collections: { notes: { visibility: 'private', indexes: { key: 'string' } } } } }),
@@ -725,6 +790,17 @@ describe('DERIVED, NOT MIRRORED: canonical rules no line of this package writes 
   // names it was ALREADY refused at the same field — as an unknown key. The
   // field alone therefore cannot tell the rule from its absence; this can.
   it.each(cases.filter(([label]) => label.includes('ownedModelVersions')))(
+    '%s — refused by the rule, not as an unknown key',
+    (_label, manifest) => {
+      expect(rejection(manifest).message).not.toContain('is not a known property');
+    },
+  );
+
+  // Before the canonical declared `keyedBy`, every case above that refuses it at
+  // `….keyedBy` was ALREADY refused there — as an unknown key. The message tells the
+  // rule from its absence. The counters/marks cases are refused at another field, so
+  // their field alone already does.
+  it.each(cases.filter(([label]) => label.includes('keyedBy')))(
     '%s — refused by the rule, not as an unknown key',
     (_label, manifest) => {
       expect(rejection(manifest).message).not.toContain('is not a known property');
@@ -1000,7 +1076,7 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
   /**
    * The selection is generic (any `oneOf` / `anyOf` whose members pin one
    * property to a `const`), so it applies to every such site the canonical
-   * ever gains. Today there are SEVEN sites. Two are discriminated: the analytics
+   * ever gains. Today there are EIGHT sites. Two are discriminated: the analytics
    * property declaration (on `type`) and a storage migration op (on `op`,
    * civitai/civitai#7661's `$defs.storageMigrationOp`). The first's messages are
    * pinned whole below; the migration op is reached through `$ref` (its paths
@@ -1014,11 +1090,16 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
    * (a boolean or a schema), both from civitai/civitai#7491's `$defs`. The
    * seventh is the only one at the TOP LEVEL rather than under a property: the
    * root `allOf[1].anyOf` (civitai/civitai#8735), "a non-empty `targets` or a
-   * `page`", likewise with no `const` discriminator. This
+   * `page`", likewise with no `const` discriminator. The eighth sits inside an
+   * `if`: the storage collection's "`write` is not own, or `kind` is log" test that
+   * gates `keyedBy: false`. One member pins `kind` to a `const`, but Ajv reports
+   * nothing from an `if` (a failed condition is not an error), so no report ever
+   * comes from it; what `defineBlock` says when its `then` refuses `keyedBy` is
+   * pinned in the DERIVED rejections above. This
    * ledger fails when a site is added or removed, so that whoever re-vendors
    * it looks at what `defineBlock` then says for the new site.
    */
-  it('LEDGER: the canonical has exactly seven oneOf/anyOf sites', () => {
+  it('LEDGER: the canonical has exactly eight oneOf/anyOf sites', () => {
     const sites: string[] = [];
     const scan = (node: unknown, path: string): void => {
       if (Array.isArray(node)) return node.forEach((child, i) => scan(child, `${path}/${i}`));
@@ -1035,7 +1116,10 @@ describe('a failed discriminated oneOf reports the member the author wrote', () 
       `#/properties/analytics/properties/events/patternProperties/${NAME}` +
         `/properties/properties/patternProperties/${NAME}/allOf/1/oneOf`,
       '#/properties/storage/anyOf',
-      `#/properties/storage/properties/collections/patternProperties/${COLLECTION}/allOf/5/then/anyOf`,
+      // The `if` that gates `keyedBy: false` (write not "own", or kind "log").
+      `#/properties/storage/properties/collections/patternProperties/${COLLECTION}/allOf/5/if/anyOf`,
+      // write:"none" declares at least one counter or mark.
+      `#/properties/storage/properties/collections/patternProperties/${COLLECTION}/allOf/7/then/anyOf`,
       '#/$defs/storageCollectionSchema/properties/type/anyOf',
       '#/$defs/storageCollectionSchema/properties/additionalProperties/anyOf',
       '#/$defs/storageMigrationOp/oneOf',

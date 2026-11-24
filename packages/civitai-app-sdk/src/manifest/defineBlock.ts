@@ -170,8 +170,10 @@ export const KNOWN_GAPS = {
     '`apps:storage:import` (and `apps:storage`), requesting any of these scopes with nothing for ' +
     'it to reach is rejected, an import never names this app itself and names each source at ' +
     'most once, a counter may not share a name with a mark, and the ' +
-    'RESERVED features (`kind` "log", `ttlSeconds`, `dailyWritesPerAuthor`, `registry`, `hook`, ' +
-    '`write` "anyone" / "owner") validate offline and are refused at submit. A `hook`\'s `file` ' +
+    'RESERVED features (`kind` "log", `ttlSeconds`, `dailyWritesPerAuthor`, `registry`, ' +
+    '`write` "anyone" / "owner") validate offline and are refused at submit. A new or changed ' +
+    '`hook` is in a limited rollout: it validates offline and is refused at submit for an author ' +
+    'the rollout does not include. A `hook`\'s `file` ' +
     'being outside `outputDir`, present in the bundle with its `sha256`, its size, and one file ' +
     'pinned with one digest across collections are checked by the server too. Ajv enforces the ' +
     'structural rules exactly; these are server-side.',
@@ -194,6 +196,13 @@ export const KNOWN_GAPS = {
     'decided there. So are the canonical\'s prose-only rules: a `default` value must match the new ' +
     'schema at its path and be at most 4096 bytes of JSON, and the ops must touch disjoint ' +
     'fields. All of those validate here.',
+  'storage-keyedBy-immutable':
+    'A collection\'s `keyedBy` (viewer-keyed documents): the canonical encodes its values ' +
+    '("viewer" / "parent+viewer") and where it may appear — shared `write` "own" collections ' +
+    'only, never `kind` "log", never beside `counters` or `marks` — and Ajv enforces those ' +
+    'exactly. That it cannot be added, removed or changed on a collection ANY previously ' +
+    'approved version declared needs those approved manifests, so it is decided by the server at ' +
+    'submit. A change to it validates here.',
   'format-uri-not-enforced':
     '`assetBundleUrl` carries `format: "uri"` in addition to `pattern: "^https://"`. Ajv ignores ' +
     'unknown formats unless `ajv-formats` is installed, which would be a second optional peer for ' +
