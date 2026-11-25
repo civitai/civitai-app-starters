@@ -33,9 +33,12 @@ export { sendTypedRequest } from './transport/transport.js';
 // recommends whatever happens to be in scope.
 export { generateIdempotencyKey } from './transport/transport.js';
 export type {
+  AppDataService,
   BlockSnapshot,
   BlockTransport,
   OutboundRequest,
+  SnapshotToken,
+  SnapshotTokenKind,
 } from './transport/transport.js';
 
 // Hooks

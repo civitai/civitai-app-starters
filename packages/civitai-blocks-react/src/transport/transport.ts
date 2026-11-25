@@ -30,7 +30,7 @@ export interface BlockSnapshot {
   ready: boolean;
   renderMode: 'iframe' | 'inline';
   context: BlockContext;
-  token: BlockToken;
+  token: SnapshotToken;
   settings: BlockSettings;
   /**
    * `null` for anonymous viewers, matching `BlockInitPayload.viewer`.
@@ -72,6 +72,69 @@ export interface BlockSnapshot {
    * case `useDomainMaturity` falls back to the domain ceiling.
    */
   effectiveBrowsingLevel?: number;
+  /**
+   * `BLOCK_INIT.appData`, validated by {@link readAppDataService}: where this app's
+   * document store is served when the host has moved the app to the app-data
+   * service. Absent otherwise — every other app, a host that predates the field,
+   * any value that is not exactly `{ url, slug }` with a plain `https:` URL, and a
+   * frame the host marked `storageMode: 'local-preview'` (the local preview wins).
+   *
+   * Nothing in this package acts on it. It is carried so that `@civitai/sdk`'s
+   * `initialize({ transport })`, built on this transport's snapshot, reads it
+   * (`snapshot().appData`) and sends `app.storage` to the service. The SDK does
+   * NOT re-validate a snapshot field, so this must hold only a validated value.
+   */
+  appData?: AppDataService;
+}
+
+/**
+ * The kind of token the host minted. `@civitai/sdk` reads it off the snapshot
+ * (`token.kind === 'block'`): its app-data service mode is active only while the
+ * frame holds a block token. Declared here, not in `@civitai/app-sdk`, whose
+ * `WrappedToken`/`BlockToken` predate it.
+ */
+export type SnapshotTokenKind = 'block' | 'oauth';
+
+/** `BlockToken` plus the host's `kind`, when the host sent one of the exact values. */
+export type SnapshotToken = BlockToken & { kind?: SnapshotTokenKind };
+
+/** `BLOCK_INIT.appData`, validated: the app-data service that serves this app's document store. */
+export interface AppDataService {
+  /** The service's base URL: `https:`, no credentials, query or fragment. */
+  url: string;
+  /** The app's blockId, as the service names apps in its routes. */
+  slug: string;
+}
+
+// PORT of `@civitai/sdk` `src/core/transport.ts` (`APP_DATA_SLUG` and
+// `readAppDataService`). This package does not depend on `@civitai/sdk`, and the
+// SDK trusts `snapshot().appData` as given, so the snapshot must carry the value
+// the SDK's own `snapshotFromInit` would. Pinned byte-for-byte to the SDK's copy
+// by `test/appDataParity.test.ts`.
+
+/** The service's own slug grammar (an app's blockId). */
+const APP_DATA_SLUG = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+
+/**
+ * THE predicate for `BLOCK_INIT.appData`: the exact `{ url, slug }` shape, copied by field, or
+ * `undefined`. Anything else — another shape, a URL that is not plain `https:`, a slug outside the
+ * service's grammar — reads as absent, which keeps the site's routes.
+ */
+export function readAppDataService(value: unknown): AppDataService | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const { url, slug } = value as Record<string, unknown>;
+  if (typeof url !== 'string' || typeof slug !== 'string' || !APP_DATA_SLUG.test(slug)) return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return undefined;
+  }
+  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '' || parsed.search !== '' || parsed.hash !== '') {
+    return undefined;
+  }
+  if (url.includes('?') || url.includes('#')) return undefined;
+  return { url, slug };
 }
 
 /**
@@ -301,6 +364,15 @@ function cloneHostContext(ctx: BlockContext): BlockContext {
 
 /** Convert a wire `BlockInitPayload` (ISO string expiresAt) into a `BlockSnapshot`. */
 export function snapshotFromInit(payload: BlockInitPayload): BlockSnapshot {
+  // `@civitai/app-sdk`'s `BlockInitPayload` declares `appData` from 0.95; read it
+  // off the wire as `unknown` so an older peer's type still compiles.
+  //
+  // A local preview wins over the service, as in `@civitai/sdk`'s `initialize()`.
+  // This snapshot does not carry `storageMode` (see the PR that added `appData`),
+  // so the SDK cannot apply that precedence itself: a frame marked
+  // `storageMode: 'local-preview'` gets no `appData` here.
+  const wire = payload as { appData?: unknown; storageMode?: unknown };
+  const appData = wire.storageMode === 'local-preview' ? undefined : readAppDataService(wire.appData);
   return {
     ready: true,
     renderMode: payload.renderMode,
@@ -315,6 +387,8 @@ export function snapshotFromInit(payload: BlockInitPayload): BlockSnapshot {
     domain: payload.domain,
     maxBrowsingLevel: payload.maxBrowsingLevel,
     effectiveBrowsingLevel: payload.effectiveBrowsingLevel,
+    // The exact shape or nothing: absent keeps the site's storage routes.
+    ...(appData ? { appData } : {}),
   };
 }
 
@@ -322,15 +396,21 @@ export function snapshotFromInit(payload: BlockInitPayload): BlockSnapshot {
  * Rehydrate a wire `WrappedToken` (ISO `expiresAt`) into the runtime
  * `BlockToken` shape (`Date` `expiresAt`). Shared by `snapshotFromInit`
  * and the `TOKEN_REFRESH` / `TOKEN_REFRESH_RESPONSE` handlers so the
- * snapshot's token always reflects every wrapped field — `scopes` and
- * `buzzBudget` included — not just `raw`/`expiresAt`.
+ * snapshot's token always reflects every wrapped field — `scopes`,
+ * `buzzBudget` and `kind` included — not just `raw`/`expiresAt`.
+ *
+ * `kind` is copied only when it is one of the exact values; any other value is
+ * left off, which `@civitai/sdk` reads as "not a block token" (fail closed: the
+ * app-data service is never used with it).
  */
-export function tokenFromWrapped(wrapped: WrappedToken): BlockToken {
+export function tokenFromWrapped(wrapped: WrappedToken): SnapshotToken {
+  const kind = (wrapped as { kind?: unknown }).kind;
   return {
     raw: wrapped.raw,
     scopes: wrapped.scopes,
     expiresAt: new Date(wrapped.expiresAt),
     buzzBudget: wrapped.buzzBudget,
+    ...(kind === 'block' || kind === 'oauth' ? { kind } : {}),
   };
 }
 
