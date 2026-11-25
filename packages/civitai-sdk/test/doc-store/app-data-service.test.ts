@@ -263,6 +263,28 @@ describe('service mode: each call goes to the service route', () => {
     ]);
   });
 
+  it('a switch to an OAuth token DURING a service call (the 401 refresh) fails closed: the OAuth bearer never reaches the service', async () => {
+    const { app, calls, transport: t } = await serviceApp([
+      () => json(401, { error: 'invalid_token', message: 'the token cannot read this stream' }),
+      () => json(200, STORE_DOC('k', 1)),
+    ]);
+    const oauth = { raw: 'oauth-tok', scopes: [], expiresAt: '2030-01-03T00:00:00.000Z', kind: 'oauth' };
+    t.handle('REQUEST_TOKEN', () => {
+      // The host switched the frame while the call was in flight.
+      t.setSnapshot({ token: { ...oauth, expiresAt: new Date(oauth.expiresAt), kind: 'oauth' } });
+      return { token: oauth };
+    });
+    const error = await app.storage.collection('kv').get('k').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(String((error as Error).message)).toMatch(/not a block token/);
+    expect(calls.map((c) => [at(c), c.headers.Authorization])).toEqual([[`GET ${RECORDS}/kv/records/k`, `Bearer ${TOKEN}`]]);
+    // The next call goes to the site, with the OAuth token.
+    await app.storage.collection('kv').get('k');
+    expect(calls.slice(1).map((c) => [at(c), c.headers.Authorization])).toEqual([
+      ['GET https://civitai.com/api/v1/blocks/storage/kv/k', 'Bearer oauth-tok'],
+    ]);
+  });
+
   it('getMany stops sending at the first failure', async () => {
     const keys = Array.from({ length: 12 }, (_, i) => `k${i}`);
     let n = 0;
@@ -409,6 +431,7 @@ describe('service mode: read-your-writes floor (minSeq)', () => {
       () => json(200, STORE_DOC('rec-3:abc', 63)), // votes putMine → votes 63
       () => json(200, { source: 'registry', items: [] }), // kv list
       () => json(200, { source: 'registry', item: STORE_DOC('mine', 1) }), // votes getMine
+      () => json(200, { source: 'registry', item: STORE_DOC('other', 1) }), // votes getMine, another parent
       () => json(200, { collections: {}, limits: {}, usage: {} }), // info: never a floor
     ]);
     const kv = app.storage.collection('kv');
@@ -423,6 +446,7 @@ describe('service mode: read-your-writes floor (minSeq)', () => {
     await app.storage.collection('votes').putMine({ up: true }, { parent: 'rec-3' });
     await kv.list({ keyPrefix: 'p' });
     await app.storage.collection('votes').getMine('rec-3');
+    await app.storage.collection('votes').getMine('rec-4');
     await app.storage.info();
     expect(calls.map(at)).toEqual([
       `GET ${RECORDS}/kv/records/r0`,
@@ -436,6 +460,7 @@ describe('service mode: read-your-writes floor (minSeq)', () => {
       `PUT ${RECORDS}/votes/records/@me/rec-3`,
       `GET ${RECORDS}/kv/records?keyPrefix=p&minSeq=41`,
       `GET ${RECORDS}/votes/records/@me/rec-3?minSeq=63`,
+      `GET ${RECORDS}/votes/records/@me/rec-4?minSeq=63`,
       `GET ${SERVICE}/v1/apps/${SLUG}/info`,
     ]);
   });

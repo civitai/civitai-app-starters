@@ -8,7 +8,7 @@ import {
   type BlockSnapshot,
   type BlockTransport,
 } from '../core/transport.js';
-import { createHost, createHostSession, type Host } from '../host/index.js';
+import { createHost, createHostSession, hostToken, type Host } from '../host/index.js';
 import { reportDevErrors } from '../host/dev-errors.js';
 import { reportViewerActivity } from '../host/viewer-activity.js';
 import { ApiError, createHttp, type Http } from '../http/index.js';
@@ -221,15 +221,37 @@ export async function initialize(
   // Latched here, ONCE, like the local preview above, which wins over it: the host's
   // `BLOCK_INIT.appData` moves this app's document store to the app-data service.
   const appData = localPreview ? undefined : snapshot().appData;
+  const session = createHostSession(transport, { localPreviewStorage: localPreview });
   return {
     ...createAppClient(
-      createHostSession(transport, { localPreviewStorage: localPreview }),
+      session,
       options,
       holdsBlockTokenNow,
       holdsOAuthTokenNow,
       local,
       // Service mode only while the token is a block token, read live: the service serves no other.
-      appData && { ...appData, active: () => snapshot().token.kind === 'block' },
+      appData && {
+        ...appData,
+        active: () => snapshot().token.kind === 'block',
+        // The service's bearer is checked on the token ACTUALLY sent, not only when a call
+        // starts: the host can switch the frame to an OAuth token while one is in flight, or hand
+        // an OAuth token back from the 401 refresh. Anything but a block token is never sent to
+        // the service: the call fails closed (and `active()` sends later calls to the site).
+        session: {
+          ...session,
+          async getToken(opts) {
+            const token = await hostToken(transport, opts);
+            if (token.kind !== 'block') {
+              throw new CivitaiError(
+                'app storage: the host handed this frame a token that is not a block token, which the ' +
+                  'app-data service does not take; nothing was sent to it with that token. While the frame ' +
+                  'holds such a token, storage calls go to civitai.com.',
+              );
+            }
+            return token.raw;
+          },
+        },
+      },
     ),
     host: createHost(transport),
     get viewer() {
@@ -309,7 +331,7 @@ function createAppClient(
    * Only `collection(name)` and `info()` move, through their own HTTP client with the service's
    * retry rules; the legacy methods, moderation and everything else stay on `siteHttp`.
    */
-  appData?: AppDataService & { active: () => boolean },
+  appData?: AppDataService & { active: () => boolean; session: Session },
 ): AppClient {
   const http = (baseUrl: string) => createHttp({ session, baseUrl, fetch: options.fetch });
   // One instance for every site-hosted surface: the storage, sub-listings and
@@ -347,7 +369,7 @@ function createAppClient(
           ...(appData
             ? {
                 service: {
-                  http: createHttp({ session, baseUrl: appData.url, fetch: createServiceFetch(options.fetch) }),
+                  http: createHttp({ session: appData.session, baseUrl: appData.url, fetch: createServiceFetch(options.fetch) }),
                   slug: appData.slug,
                   active: appData.active,
                 },

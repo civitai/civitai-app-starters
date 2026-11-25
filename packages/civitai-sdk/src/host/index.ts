@@ -1,5 +1,6 @@
 import { BridgeError } from '../core/errors.js';
 import { createCaller, createListener, createNotifier } from '../core/messaging.js';
+import type { BlockToken } from '../core/handshake.js';
 import { tokenFromWrapped, type BlockTransport } from '../core/transport.js';
 import { LOCAL_PREVIEW_STORAGE_SCOPES } from '../doc-store/local-preview.js';
 import type { GrantOptions, Scope, Session, TokenOptions } from '../session/index.js';
@@ -459,17 +460,28 @@ export interface HostSessionOptions {
   localPreviewStorage?: boolean;
 }
 
+/**
+ * The host's token for this block, WITH its kind: the snapshot's, or with `fresh` a new one the
+ * host mints on request. {@link createHostSession}'s `getToken` is this, raw only.
+ */
+export async function hostToken(
+  transport: BlockTransport,
+  { fresh, signal }: TokenOptions = {},
+): Promise<BlockToken> {
+  if (!fresh) return transport.snapshot.get().token;
+  const { blockInstanceId } = transport.snapshot.get();
+  const { token } = await call('REQUEST_TOKEN', { blockInstanceId }, { transport, signal });
+  return tokenFromWrapped(token);
+}
+
 /** The token the host minted for this block, kept current as the host rotates it. */
 export function createHostSession(
   transport: BlockTransport,
   { localPreviewStorage = false }: HostSessionOptions = {},
 ): Session {
   return {
-    async getToken({ fresh, signal }: TokenOptions = {}) {
-      if (!fresh) return transport.snapshot.get().token.raw;
-      const { blockInstanceId } = transport.snapshot.get();
-      const { token } = await call('REQUEST_TOKEN', { blockInstanceId }, { transport, signal });
-      return tokenFromWrapped(token).raw;
+    async getToken(opts: TokenOptions = {}) {
+      return (await hostToken(transport, opts)).raw;
     },
     requestGrants: (scopes, opts = {}) => {
       if (opts.from !== undefined) {
