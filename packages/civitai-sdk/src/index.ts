@@ -186,7 +186,7 @@ export type { BridgeErrorCode, BridgeErrorOptions, BridgeFailureCode, RateLimitM
 
 export { getTransport } from './core/get-transport.js';
 export type { DetectOptions } from './core/get-transport.js';
-export type { BlockSnapshot, BlockTransport } from './core/transport.js';
+export type { AppDataService, BlockSnapshot, BlockTransport } from './core/transport.js';
 export type {
   BlockCheckpointInfo,
   BlockContext,

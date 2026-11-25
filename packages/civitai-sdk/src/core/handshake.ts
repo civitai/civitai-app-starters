@@ -122,6 +122,13 @@ export interface BlockInitPayload {
    */
   storageMode?: unknown;
   /**
+   * `{ url, slug }` when the host moved this app's document store to the app-data service: `url`
+   * is the service's https base URL and `slug` the app's blockId. The host sets it only for an
+   * app it has cut over, with a production token. Typed `unknown` on the wire: anything but that
+   * exact shape is treated as absent — see `readAppDataService`.
+   */
+  appData?: unknown;
+  /**
    * Bridge capabilities the host handles, e.g. `workflowMedia:v1`. Typed
    * `unknown` on the wire: the SDK acts only on an array holding the exact
    * string it looks for — see {@link ERROR_REPORTS_CAPABILITY}. Absent from a

@@ -4,6 +4,7 @@ import type { BlockContext, BlockSettings, Theme, ViewerInfo } from '../core/han
 import {
   hostCollectsErrors,
   isLocalPreviewStorage,
+  type AppDataService,
   type BlockSnapshot,
   type BlockTransport,
 } from '../core/transport.js';
@@ -29,6 +30,7 @@ import {
   type SharedStorageClient,
 } from '../shared-storage/index.js';
 import { createDocumentStorage, type DocumentStorage } from '../doc-store/index.js';
+import { createServiceFetch } from '../doc-store/service-fetch.js';
 import { createLocalPreviewStorage, readInjectedManifest, type LocalPreviewStorage } from '../doc-store/local-preview.js';
 import { createModerationClient, type ModerationClient } from '../doc-store/moderation.js';
 import { createSiteClient, DEFAULT_SITE_URL, type SiteClient } from '../site/index.js';
@@ -216,6 +218,9 @@ export async function initialize(
       // global: there is deliberately no option to pass one.
       await createLocalPreviewStorage(readInjectedManifest(), snapshot().viewer)
     : undefined;
+  // Latched here, ONCE, like the local preview above, which wins over it: the host's
+  // `BLOCK_INIT.appData` moves this app's document store to the app-data service.
+  const appData = localPreview ? undefined : snapshot().appData;
   return {
     ...createAppClient(
       createHostSession(transport, { localPreviewStorage: localPreview }),
@@ -223,6 +228,7 @@ export async function initialize(
       holdsBlockTokenNow,
       holdsOAuthTokenNow,
       local,
+      appData,
     ),
     host: createHost(transport),
     get viewer() {
@@ -297,6 +303,12 @@ function createAppClient(
    * reaches either.
    */
   local?: LocalPreviewStorage,
+  /**
+   * The app-data service the host moved this app's document store to (`BLOCK_INIT.appData`).
+   * Only `collection(name)` and `info()` move, through their own HTTP client with the service's
+   * retry rules; the legacy methods, moderation and everything else stay on `siteHttp`.
+   */
+  appData?: AppDataService,
 ): AppClient {
   const http = (baseUrl: string) => createHttp({ session, baseUrl, fetch: options.fetch });
   // One instance for every site-hosted surface: the storage, sub-listings and
@@ -327,7 +339,19 @@ function createAppClient(
     // legacy key/value methods are out of scope and keep the real routes.
     storage: {
       ...createStorageClient(siteHttp),
-      ...(localDocuments ?? createDocumentStorage(siteHttp, { explainInsufficientScope: true, requestGrants })),
+      ...(localDocuments ??
+        createDocumentStorage(siteHttp, {
+          explainInsufficientScope: true,
+          requestGrants,
+          ...(appData
+            ? {
+                service: {
+                  http: createHttp({ session, baseUrl: appData.url, fetch: createServiceFetch(options.fetch) }),
+                  slug: appData.slug,
+                },
+              }
+            : {}),
+        })),
       mode: localDocuments ? 'local-preview' : 'remote',
     },
     moderation: local?.moderation ?? createModerationClient(siteHttp, { requestGrants }),

@@ -1288,7 +1288,24 @@ export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unaut
  * LOCAL, never sent by the server: `app.moderation.report` reached a civitai.com that does not
  * serve the report API (an older release without the route, or the app's host flag off).
  */
- | 'report_unavailable' | (string & {});
+ | 'report_unavailable'
+/**
+ * The app-data service (service mode, `BLOCK_INIT.appData`). `not_forwarded` (503): refused
+ * before the write reached the store; the SDK resends it by itself. `outcome_unknown` (504): the
+ * write was sent and its answer lost, so it may have landed; never resent (a keyed `put` with
+ * `ifVersion` is the only safe retry). `floor_not_met` (503): the service has not yet seen a write
+ * this client was acknowledged for; retried by the SDK while the service names a delay.
+ * `block_token_spent` (401): read with a fresh block token, which the SDK does by itself.
+ * `not_supported_here`: a list filter or sort the service does not serve (also refused before
+ * sending), or an import (501). `stale_major` (409): a schema major other than the current one.
+ */
+ | 'not_forwarded' | 'outcome_unknown' | 'floor_not_met' | 'block_token_spent' | 'not_supported_here' | 'stale_major'
+/** The app-data service: a read the stream cannot answer for this token (401). */
+ | 'token_not_exchangeable' | 'invalid_token' | 'exchange_refused' | 'refused' | 'revoked'
+/** The app-data service: a read the stream cannot answer now (503, with `Retry-After`). */
+ | 'capacity' | 'token_capacity' | 'cooling_down' | 'not_live' | 'stalled' | 'ended' | 'closed' | 'failed' | 'block_cache_full' | 'unkeyed' | 'not_resolved' | 'unverifiable'
+/** The app-data service: a collection its private feed does not serve (501). */
+ | 'not_private' | (string & {});
 
 /**
  * `details.reason` of a `not_eligible` that only an import gets — every one the server's
@@ -4213,6 +4230,12 @@ export interface BlockSnapshot {
      */
     storageMode?: 'local-preview';
     /**
+     * Where the document store is served when the host moved this app to the app-data service;
+     * absent otherwise (every other app, and a host that predates it). `initialize()` reads it ONCE,
+     * so a later change cannot move an app's storage between services mid-session.
+     */
+    appData?: AppDataService;
+    /**
      * `true` when the host listed {@link ERROR_REPORTS_CAPABILITY} in
      * `BLOCK_INIT.capabilities`: it collects this frame's non-fatal errors (a
      * moderator's review preview). Absent otherwise. `initialize()` reads it ONCE.
@@ -4242,6 +4265,14 @@ export interface BlockTransport {
      * own window listener.
      */
     on(type: string, handler: (payload: unknown) => void): () => void;
+}
+
+/** `BLOCK_INIT.appData`, validated: the app-data service that serves this app's document store. */
+export interface AppDataService {
+    /** The service's base URL: `https:`, no credentials, query or fragment. */
+    url: string;
+    /** The app's blockId, as the service names apps in its routes. */
+    slug: string;
 }
 
 /**

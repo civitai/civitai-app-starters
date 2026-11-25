@@ -49,6 +49,12 @@ export interface BlockSnapshot {
    */
   storageMode?: 'local-preview';
   /**
+   * Where the document store is served when the host moved this app to the app-data service;
+   * absent otherwise (every other app, and a host that predates it). `initialize()` reads it ONCE,
+   * so a later change cannot move an app's storage between services mid-session.
+   */
+  appData?: AppDataService;
+  /**
    * `true` when the host listed {@link ERROR_REPORTS_CAPABILITY} in
    * `BLOCK_INIT.capabilities`: it collects this frame's non-fatal errors (a
    * moderator's review preview). Absent otherwise. `initialize()` reads it ONCE.
@@ -118,8 +124,42 @@ export function hostCollectsErrors(snapshot: Pick<BlockSnapshot, 'storageMode' |
   return isLocalPreviewStorage(snapshot) || snapshot.errorReports === true;
 }
 
+/** `BLOCK_INIT.appData`, validated: the app-data service that serves this app's document store. */
+export interface AppDataService {
+  /** The service's base URL: `https:`, no credentials, query or fragment. */
+  url: string;
+  /** The app's blockId, as the service names apps in its routes. */
+  slug: string;
+}
+
+/** The service's own slug grammar (an app's blockId). */
+const APP_DATA_SLUG = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+
+/**
+ * THE predicate for `BLOCK_INIT.appData`: the exact `{ url, slug }` shape, copied by field, or
+ * `undefined`. Anything else — another shape, a URL that is not plain `https:`, a slug outside the
+ * service's grammar — reads as absent, which keeps the site's routes.
+ */
+export function readAppDataService(value: unknown): AppDataService | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const { url, slug } = value as Record<string, unknown>;
+  if (typeof url !== 'string' || typeof slug !== 'string' || !APP_DATA_SLUG.test(slug)) return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return undefined;
+  }
+  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '' || parsed.search !== '' || parsed.hash !== '') {
+    return undefined;
+  }
+  if (url.includes('?') || url.includes('#')) return undefined;
+  return { url, slug };
+}
+
 /** Convert a wire `BlockInitPayload` (ISO string expiresAt) into a `BlockSnapshot`. */
 export function snapshotFromInit(payload: BlockInitPayload, hostOrigin: string): BlockSnapshot {
+  const appData = readAppDataService(payload.appData);
   return {
     ready: true,
     hostOrigin,
@@ -136,6 +176,8 @@ export function snapshotFromInit(payload: BlockInitPayload, hostOrigin: string):
     // The exact string or nothing: a value this SDK does not know must read as
     // "not a local preview", which keeps today's behaviour (the real routes).
     ...(payload.storageMode === LOCAL_PREVIEW_STORAGE ? { storageMode: LOCAL_PREVIEW_STORAGE } : {}),
+    // The exact shape or nothing, as above: absent keeps the site's storage routes.
+    ...(appData ? { appData } : {}),
     // An array holding the exact string, or nothing: any other shape reads as
     // "this host does not collect them", which keeps today's behaviour.
     ...(Array.isArray(payload.capabilities) && payload.capabilities.includes(ERROR_REPORTS_CAPABILITY)

@@ -437,7 +437,7 @@ describe('service mode: retries', () => {
   ])('a write answered 503 with Retry-After but %s is never resent', async (_why, body) => {
     const { app, calls } = await serviceApp([() => unavailable(body, '0'), () => json(200, STORE_DOC('n', 1))]);
     await expect(app.storage.collection('posts').create({ title: 'once' })).rejects.toBeInstanceOf(Error);
-    expect(calls).toHaveLength(1);
+    expect(calls.map(at)).toEqual([`POST ${RECORDS}/posts/records`]);
   });
 
   it('504 outcome_unknown is never retried, read or write, and surfaces its code', async () => {
@@ -448,8 +448,8 @@ describe('service mode: retries', () => {
     expect(write).toBeInstanceOf(StorageError);
     expect(write.code).toBe('outcome_unknown');
     expect(write.status).toBe(504);
-    await expect(app.storage.collection('posts').delete('d')).rejects.toMatchObject({ code: 'outcome_unknown' });
-    expect(calls).toHaveLength(2);
+    await expect(app.storage.collection('kv').get('d')).rejects.toMatchObject({ code: 'outcome_unknown' });
+    expect(calls.map(at)).toEqual([`POST ${RECORDS}/posts/records`, `GET ${RECORDS}/kv/records/d`]);
   });
 
   it('401 block_token_spent gets a fresh block token from the host and sends the read again', async () => {
