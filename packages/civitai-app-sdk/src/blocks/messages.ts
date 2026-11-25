@@ -299,6 +299,24 @@ export interface BlockInitPayload {
    * than the exact string must be treated as absent.
    */
   storageMode?: 'local-preview';
+  /**
+   * Where this app's DOCUMENT STORE is served when the host has moved the app
+   * to the app-data service: `url` is the service's base URL (`https:`, no
+   * credentials, query or fragment) and `slug` is the app's blockId, as the
+   * service names apps in its routes (`/v1/apps/<slug>/…`). The host sets it
+   * from its own per-app decision, and only for a production token; never from
+   * anything the block sent. Absent on every other surface, and never together
+   * with `storageMode: 'local-preview'` (if both arrive, the local preview wins).
+   *
+   * `@civitai/sdk`'s `initialize()` reads it once and sends
+   * `app.storage.collection(name)` (this app's own collections) and
+   * `app.storage.info()` to the service instead of `/api/v1/blocks/storage`.
+   * Nothing in this package or in `@civitai/blocks-react` acts on it.
+   *
+   * ADDITIVE + OPTIONAL. A host that predates it omits the field; any other
+   * shape must be treated as absent, which keeps the site's routes.
+   */
+  appData?: { url: string; slug: string };
 }
 
 // ============================================================

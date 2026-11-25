@@ -324,4 +324,10 @@ describe('wiring', () => {
     const source = readFileSync(fileURLToPath(new URL('../../src/doc-store/index.ts', import.meta.url)), 'utf8');
     expect(source).toContain("const BASE = 'blocks/storage'");
   });
+
+  it('pins the app-data service route base textually (service mode, test/doc-store/app-data-service.test.ts)', () => {
+    const source = readFileSync(fileURLToPath(new URL('../../src/doc-store/index.ts', import.meta.url)), 'utf8');
+    expect(source).toContain("const SERVICE_BASE = 'v1/apps'");
+    expect(source).toContain("const SERVICE_RECORDS = 'records'");
+  });
 });
