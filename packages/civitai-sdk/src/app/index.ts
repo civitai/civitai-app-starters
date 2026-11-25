@@ -228,7 +228,8 @@ export async function initialize(
       holdsBlockTokenNow,
       holdsOAuthTokenNow,
       local,
-      appData,
+      // Service mode only while the token is a block token, read live: the service serves no other.
+      appData && { ...appData, active: () => snapshot().token.kind === 'block' },
     ),
     host: createHost(transport),
     get viewer() {
@@ -308,7 +309,7 @@ function createAppClient(
    * Only `collection(name)` and `info()` move, through their own HTTP client with the service's
    * retry rules; the legacy methods, moderation and everything else stay on `siteHttp`.
    */
-  appData?: AppDataService,
+  appData?: AppDataService & { active: () => boolean },
 ): AppClient {
   const http = (baseUrl: string) => createHttp({ session, baseUrl, fetch: options.fetch });
   // One instance for every site-hosted surface: the storage, sub-listings and
@@ -348,6 +349,7 @@ function createAppClient(
                 service: {
                   http: createHttp({ session, baseUrl: appData.url, fetch: createServiceFetch(options.fetch) }),
                   slug: appData.slug,
+                  active: appData.active,
                 },
               }
             : {}),

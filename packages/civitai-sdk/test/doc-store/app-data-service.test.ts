@@ -151,12 +151,6 @@ describe('service mode: each call goes to the service route', () => {
       ['DELETE', `${RECORDS}/posts/records/p3?ifVersion=2`, undefined],
     ],
     [
-      'update (PATCH)',
-      (s: StorageApi) => s.collection('posts').update('p4', { $inc: { plays: 2 } }),
-      () => json(200, { value: 9 }),
-      ['PATCH', `${RECORDS}/posts/records/p4`, '{"$inc":{"plays":2}}'],
-    ],
-    [
       'getMine',
       (s: StorageApi) => s.collection('votes').getMine('rec-1'),
       () => json(200, { source: 'registry', item: { ...STORE_DOC('rec-1:abc', 1), author: { isViewer: true } } }),
@@ -223,16 +217,63 @@ describe('service mode: each call goes to the service route', () => {
     expect(calls.map(at)).toEqual(['GET https://civitai.com/api/v1/blocks/storage/notes/p1?from=parent-app']);
   });
 
-  it('a list filter the service cannot serve (where, mark, another sort) is refused before sending, not_supported_here', async () => {
-    const { app, calls } = await serviceApp([]);
+  it('TRANSITIONAL: a list the service cannot serve (where, mark, another sort) goes to the site', async () => {
+    const page = () => json(200, { items: [], nextCursor: null });
+    const { app, calls } = await serviceApp([page, page, page, page]);
     const posts = app.storage.collection('posts');
-    for (const query of [{ where: { status: 'open' } }, { markedBy: 'me' as const, mark: 'vote' }, { sort: 'createdAt' }]) {
-      const error = (await posts.list(query).catch((e: unknown) => e)) as StorageError;
-      expect(error).toBeInstanceOf(StorageError);
-      expect(error.code).toBe('not_supported_here');
-      expect(error.status).toBe(400);
-    }
-    expect(calls).toEqual([]);
+    await posts.list({ where: { status: 'open' } });
+    await posts.list({ markedBy: 'me', mark: 'vote' });
+    await posts.list({ sort: 'createdAt' });
+    await posts.list({ sort: '-key' });
+    expect(calls.map(at)).toEqual([
+      'GET https://civitai.com/api/v1/blocks/storage/posts?where%5Bstatus%5D=open',
+      'GET https://civitai.com/api/v1/blocks/storage/posts?markedBy=me&mark=vote',
+      'GET https://civitai.com/api/v1/blocks/storage/posts?sort=createdAt',
+      `GET ${RECORDS}/posts/records?sort=-key`,
+    ]);
+  });
+
+  it('update stays on the site route (the service PATCH is being removed), beside increment', async () => {
+    const { app, calls } = await serviceApp([() => json(200, { value: 9 }), () => json(200, { value: 10 })]);
+    await app.storage.collection('posts').update('p4', { $inc: { plays: 2 } });
+    await app.storage.collection('posts').increment('p4', 'plays');
+    expect(calls.map(at)).toEqual([
+      'PATCH https://civitai.com/api/v1/blocks/storage/posts/p4',
+      'POST https://civitai.com/api/v1/blocks/storage/posts/p4/counters/plays',
+    ]);
+  });
+
+  it('service mode lasts only while the token is a block token: an OAuth token sends storage to the site, a block token back', async () => {
+    const doc = () => json(200, { source: 'registry', item: PRIVATE_ITEM('k') });
+    const siteDoc = () => json(200, STORE_DOC('k', 1));
+    const info = () => json(200, { collections: {}, limits: {}, usage: {} });
+    const { app, calls, transport: t } = await serviceApp([doc, siteDoc, info, doc]);
+    const kv = app.storage.collection('kv');
+    await kv.get('k');
+    t.setSnapshot({ token: { raw: 'oauth-tok', scopes: [], expiresAt: new Date('2030-01-01T00:00:00.000Z'), kind: 'oauth' } });
+    await kv.get('k');
+    await app.storage.info();
+    t.setSnapshot({ token: { raw: TOKEN, scopes: [], expiresAt: new Date('2030-01-01T00:00:00.000Z'), kind: 'block' } });
+    await kv.get('k');
+    expect(calls.map(at)).toEqual([
+      `GET ${RECORDS}/kv/records/k`,
+      'GET https://civitai.com/api/v1/blocks/storage/kv/k',
+      'GET https://civitai.com/api/v1/blocks/storage',
+      `GET ${RECORDS}/kv/records/k`,
+    ]);
+  });
+
+  it('getMany stops sending at the first failure', async () => {
+    const keys = Array.from({ length: 12 }, (_, i) => `k${i}`);
+    let n = 0;
+    const fetch = (async () => {
+      n += 1;
+      return n === 1 ? json(403, { code: 'not_eligible', message: 'no', error: 'no' }) : json(200, { source: 'registry', item: PRIVATE_ITEM('x') });
+    }) as typeof globalThis.fetch;
+    const app = await initialize({ transport: transport(), fetch });
+    await expect(app.storage.collection('kv').getMany(keys)).rejects.toMatchObject({ code: 'not_eligible' });
+    // The four first in flight; none started after the refusal came back.
+    expect(n).toBe(4);
   });
 });
 
@@ -292,6 +333,40 @@ describe('service mode: reading the answers', () => {
     expect(down.items.map((d) => d.key)).toEqual(['x', 'm', 'b']);
   });
 
+  it('a private list is paged here: limit honoured, a key cursor made and followed, every document once', async () => {
+    const keys = ['e', 'a', 'd', 'b', 'c'];
+    const whole = () => json(200, { source: 'registry', items: keys.map(PRIVATE_ITEM) });
+    const { app, calls } = await serviceApp([whole, whole, whole, whole]);
+    const kv = app.storage.collection('kv');
+    const p1 = await kv.list({ limit: 2 });
+    expect([p1.items.map((d) => d.key), p1.nextCursor]).toEqual([['a', 'b'], 'ka~~b']);
+    const p2 = await kv.list({ limit: 2, cursor: p1.nextCursor! });
+    expect([p2.items.map((d) => d.key), p2.nextCursor]).toEqual([['c', 'd'], 'ka~~d']);
+    const p3 = await kv.list({ limit: 2, cursor: p2.nextCursor! });
+    expect([p3.items.map((d) => d.key), p3.nextCursor]).toEqual([['e'], null]);
+    const down = await kv.list({ sort: '-key', limit: 3 });
+    expect([down.items.map((d) => d.key), down.nextCursor]).toEqual([['e', 'd', 'c'], 'kd~~c']);
+    expect(calls[1]!.url).toBe(`${RECORDS}/kv/records?limit=2&cursor=ka%7E%7Eb`);
+  });
+
+  it('a private list without a limit gets the store default, 25', async () => {
+    const keys = Array.from({ length: 30 }, (_, i) => `k${String(i).padStart(2, '0')}`);
+    const { app } = await serviceApp([() => json(200, { source: 'registry', items: keys.map(PRIVATE_ITEM) })]);
+    const page = await app.storage.collection('kv').list();
+    expect(page.items).toHaveLength(25);
+    expect(page.nextCursor).toBe('ka~~k24');
+  });
+
+  it.each([
+    ['a limit of 0', { limit: 0 }],
+    ['a limit of 101', { limit: 101 }],
+    ['a cursor of another shape', { cursor: 'sa~b3Blbg~p1' }],
+    ['a descending cursor on an ascending list', { cursor: 'kd~~b' }],
+  ])('a private list with %s is refused invalid_request', async (_why, query) => {
+    const { app } = await serviceApp([() => json(200, { source: 'registry', items: [PRIVATE_ITEM('a')] })]);
+    await expect(app.storage.collection('kv').list(query)).rejects.toMatchObject({ code: 'invalid_request', status: 400 });
+  });
+
   it('a shared list keeps its order and passes nextCursor through', async () => {
     const a = { ...STORE_DOC('z', 1), author: { isViewer: true } };
     const b = { ...STORE_DOC('c', 2), author: { isViewer: false } };
@@ -321,16 +396,19 @@ describe('service mode: reading the answers', () => {
 });
 
 describe('service mode: read-your-writes floor (minSeq)', () => {
-  it('reads carry the highest seq a write answer named; a lower one, a read and a seq-less answer never move it', async () => {
+  it('each collection\'s reads carry the highest seq a write TO IT was answered with; another collection\'s write, a lower seq, a read and a seq-less answer never move it', async () => {
     const { app, calls } = await serviceApp([
-      () => json(200, { source: 'registry', item: PRIVATE_ITEM('r0') }), // read: no floor yet
-      () => json(200, STORE_DOC('w1', 41)), // put → 41
+      () => json(200, { source: 'registry', item: PRIVATE_ITEM('r0') }), // kv read: no floor yet
+      () => json(200, STORE_DOC('w1', 41)), // kv put → kv 41
       () => json(200, { source: 'registry', item: { ...PRIVATE_ITEM('r1'), seq: 990 } }), // a read's seq: ignored
-      () => json(201, STORE_DOC('w2', 57)), // create in another collection → 57
-      () => json(200, { deleted: true, seq: 12 }), // lower: stays 57
-      () => json(200, { deleted: false }), // no seq: stays 57
-      () => json(200, { source: 'registry', items: [] }), // list
-      () => json(200, { source: 'registry', item: STORE_DOC('mine', 1) }), // getMine
+      () => json(201, STORE_DOC('w2', 57)), // posts create → posts 57, kv stays 41
+      () => json(200, { source: 'registry', item: PRIVATE_ITEM('r2') }), // kv read
+      () => json(200, { source: 'registry', items: [], nextCursor: null }), // posts list
+      () => json(200, { deleted: true, seq: 12 }), // kv, lower: stays 41
+      () => json(200, { deleted: false }), // kv, no seq: stays 41
+      () => json(200, STORE_DOC('rec-3:abc', 63)), // votes putMine → votes 63
+      () => json(200, { source: 'registry', items: [] }), // kv list
+      () => json(200, { source: 'registry', item: STORE_DOC('mine', 1) }), // votes getMine
       () => json(200, { collections: {}, limits: {}, usage: {} }), // info: never a floor
     ]);
     const kv = app.storage.collection('kv');
@@ -338,8 +416,11 @@ describe('service mode: read-your-writes floor (minSeq)', () => {
     await kv.put('w1', { v: 1 });
     await kv.get('r1');
     await app.storage.collection('posts').create({ title: 'n' });
+    await kv.get('r2');
+    await app.storage.collection('posts').list();
     await kv.delete('w1');
     await kv.delete('nothing');
+    await app.storage.collection('votes').putMine({ up: true }, { parent: 'rec-3' });
     await kv.list({ keyPrefix: 'p' });
     await app.storage.collection('votes').getMine('rec-3');
     await app.storage.info();
@@ -348,10 +429,13 @@ describe('service mode: read-your-writes floor (minSeq)', () => {
       `PUT ${RECORDS}/kv/records/w1`,
       `GET ${RECORDS}/kv/records/r1?minSeq=41`,
       `POST ${RECORDS}/posts/records`,
+      `GET ${RECORDS}/kv/records/r2?minSeq=41`,
+      `GET ${RECORDS}/posts/records?minSeq=57`,
       `DELETE ${RECORDS}/kv/records/w1`,
       `DELETE ${RECORDS}/kv/records/nothing`,
-      `GET ${RECORDS}/kv/records?keyPrefix=p&minSeq=57`,
-      `GET ${RECORDS}/votes/records/@me/rec-3?minSeq=57`,
+      `PUT ${RECORDS}/votes/records/@me/rec-3`,
+      `GET ${RECORDS}/kv/records?keyPrefix=p&minSeq=41`,
+      `GET ${RECORDS}/votes/records/@me/rec-3?minSeq=63`,
       `GET ${SERVICE}/v1/apps/${SLUG}/info`,
     ]);
   });
@@ -402,6 +486,12 @@ describe('service mode: retries', () => {
     await expect(kv.get('b')).rejects.toMatchObject({ code: 'capacity' });
     await expect(kv.get('c')).rejects.toMatchObject({ code: 'capacity' });
     expect(calls).toHaveLength(3);
+  });
+
+  it.each(['unkeyed', 'too_large', 'registry_off'])('a read 503 %s is not retried, Retry-After or not', async (code) => {
+    const { app, calls } = await serviceApp([() => unavailable({ error: code, message: 'x' }, '0'), () => json(200, {})]);
+    await expect(app.storage.collection('kv').get('k')).rejects.toMatchObject({ code, status: 503 });
+    expect(calls.map(at)).toEqual([`GET ${RECORDS}/kv/records/k`]);
   });
 
   it('waits the Retry-After before the retry', async () => {
@@ -463,6 +553,16 @@ describe('service mode: retries', () => {
       [`GET ${RECORDS}/kv/records/k`, `Bearer ${FRESH}`],
     ]);
     expect(t.sent.filter((m) => m.type === 'REQUEST_TOKEN')).toHaveLength(1);
+  });
+
+  it('401 block_token_spent again on the fresh token surfaces as exactly that code, after one refresh', async () => {
+    const spent = () => json(401, { error: 'block_token_spent', message: 'the token cannot read this stream' });
+    const { app, calls } = await serviceApp([spent, spent, spent]);
+    const error = (await app.storage.collection('kv').get('k').catch((e: unknown) => e)) as StorageError;
+    expect(error).toBeInstanceOf(StorageError);
+    expect(error.code).toBe('block_token_spent');
+    expect(error.status).toBe(401);
+    expect(calls.map((c) => c.headers.Authorization)).toEqual([`Bearer ${TOKEN}`, `Bearer ${FRESH}`]);
   });
 });
 

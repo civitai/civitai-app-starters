@@ -1294,10 +1294,11 @@ export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unaut
  * before the write reached the store; the SDK resends it by itself. `outcome_unknown` (504): the
  * write was sent and its answer lost, so it may have landed; never resent (a keyed `put` with
  * `ifVersion` is the only safe retry). `floor_not_met` (503): the service has not yet seen a write
- * this client was acknowledged for; retried by the SDK while the service names a delay.
- * `block_token_spent` (401): read with a fresh block token, which the SDK does by itself.
- * `not_supported_here`: a list filter or sort the service does not serve (also refused before
- * sending), or an import (501). `stale_major` (409): a schema major other than the current one.
+ * to this collection this client was acknowledged for; the SDK retries it up to 3 times within
+ * 5 s, then surfaces it. `block_token_spent` (401): the SDK reads once more with a fresh block
+ * token, and surfaces this code if that one is spent too. `not_supported_here`: a list query the
+ * service does not serve, or an import (501). `stale_major` (409): a schema major other than the
+ * current one.
  */
  | 'not_forwarded' | 'outcome_unknown' | 'floor_not_met' | 'block_token_spent' | 'not_supported_here' | 'stale_major'
 /** The app-data service: a read the stream cannot answer for this token (401). */

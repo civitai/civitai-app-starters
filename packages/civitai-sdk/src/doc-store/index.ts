@@ -639,10 +639,11 @@ export type StorageErrorCode =
    * before the write reached the store; the SDK resends it by itself. `outcome_unknown` (504): the
    * write was sent and its answer lost, so it may have landed; never resent (a keyed `put` with
    * `ifVersion` is the only safe retry). `floor_not_met` (503): the service has not yet seen a write
-   * this client was acknowledged for; retried by the SDK while the service names a delay.
-   * `block_token_spent` (401): read with a fresh block token, which the SDK does by itself.
-   * `not_supported_here`: a list filter or sort the service does not serve (also refused before
-   * sending), or an import (501). `stale_major` (409): a schema major other than the current one.
+   * to this collection this client was acknowledged for; the SDK retries it up to 3 times within
+   * 5 s, then surfaces it. `block_token_spent` (401): the SDK reads once more with a fresh block
+   * token, and surfaces this code if that one is spent too. `not_supported_here`: a list query the
+   * service does not serve, or an import (501). `stale_major` (409): a schema major other than the
+   * current one.
    */
   | 'not_forwarded'
   | 'outcome_unknown'
@@ -982,11 +983,11 @@ export interface DocumentStorageOptions {
   /**
    * SERVICE MODE: send this app's own collections and `info` to the app-data service instead of
    * the site — `http` is a client for the service's base URL, `slug` the app's blockId. A
-   * collection opened through an import (`{ from }`), and the deprecated `increment`, `mark`,
-   * `unmark`, `publish` and `unpublish`, which the service has no route for, keep the site's
-   * routes. Absent, nothing changes. See {@link DocumentStorage} for what a reply carries there.
+   * collection opened through an import (`{ from }`), `update` and the deprecated `increment`,
+   * `mark`, `unmark`, `publish` and `unpublish` keep the site's routes, and so does every call
+   * while `active()` is false. Absent, nothing changes. See {@link DocumentStorage} for what a reply carries there.
    */
-  service?: { http: Http; slug: string };
+  service?: AppDataServiceOptions;
 }
 
 /**
@@ -1364,7 +1365,7 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
 
     async info(opts = {}) {
       refuseInfoImport(opts);
-      const reply = service ? await service.info(opts.signal) : await call<StorageInfo>('GET', BASE, { signal: opts.signal });
+      const reply = service?.active() ? await service.info(opts.signal) : await call<StorageInfo>('GET', BASE, { signal: opts.signal });
       if (
         reply == null ||
         typeof reply !== 'object' ||
@@ -1379,56 +1380,85 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
   };
 }
 
-/** A list query's fields the service serves; the rest is refused before sending (see `list`). */
+/** The sorts the service serves; a list with any other, or with `where` / `markedBy` / `mark`, goes to the site. */
 const SERVICE_SORTS: ReadonlySet<string> = new Set(['key', '-key']);
+/** The store's list bounds (`listLimitDefault`, `listLimitMax`), applied here to a private answer. */
+const LIST_LIMIT_DEFAULT = 25;
+const LIST_LIMIT_MAX = 100;
+/** The store's key-sort cursor, `k<a|d>~~<key>`: what a private page's `nextCursor` is made of. */
+const KEY_CURSOR = /^k([ad])~~([A-Za-z0-9._:-]{1,128})$/;
 
-/** Refused before sending, with the service's own code for what it does not serve. */
-function notSupportedHere(message: string): StorageError {
-  return new StorageError(400, 'not_supported_here', message, { code: 'not_supported_here', message, error: message });
+/** Refused before sending, with the store's code for a bad list query. */
+function invalidList(message: string): StorageError {
+  return new StorageError(400, 'invalid_request', message, { code: 'invalid_request', message, error: message });
+}
+
+/** The service's store, while {@link AppDataServiceOptions.active} says so. */
+export interface AppDataServiceOptions {
+  http: Http;
+  slug: string;
+  /**
+   * Read before EVERY call: `false` sends the call to the site instead. The app client passes
+   * "the token is a block token now", so a host that switches the frame to an OAuth token
+   * mid-session moves storage back to the site, which is the only store that serves one.
+   */
+  active?: () => boolean;
 }
 
 /**
  * SERVICE MODE (`BLOCK_INIT.appData`): this app's own collections and `info` through the app-data
- * service. Same calls, same bodies, same {@link StorageError}s; what differs is the service's:
+ * service, while the frame holds a block token. Same calls, same bodies, same {@link StorageError}s;
+ * what differs is the service's:
  *
- * - READ-YOUR-WRITES: every write answer names its `seq` (where it sits in the app's write order),
- *   and every read sends the highest one this client was acknowledged for as `?minSeq=`, app-wide,
- *   so a read after a write shows it even when it reaches another replica. Only write answers
- *   raise it; a read's never does.
- * - RETRIES (`createServiceFetch`): a read's `503` with `Retry-After` is waited out, a write is
- *   resent only on `503 not_forwarded`, and `504 outcome_unknown` is never resent. A
- *   `401 block_token_spent` is read again with a fresh block token (the JSON client's refresh).
+ * - READ-YOUR-WRITES: every write answer names its `seq`. Each COLLECTION keeps the highest `seq`
+ *   a write to it was answered with, and a read of that collection sends it as `?minSeq=`. The
+ *   floor is per collection because the service meets floors per collection: a floor raised by
+ *   another collection's write would hold this one's reads at `503 floor_not_met` until the
+ *   service's next poll. Only write answers raise it; a read's never does.
+ * - RETRIES (`createServiceFetch`): a read's `503` with `Retry-After` is waited out (not one whose
+ *   code says waiting cannot help), a write is resent only on `503 not_forwarded`, and
+ *   `504 outcome_unknown` is never resent. A `401 block_token_spent` is read again with a fresh
+ *   block token (the JSON client's refresh).
  * - ANSWERS: a read answers `{ source, item }` or `{ source, items[, nextCursor] }`. A PRIVATE
  *   collection's item carries only `key` and `data`: it reads as the viewer's own document
  *   (`author: { kind: 'user', isViewer: true }`) at `version: 0` with both timestamps at the
  *   epoch. `0` is never a stored document's version, so an `ifVersion` built from it is refused
- *   `version_conflict`, never a blind overwrite. A private list is the whole collection
- *   (`nextCursor: null`), in key order. A SHARED item's author carries `isViewer` and no `kind`:
- *   it reads as `{ kind: 'user', isViewer }`.
- * - LISTS: `keyPrefix`, `author`, `sort` (`key` or `-key` only), `limit` and `cursor`. A `where`,
- *   `markedBy` / `mark`, or another sort is refused before sending, `not_supported_here` (400): a
- *   private collection would ignore it and answer every document.
+ *   `version_conflict`, never a blind overwrite. A SHARED item's author carries `isViewer` and no
+ *   `kind`: it reads as `{ kind: 'user', isViewer }`.
+ * - LISTS: `keyPrefix`, `author`, `sort` (`key` / `-key`), `limit` and `cursor` go to the service.
+ *   A private collection's answer is the whole collection, so it is paged HERE: key order, `limit`
+ *   (the store's default 25, at most 100), and a key cursor (`ka~~<key>` / `kd~~<key>`, the store's
+ *   own shape). TRANSITIONAL: a list with `where`, `markedBy` / `mark` or another sort goes to the
+ *   site, which serves them; the service does not yet.
  * - `getMany` has no route there: it is keyed gets, at most {@link SERVICE_GET_MANY_CONCURRENCY}
- *   at once, in the order of `keys`.
+ *   at once, in the order of `keys`; the first failure stops it.
+ * - Not here: `update`, `increment`, `mark`, `unmark`, `publish` and `unpublish` stay on the site.
  */
-function serviceStore(service: { http: Http; slug: string }, options: DocumentStorageOptions) {
+function serviceStore(service: AppDataServiceOptions, options: DocumentStorageOptions) {
   const call = createStorageCall(service.http, options, true);
   const app = `${SERVICE_BASE}/${encodeURIComponent(service.slug)}`;
-  // The read-your-writes floor: the highest `seq` a write answer named. App-wide, as the
-  // service's own head is.
-  let floor = 0;
-  const acknowledged = <R>(reply: R): R => {
-    const seq = isRecord(reply) ? reply.seq : undefined;
-    if (typeof seq === 'number' && Number.isInteger(seq) && seq > floor && seq <= MAX_SEQ) floor = seq;
-    return reply;
-  };
-  const floored = (query: Query = {}): Query => (floor > 0 ? { ...query, minSeq: floor } : query);
+  const active = () => (service.active ? service.active() : true);
+  // The read-your-writes floors: per collection, the highest `seq` a write to it was answered with.
+  const floors = new Map<string, number>();
 
   return {
+    active,
+
     collection<T extends object>(name: string, site: StorageCollection<T>): StorageCollection<T> {
       const records = () => `${app}/${SERVICE_COLLECTIONS}/${collectionSegment(name)}/${SERVICE_RECORDS}`;
       const docPath = (key: string) => `${records()}/${segment('key', key)}`;
       const doc = (reply: unknown, op: string) => toServiceDocument<T>(reply, `${name}.${op}`);
+      const acknowledged = <R>(reply: R): R => {
+        const seq = isRecord(reply) ? reply.seq : undefined;
+        if (typeof seq === 'number' && Number.isInteger(seq) && seq > (floors.get(name) ?? 0) && seq <= MAX_SEQ) {
+          floors.set(name, seq);
+        }
+        return reply;
+      };
+      const floored = (query: Query = {}): Query => {
+        const floor = floors.get(name) ?? 0;
+        return floor > 0 ? { ...query, minSeq: floor } : query;
+      };
       const item = (reply: unknown, op: string) => {
         if (!isRecord(reply) || !Object.prototype.hasOwnProperty.call(reply, 'item')) {
           throw new CivitaiError(`storage ${name}.${op}: reply carried no \`item\``);
@@ -1448,19 +1478,23 @@ function serviceStore(service: { http: Http; slug: string }, options: DocumentSt
         return { deleted: reply.deleted };
       };
 
-      return {
-        ...site,
-
+      const viaService: Partial<StorageCollection<T>> = {
         get: (key, { signal } = {}) => get(key, signal),
 
         async getMany(keys, { signal } = {}) {
           const all = [...keys];
           const out: (StorageDocument<T> | null)[] = all.map(() => null);
           let next = 0;
+          let failed = false;
           const worker = async () => {
-            while (next < all.length) {
+            while (next < all.length && !failed) {
               const i = next++;
-              out[i] = await get(all[i]!, signal);
+              try {
+                out[i] = await get(all[i]!, signal);
+              } catch (error) {
+                failed = true;
+                throw error;
+              }
             }
           };
           await Promise.all(Array.from({ length: Math.min(SERVICE_GET_MANY_CONCURRENCY, all.length) }, worker));
@@ -1480,15 +1514,11 @@ function serviceStore(service: { http: Http; slug: string }, options: DocumentSt
           return deleted(reply, 'delete');
         },
 
-        async list(query = {}, { signal } = {}) {
-          if (query.where !== undefined && Object.keys(query.where).length > 0) {
-            throw notSupportedHere(`storage ${name}.list: \`where\` is not served by the app-data service (refused before sending)`);
-          }
-          if (query.markedBy !== undefined || query.mark !== undefined) {
-            throw notSupportedHere(`storage ${name}.list: \`markedBy\` / \`mark\` are not served by the app-data service (refused before sending)`);
-          }
-          if (query.sort !== undefined && !SERVICE_SORTS.has(query.sort)) {
-            throw notSupportedHere(`storage ${name}.list: only sort \`key\` and \`-key\` are served by the app-data service (refused before sending)`);
+        async list(query = {}, opts = {}) {
+          // TRANSITIONAL: what the service does not serve yet is the site's.
+          const where = query.where !== undefined && Object.keys(query.where).length > 0;
+          if (where || query.markedBy !== undefined || query.mark !== undefined || (query.sort !== undefined && !SERVICE_SORTS.has(query.sort))) {
+            return site.list(query, opts);
           }
           const reply = await call<{ items?: unknown; nextCursor?: unknown }>('GET', records(), {
             query: floored({
@@ -1498,32 +1528,20 @@ function serviceStore(service: { http: Http; slug: string }, options: DocumentSt
               limit: query.limit,
               cursor: query.cursor,
             }),
-            signal,
+            signal: opts.signal,
           });
           if (!Array.isArray(reply?.items)) throw new CivitaiError(`storage ${name}.list: reply carried no \`items\` array`);
           const items = reply.items.map((it) => doc(it, 'list'));
-          if (!Object.prototype.hasOwnProperty.call(reply, 'nextCursor')) {
-            // A private collection's answer: every document, in no promised order. It is the last
-            // page, sorted as the site sorts a key list.
-            const desc = query.sort === '-key';
-            items.sort((a, b) => (a.key === b.key ? 0 : (a.key < b.key) !== desc ? -1 : 1));
-            return { items, nextCursor: null };
+          if (Object.prototype.hasOwnProperty.call(reply, 'nextCursor')) {
+            if (reply.nextCursor !== null && typeof reply.nextCursor !== 'string') {
+              throw new CivitaiError(`storage ${name}.list: reply carried no \`nextCursor\``);
+            }
+            return { items, nextCursor: reply.nextCursor };
           }
-          if (reply.nextCursor !== null && typeof reply.nextCursor !== 'string') {
-            throw new CivitaiError(`storage ${name}.list: reply carried no \`nextCursor\``);
-          }
-          return { items, nextCursor: reply.nextCursor };
+          // A private collection's answer: every document, in no promised order. Paged here as the
+          // store pages a key list.
+          return pagePrivate(items, query, name);
         },
-
-        update: (async (key: string, op: StorageUpdateOp, { signal }: DocumentCallOptions = {}) => {
-          const reply = await call<unknown>('PATCH', docPath(key), { body: op, signal });
-          const sent: unknown = op === undefined ? undefined : JSON.parse(JSON.stringify(op));
-          const has = (field: string) => isRecord(sent) && Object.prototype.hasOwnProperty.call(sent, field);
-          if (has('$inc')) return toValueResult(reply, `${name}.update`);
-          if (has('$mark')) return toMarkResult(reply, true, `${name}.update`);
-          if (has('$unmark')) return toMarkResult(reply, false, `${name}.update`);
-          throw new CivitaiError(`storage ${name}.update: the server accepted a body with no update operator`);
-        }) as StorageCollection<T>['update'],
 
         async getMine(parent, { signal } = {}) {
           try {
@@ -1546,11 +1564,44 @@ function serviceStore(service: { http: Http; slug: string }, options: DocumentSt
           return deleted(reply, 'deleteMine');
         },
       };
+
+      // Each moved method decides per CALL: the token can change kind mid-session.
+      const out: Record<string, unknown> = { ...site };
+      for (const [method, viaServiceFn] of Object.entries(viaService) as [string, (...args: unknown[]) => unknown][]) {
+        const siteFn = (site as unknown as Record<string, (...args: unknown[]) => unknown>)[method]!;
+        out[method] = (...args: unknown[]) => (active() ? viaServiceFn(...args) : siteFn(...args));
+      }
+      return out as unknown as StorageCollection<T>;
     },
 
     info: (signal: AbortSignal | undefined) => call<StorageInfo>('GET', `${app}/${SERVICE_INFO}`, { signal }),
   };
 }
+
+/** One page of a private collection's whole answer, as the store pages a key list. */
+function pagePrivate<T extends object>(
+  items: StorageDocument<T>[],
+  query: DocumentListQuery,
+  name: string,
+): DocumentPage<T> {
+  const desc = query.sort === '-key';
+  const limit = query.limit ?? LIST_LIMIT_DEFAULT;
+  if (!Number.isInteger(limit) || limit < 1 || limit > LIST_LIMIT_MAX) {
+    throw invalidList(`storage ${name}.list: limit must be an integer from 1 to ${LIST_LIMIT_MAX}`);
+  }
+  let after: string | undefined;
+  if (query.cursor !== undefined) {
+    const m = KEY_CURSOR.exec(query.cursor);
+    if (m === null || (m[1] === 'd') !== desc) throw invalidList(`storage ${name}.list: invalid cursor`);
+    after = m[2];
+  }
+  const sorted = [...items].sort((a, b) => (a.key === b.key ? 0 : (a.key < b.key) !== desc ? -1 : 1));
+  const rest = after === undefined ? sorted : sorted.filter((d) => (desc ? d.key < after! : d.key > after!));
+  const page = rest.slice(0, limit);
+  const nextCursor = rest.length > limit ? `k${desc ? 'd' : 'a'}~~${page[page.length - 1]!.key}` : null;
+  return { items: page, nextCursor };
+}
+
 /**
  * A publish runs in this app only: the server refuses `?from=`, so a collection opened through an
  * import is refused before sending, with the server's code.
