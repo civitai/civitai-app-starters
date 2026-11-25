@@ -76,7 +76,8 @@ export interface BlockSnapshot {
    * `BLOCK_INIT.appData`, validated by {@link readAppDataService}: where this app's
    * document store is served when the host has moved the app to the app-data
    * service. Absent otherwise — every other app, a host that predates the field,
-   * and any value that is not exactly `{ url, slug }` with a plain `https:` URL.
+   * any value that is not exactly `{ url, slug }` with a plain `https:` URL, and a
+   * frame the host marked `storageMode: 'local-preview'` (the local preview wins).
    *
    * Nothing in this package acts on it. It is carried so that `@civitai/sdk`'s
    * `initialize({ transport })`, built on this transport's snapshot, reads it
@@ -365,7 +366,13 @@ function cloneHostContext(ctx: BlockContext): BlockContext {
 export function snapshotFromInit(payload: BlockInitPayload): BlockSnapshot {
   // `@civitai/app-sdk`'s `BlockInitPayload` declares `appData` from 0.95; read it
   // off the wire as `unknown` so an older peer's type still compiles.
-  const appData = readAppDataService((payload as { appData?: unknown }).appData);
+  //
+  // A local preview wins over the service, as in `@civitai/sdk`'s `initialize()`.
+  // This snapshot does not carry `storageMode` (see the PR that added `appData`),
+  // so the SDK cannot apply that precedence itself: a frame marked
+  // `storageMode: 'local-preview'` gets no `appData` here.
+  const wire = payload as { appData?: unknown; storageMode?: unknown };
+  const appData = wire.storageMode === 'local-preview' ? undefined : readAppDataService(wire.appData);
   return {
     ready: true,
     renderMode: payload.renderMode,

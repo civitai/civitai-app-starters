@@ -118,6 +118,38 @@ describe('IframeTransport: BLOCK_INIT.appData reaches the snapshot', () => {
     transport.dispose();
   });
 
+  it('a TOKEN_REFRESH whose token has no kind leaves the snapshot token with no kind', async () => {
+    // Guards against a merge-style refresh (`{ ...old, ...new }`) keeping a stale
+    // 'block' after the host rotates to a token it no longer labels.
+    const transport = await initIframe(initPayload({}, { kind: 'block' }));
+    expect(transport.getSnapshot().token.kind).toBe('block');
+    window.dispatchEvent(
+      mockParentMessage(
+        {
+          type: 'TOKEN_REFRESH',
+          payload: {
+            token: { raw: 'unlabelled-next', scopes: ['apps:storage'], expiresAt: new Date(Date.now() + 900_000).toISOString() },
+          },
+        },
+        PARENT_ORIGIN,
+      ),
+    );
+    const token = transport.getSnapshot().token;
+    expect(token.raw).toBe('unlabelled-next');
+    expect(hasKey(token, 'kind')).toBe(false);
+    transport.dispose();
+  });
+
+  it("storageMode 'local-preview' wins: appData is not attached", async () => {
+    const appData = { url: SERVICE, slug: SLUG };
+    const preview = await initIframe(initPayload({ storageMode: 'local-preview', appData }));
+    expect(hasKey(preview.getSnapshot(), 'appData')).toBe(false);
+    preview.dispose();
+    // Control: any other storageMode value is not the preview marker, so appData stays.
+    const other = snapshotFromInit(initPayload({ storageMode: 'Local-Preview', appData }));
+    expect(other.appData).toEqual(appData);
+  });
+
   it('INVARIANT: an unknown token kind is left off, not copied', () => {
     const snap = snapshotFromInit(initPayload({}, { kind: 'admin' }));
     expect(hasKey(snap.token, 'kind')).toBe(false);
