@@ -6,7 +6,7 @@ import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
 import { useTransportConnection } from './useTransportConnection.js';
-import { withRateLimit } from '../internal/rateLimit.js';
+import { withRateLimit } from '../transport/rateLimit.js';
 
 /**
  * What {@link useBuzzAccounts} returns.

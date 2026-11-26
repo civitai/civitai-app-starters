@@ -62,7 +62,7 @@ import type {
   WrappedToken,
 } from '@civitai/app-sdk/blocks';
 
-import { parseRateLimitMeta } from '../internal/rateLimit.js';
+import { parseRateLimitMeta } from './rateLimit.js';
 import { isRoutableRequestId, isWireRequestIdShape } from './requestId.js';
 
 const isObject = (v: unknown): v is Record<string, unknown> =>

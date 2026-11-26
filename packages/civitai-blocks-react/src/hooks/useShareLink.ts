@@ -8,7 +8,7 @@ import { sendTypedRequest } from '../transport/transport.js';
 import { useTransportSnapshot } from './useBlockContext.js';
 import { useCivitaiLocation } from './useCivitaiLocation.js';
 import { useTransportConnection } from './useTransportConnection.js';
-import { withRateLimit } from '../internal/rateLimit.js';
+import { withRateLimit } from '../transport/rateLimit.js';
 
 /** What {@link useShareLink} returns. */
 export interface UseShareLink {

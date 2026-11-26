@@ -4,7 +4,7 @@ import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useTransportConnection } from './useTransportConnection.js';
-import { withRateLimit } from '../internal/rateLimit.js';
+import { withRateLimit } from '../transport/rateLimit.js';
 
 /**
  * What {@link usePublishGenerationOutputs} returns.

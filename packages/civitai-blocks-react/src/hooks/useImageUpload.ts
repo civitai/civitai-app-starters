@@ -20,7 +20,7 @@ import {
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest, subscribeTyped } from '../transport/transport.js';
 import { useTransportConnection } from './useTransportConnection.js';
-import { withRateLimit } from '../internal/rateLimit.js';
+import { withRateLimit } from '../transport/rateLimit.js';
 
 /**
  * Generous hook-side backstop for {@link BlockImageScanResult} delivery. The

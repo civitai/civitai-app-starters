@@ -5,7 +5,7 @@ import type { BlockGatedImage } from '@civitai/app-sdk/blocks';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useTransportConnection } from './useTransportConnection.js';
-import { withRateLimit } from '../internal/rateLimit.js';
+import { withRateLimit } from '../transport/rateLimit.js';
 
 export type { BlockGatedImage };
 

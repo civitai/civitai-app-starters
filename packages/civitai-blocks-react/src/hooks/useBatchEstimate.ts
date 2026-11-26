@@ -6,7 +6,7 @@ import type {
   WorkflowBody,
 } from '@civitai/app-sdk/blocks';
 
-import { withRateLimit, type RateLimitMeta } from '../internal/rateLimit.js';
+import { withRateLimit, type RateLimitMeta } from '../transport/rateLimit.js';
 import { WORKFLOW_REQUEST_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';

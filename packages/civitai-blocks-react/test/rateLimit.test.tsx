@@ -11,7 +11,7 @@ import {
   WorkflowSubmitError,
 } from '../src/hooks/useBuzzWorkflow.js';
 import { rateLimitOf, type RateLimitMeta } from '../src/index.js';
-import { parseRateLimitMeta, withRateLimit } from '../src/internal/rateLimit.js';
+import { parseRateLimitMeta, withRateLimit } from '../src/transport/rateLimit.js';
 import { throwOnFailedReply, throwOnReplyError } from '../src/internal/replyError.js';
 import { getTransport } from '../src/transport/singleton.js';
 import { resetTransport } from '../src/testing.js';

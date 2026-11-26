@@ -13,7 +13,7 @@ import type {
 } from '@civitai/app-sdk/blocks';
 import { BLOCK_SCOPES } from '@civitai/app-sdk/blocks';
 
-import { parseRateLimitMeta, type RateLimitMeta } from '../internal/rateLimit.js';
+import { parseRateLimitMeta, type RateLimitMeta } from '../transport/rateLimit.js';
 import { withConsentRetry } from '../internal/withConsentRetry.js';
 import { WORKFLOW_REQUEST_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';

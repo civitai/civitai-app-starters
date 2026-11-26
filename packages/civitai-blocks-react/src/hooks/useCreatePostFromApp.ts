@@ -14,7 +14,7 @@ import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
 import type { ConsentRetryOptions } from './consentRetryOptions.js';
 import { useTransportConnection } from './useTransportConnection.js';
-import { withRateLimit } from '../internal/rateLimit.js';
+import { withRateLimit } from '../transport/rateLimit.js';
 
 /**
  * The consent-gated scope this bridge requires — `posts:write:self`, named in

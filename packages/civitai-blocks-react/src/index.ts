@@ -66,8 +66,8 @@ export type {
   WorkflowSubmitErrorCode,
 } from './hooks/useBuzzWorkflow.js';
 // The host's rate-limit retry metadata on the error any hook throws for a refused call.
-export { rateLimitOf } from './internal/rateLimit.js';
-export type { RateLimitMeta } from './internal/rateLimit.js';
+export { rateLimitOf } from './transport/rateLimit.js';
+export type { RateLimitMeta } from './transport/rateLimit.js';
 export {
   BATCH_ESTIMATE_MAX_CELLS,
   BatchEstimateError,

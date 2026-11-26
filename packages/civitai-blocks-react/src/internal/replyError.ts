@@ -1,4 +1,4 @@
-import { withRateLimit } from './rateLimit.js';
+import { withRateLimit } from '../transport/rateLimit.js';
 
 /**
  * The uniform `{ ok, error }` reply REJECT test, single-sourced.
