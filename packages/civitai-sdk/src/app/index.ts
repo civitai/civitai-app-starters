@@ -25,16 +25,11 @@ import {
   type TokenOptions,
   type TokenSessionOptions,
 } from '../session/index.js';
-import {
-  createSharedStorageClient,
-  type SharedStorageClient,
-} from '../shared-storage/index.js';
 import { createDocumentStorage, type DocumentStorage } from '../doc-store/index.js';
 import { createServiceFetch } from '../doc-store/service-fetch.js';
 import { createLocalPreviewStorage, readInjectedManifest, type LocalPreviewStorage } from '../doc-store/local-preview.js';
 import { createModerationClient, type ModerationClient } from '../doc-store/moderation.js';
 import { createSiteClient, DEFAULT_SITE_URL, type SiteClient } from '../site/index.js';
-import { createStorageClient, type StorageClient } from '../storage/index.js';
 import { createSubListingsClient, type SubListingsClient } from '../sub-listings/index.js';
 import { createWorkflowsClient, type WorkflowsClient } from '../workflows/index.js';
 
@@ -51,9 +46,7 @@ const DEFAULT_INIT_TIMEOUT_MS = 10_000;
  *   and is gone on reload. Show the viewer a "preview data is local to this tab"
  *   badge.
  *
- * Latched when `initialize()` resolves. Only the document store switches: the
- * deprecated key/value methods on `app.storage`, `app.sharedStorage` and the
- * `@civitai/blocks-react` storage hooks keep calling the real routes.
+ * Latched when `initialize()` resolves.
  */
 export type StorageMode = 'remote' | 'local-preview';
 
@@ -70,40 +63,22 @@ export interface AppClient {
    */
   readonly site: SiteClient;
   /**
-   * App storage. Two stores share this property while apps migrate:
+   * App storage: the document store — `collection(name)` and `info()`, the
+   * collections the app declares under `storage.collections` in its manifest,
+   * private or shared, with declared indexes, conditional writes and viewer-keyed
+   * documents (`keyedBy`: one per viewer, or per viewer per parent — a vote, a like,
+   * a per-viewer entry; count them by listing with `keyPrefix`).
    *
-   * - **The document store** — `collection(name)` and `info()`: the collections
-   *   the app declares under `storage.collections` in its manifest, private or
-   *   shared, with counters, marks, declared indexes and conditional writes.
-   *   Use this for anything new.
-   * - **The legacy per-viewer key/value store** — `get`, `set`, `delete`, `list`,
-   *   `getQuota`, each `@deprecated`. civitai.com removed it on 2026-11-10: its
-   *   routes answer `410` `legacy_store_removed`, so these reject. Nothing is
-   *   copied between the two. See
-   *   https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
+   * 🔴 Requires the block token the host mints: an app that authenticated with an
+   * OAuth access token is refused. An anonymous viewer may read SHARED collections
+   * only.
    *
-   * 🔴 Both require the block token the host mints: an app that authenticated
-   * with an OAuth access token is refused. The legacy store refuses an anonymous
-   * viewer outright; the document store lets one read SHARED collections only.
-   */
-  readonly storage: StorageClient & DocumentStorage & { readonly mode: StorageMode };
-  /**
-   * @deprecated Declare a `shared` collection under `storage.collections` and use
-   * `app.storage.collection(name)`. civitai.com removed this store on 2026-11-10:
-   * its routes answer `410` `legacy_store_removed`, so every method rejects. See
+   * The legacy key/value methods (`get`, `set`, `delete`, `list`, `getQuota`) and
+   * `app.sharedStorage` were removed in 0.33; civitai.com shut both stores down on
+   * 2026-11-10. See
    * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
-   *
-   * This app's CROSS-USER store — one namespace every viewer of this app reads
-   * and writes, which is what makes a shared feed or a "popular" rail possible.
-   *
-   * 🔴 Requires the block token, like {@link AppClient.storage}, but the audience
-   * is NOT the same: an ANONYMOUS viewer MAY read here and may never write. So
-   * `viewer === null` gates the write affordances, not the read — and an anon
-   * write surfaces as 403, refused by the scope binding before the handler runs.
-   * A signed-in viewer is not automatically a permitted writer either: writes
-   * clear a server-side minimum-trust gate.
    */
-  readonly sharedStorage: SharedStorageClient;
+  readonly storage: DocumentStorage & { readonly mode: StorageMode };
   /**
    * Moderation of this app's SHARED storage: `report({ collection, key, from? })` reports one
    * document to civitai.com's moderators (`POST /api/v1/blocks/moderation/reports`). Needs the
@@ -329,7 +304,7 @@ function createAppClient(
   /**
    * The app-data service the host moved this app's document store to (`BLOCK_INIT.appData`).
    * Only `collection(name)` and `info()` move, through their own HTTP client with the service's
-   * retry rules; the legacy methods, moderation and everything else stay on `siteHttp`.
+   * retry rules; moderation and everything else stay on `siteHttp`.
    */
   appData?: AppDataService & { active: () => boolean; session: Session },
 ): AppClient {
@@ -338,14 +313,12 @@ function createAppClient(
   // workflows clients' routes live under the same base URL, so a `siteUrl`
   // override redirects them together.
   // Wrapped once, so `BLOCK_NAMESPACE` is the single place that decides where the
-  // diagnosis applies. None of the six `blocks/*` clients needs an exemption
-  // of its own: their routes are `blocks/app-storage/*`, `blocks/shared-storage/*`,
-  // `blocks/storage/*`, `blocks/moderation/reports`, `blocks/sub-listings/*` and
-  // `blocks/workflows/*`, which that namespace already excludes, and
-  // `test/storage/seam.test.ts`, `test/shared-storage/seam.test.ts`,
-  // `test/doc-store/client.test.ts`, `test/doc-store/moderation.test.ts`,
+  // diagnosis applies. None of the four `blocks/*` clients needs an exemption
+  // of its own: their routes are `blocks/storage/*`, `blocks/moderation/reports`,
+  // `blocks/sub-listings/*` and `blocks/workflows/*`, which that namespace already
+  // excludes, and `test/doc-store/client.test.ts`, `test/doc-store/moderation.test.ts`,
   // `test/sub-listings/sub-listings.test.ts` and `test/workflows/seam.test.ts` pin the
-  // six route bases there textually.
+  // four route bases there textually.
   const siteHttp = explainApiRefusal(http(options.siteUrl ?? DEFAULT_SITE_URL), holdsBlockTokenNow);
   const localDocuments: DocumentStorage | undefined = local?.storage;
   // A write or report through an import asks the host for the viewer's publish grant in the
@@ -353,15 +326,9 @@ function createAppClient(
   const requestGrants = (scopes: readonly Scope[], opts: GrantOptions) => session.requestGrants(scopes, opts);
   return {
     site: createSiteClient(siteHttp),
-    // One object, two stores, no shared names: the legacy five and the document
-    // store's `collection`/`info`. Spread rather than chained so neither keeps a
-    // reference to the other.
-    //
     // In a local preview the document store is the in-memory one and is never
-    // handed `siteHttp`: zero `blocks/storage/*` requests by construction. The
-    // legacy key/value methods are out of scope and keep the real routes.
+    // handed `siteHttp`: zero `blocks/storage/*` requests by construction.
     storage: {
-      ...createStorageClient(siteHttp),
       ...(localDocuments ??
         createDocumentStorage(siteHttp, {
           explainInsufficientScope: true,
@@ -379,7 +346,6 @@ function createAppClient(
       mode: localDocuments ? 'local-preview' : 'remote',
     },
     moderation: local?.moderation ?? createModerationClient(siteHttp, { requestGrants }),
-    sharedStorage: createSharedStorageClient(siteHttp),
     subListings: createSubListingsClient(siteHttp),
     workflows: createWorkflowsClient(explainWorkflowRefusal(siteHttp, holdsOAuthTokenNow)),
     orchestration: createOrchestrationClient(

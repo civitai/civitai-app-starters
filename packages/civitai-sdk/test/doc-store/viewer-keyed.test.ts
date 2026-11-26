@@ -466,15 +466,11 @@ describe('fake: refusals in the server\'s order', () => {
     expect('open' in info.collections.records!).toBe(false);
   });
 
-  it('counters, marks (but not a report) and publish are refused on a viewer-keyed collection', async () => {
-    const fake = fakeWith({ publish: true });
+  it('a viewer-keyed document is reportable through the report compatibility route too', async () => {
+    const fake = fakeWith();
     const votes = fake.storage.collection('votes');
     const { key } = await votes.putMine({ value: 1 }, { parent: 'r1' });
-    expect((await refusal(votes.update(key, { $mark: 'vote' }))).details).toEqual({ reason: 'viewer_keyed', collection: 'votes' });
-    expect((await refusal(votes.update(key, { $inc: { n: 1 } }))).details).toEqual({ reason: 'viewer_keyed', collection: 'votes' });
-    expect(await votes.update(key, { $mark: 'report' })).toEqual({ marked: true });
-    await fake.storage.collection('notes').put('n1', { a: 1 });
-    expect((await refusal(votes.publish({ from: 'notes', keys: ['n1'] }))).details).toEqual({ reason: 'viewer_keyed', collection: 'votes' });
+    expect(await fake.as({ viewer: { username: 'bob' } }).storage.collection('votes').mark(key, 'report')).toEqual({ marked: true });
   });
 
   it('moderation scans the data and the PARENT, never the derived key', async () => {

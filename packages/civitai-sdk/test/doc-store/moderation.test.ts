@@ -248,8 +248,11 @@ describe('fake: the report API', () => {
 
     const after = await bob.storage.collection('posts').get('p1');
     // Three reports moved nothing a reader sees: no count, no version, no data.
-    expect([after?.counters, after?.marks, after?.version, after?.data]).toEqual([{}, { vote: 0 }, 1, { t: 'x' }]);
-    expect([before?.counters, before?.marks]).toEqual([{}, { vote: 0 }]);
+    expect([after?.version, after?.data]).toEqual([1, { t: 'x' }]);
+    expect(before?.version).toBe(1);
+    // On the wire too: the compatibility fields stay empty.
+    const wire = fake.calls.at(-1)!.response as Record<string, unknown>;
+    expect([wire.counters, wire.marks, wire.viewer]).toEqual([{}, {}, { marks: [] }]);
   });
 
   it('a viewer-keyed document is reportable', async () => {

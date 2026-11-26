@@ -6,9 +6,9 @@ import type { GrantOptions, Scope } from '../session/index.js';
  * The App Blocks DOCUMENT STORE: named collections of JSON documents, declared in
  * the app's manifest under `storage.collections`, served by `/api/v1/blocks/storage/…`.
  *
- * It replaces the two key/value stores (`app.storage.get/set/…` and
- * `app.sharedStorage`). civitai.com removed both on 2026-11-10: their routes answer
- * `410` `legacy_store_removed`. See
+ * It replaced the two key/value stores (`app.storage.get/set/…` and
+ * `app.sharedStorage`, both removed from this SDK in 0.33). civitai.com shut both
+ * down on 2026-11-10: their routes answer `410` `legacy_store_removed`. See
  * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
  *
  * The rules — who may read or write which collection, the limits, the error codes
@@ -24,9 +24,6 @@ import type { GrantOptions, Scope } from '../session/index.js';
 const BASE = 'blocks/storage';
 /** The batch-get route sits at the collection position behind a `_`, which no collection name can start with. */
 const GET_MANY = '_get';
-/** Server-side publish and unpublish sit there too (civitai/civitai, behind a per-app host flag). */
-const PUBLISH = '_publish';
-const UNPUBLISH = '_unpublish';
 /**
  * The viewer's own document in a VIEWER-KEYED collection sits at the KEY position as `@me`
  * (civitai/civitai#10216): `@` is outside the key grammar, so it is never a key.
@@ -75,33 +72,15 @@ export type DocumentAuthor =
 export interface StorageDocument<T extends object = Record<string, unknown>> {
   key: string;
   data: T;
-  /** +1 on every `data` write. Counter and mark changes do not move it. */
+  /** +1 on every `data` write. */
   version: number;
   /** Revived from the wire's ISO string, once, here. */
   createdAt: Date;
   updatedAt: Date;
   author: DocumentAuthor;
-  /**
-   * Declared counters of a shared collection; `{}` on a private one.
-   *
-   * @deprecated Counters are being removed: there is no server-side count. Keep what each
-   * viewer did in a viewer-keyed collection (`keyedBy`) and count by listing it.
-   */
-  counters: Record<string, number>;
-  /**
-   * Declared mark counts of a shared collection (never `report`'s); `{}` on a private one.
-   *
-   * @deprecated Marks are being removed. Count a viewer-keyed collection's documents for this
-   * key by listing it with `keyPrefix` set to `<key>:`.
-   */
-  marks: Record<string, number>;
-  /**
-   * The viewer's own marks on this document; `null` for an anonymous viewer.
-   *
-   * @deprecated Marks are being removed. Read the viewer's own vote or like with
-   * {@link StorageCollection.getMine}.
-   */
-  viewer: { marks: string[] } | null;
+  // No `counters`, `marks` or `viewer` (removed in 0.33): civitai.com still sends the first
+  // two as `{}` and `viewer` as `{ marks: [] }` / `null` for older SDKs, and this client
+  // ignores them, as it ignores every field it does not name.
 }
 
 /** A `time` index filters by an ISO-8601 string or epoch milliseconds; a `Date` is sent as ISO. */
@@ -115,27 +94,12 @@ export interface DocumentListQuery {
   where?: Record<string, DocumentWhereValue>;
   /**
    * `[-]key | createdAt | updatedAt | <index>`; a leading `-` is descending. The server's
-   * default is `key`. `counter:<name>` and `mark:<name>` still sort, but are DEPRECATED with
-   * counters and marks: there is no sort by count. Count a viewer-keyed collection by listing
+   * default is `key`. There is no sort by count: count a viewer-keyed collection by listing
    * it with `keyPrefix` set to `<parent>:`, and sort in the app.
    */
   sort?: string;
   /** Only documents the viewer authored. */
   author?: 'me';
-  /**
-   * With {@link DocumentListQuery.mark}: only documents the viewer marked with it.
-   *
-   * @deprecated Marks are being removed. Keep each viewer's vote or like in
-   * a viewer-keyed collection (`keyedBy`) and list it with `author: 'me'`.
-   */
-  markedBy?: 'me';
-  /**
-   * The mark {@link DocumentListQuery.markedBy} filters by.
-   *
-   * @deprecated Marks are being removed. Keep each viewer's vote or like in
-   * a viewer-keyed collection (`keyedBy`) and list it with `author: 'me'`.
-   */
-  mark?: string;
   keyPrefix?: string;
   /** The server bounds it and applies its own default; this client sends none. */
   limit?: number;
@@ -156,114 +120,6 @@ export interface WriteOptions extends DocumentCallOptions {
    * `details.currentVersion`.
    */
   ifVersion?: number;
-}
-
-/**
- * Add `by` to ONE declared counter: `{ $inc: { plays: 1 } }`. `by` is required (the
- * wire has no default), so `{ $inc: { plays: undefined } }` does not type-check; the
- * server takes an integer from 1 to 100. The type cannot say "exactly one counter":
- * naming two is refused `invalid_request` (`malformed_operator`).
- *
- * @deprecated Counters and {@link StorageCollection.update} are being removed: there is no
- * server-side counter. Keep what each viewer did in a viewer-keyed collection (`keyedBy`) and
- * count by listing it.
- */
-export interface StorageIncrementOp {
-  $inc: Record<string, number>;
-  $mark?: never;
-  $unmark?: never;
-}
-
-/**
- * Set the viewer's mark: `{ $mark: 'vote' }` — a declared mark, or the built-in `report`.
- *
- * @deprecated Marks and {@link StorageCollection.update} are being removed. A vote or like is
- * the viewer's own document in a viewer-keyed collection: {@link StorageCollection.putMine}.
- * A report is `app.moderation.report`.
- */
-export interface StorageMarkOp {
-  $mark: string;
-  $inc?: never;
-  $unmark?: never;
-}
-
-/**
- * Remove the viewer's mark: `{ $unmark: 'vote' }`. A `report` cannot be withdrawn.
- *
- * @deprecated Marks and {@link StorageCollection.update} are being removed. Withdraw a vote or
- * like in a viewer-keyed collection with {@link StorageCollection.deleteMine}.
- */
-export interface StorageUnmarkOp {
-  $unmark: string;
-  $inc?: never;
-  $mark?: never;
-}
-
-/**
- * ONE update operator for {@link StorageCollection.update}. Each member forbids the
- * other two, so a second operator is a type error, and an unknown one is an excess
- * property.
- *
- * @deprecated {@link StorageCollection.update} is being removed with counters and marks. Use
- * a viewer-keyed collection: {@link StorageCollection.getMine}, {@link StorageCollection.putMine},
- * {@link StorageCollection.deleteMine}.
- */
-export type StorageUpdateOp = StorageIncrementOp | StorageMarkOp | StorageUnmarkOp;
-
-/**
- * What {@link StorageCollection.publish} copies, and from where.
- *
- * @deprecated Server-side publish is being removed. Read the private documents and write the
- * shared copies one by one with {@link StorageCollection.put} / {@link StorageCollection.delete}.
- */
-export interface StoragePublishRequest {
-  /**
-   * One of THIS app's PRIVATE collections: the viewer's own documents are read from it by the
-   * server. (Not an import's source app: a publish runs in this app only.)
-   */
-  from: string;
-  /** 1 to 500 keys, none twice. */
-  keys: readonly string[];
-  /**
-   * Also delete the viewer's own copies in this collection whose key no longer has a document
-   * in `from` (at most 500 per call; see {@link StoragePublishResult.pruneIncomplete}). Copies
-   * whose private documents still exist in `from` (another character's, say) are never pruned.
-   * Prune is scoped by `from`, not by where a copy came from: if several private collections
-   * feed this one, a prune from one of them deletes the copies published from the others.
-   */
-  prune?: boolean;
-}
-
-/**
- * Why a key was not copied. `missing`: the viewer has no document at that key in `from`.
- * `not_author`: another user's copy holds the key; it is never touched. `hidden`: the viewer's
- * own copy was hidden by a moderator; it is never rewritten. Open-ended for a later server.
- *
- * @deprecated Server-side publish is being removed; see {@link StorageCollection.publish}.
- */
-export type StoragePublishSkipReason = 'missing' | 'not_author' | 'hidden' | (string & {});
-
-/**
- * Every list is in key order.
- *
- * @deprecated Server-side publish is being removed; see {@link StorageCollection.publish}.
- */
-export interface StoragePublishResult {
-  created: string[];
-  updated: string[];
-  /** Same content as the private document: not written, and it cost nothing. */
-  unchanged: string[];
-  pruned: string[];
-  skipped: { key: string; reason: StoragePublishSkipReason }[];
-  /** More copies were prunable than one call prunes: call `publish` again. */
-  pruneIncomplete: boolean;
-}
-
-/** @deprecated Server-side unpublish is being removed; see {@link StorageCollection.unpublish}. */
-export interface StorageUnpublishResult {
-  deleted: string[];
-  /** `missing`: nothing visible at that key. `not_author`: another user's copy, never touched. */
-  skipped: { key: string; reason: 'missing' | 'not_author' | (string & {}) }[];
 }
 
 /**
@@ -303,135 +159,17 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
   /** One page. Follow `nextCursor` with the same query for the next one. */
   list(query?: DocumentListQuery, opts?: DocumentCallOptions): Promise<DocumentPage<T>>;
   /**
-   * Apply ONE update operator to a shared document — `PATCH …/:collection/:key` with
-   * the operator as the body. A tally never changes `data` or `version`.
+   * Report a shared document to moderation through the compatibility route
+   * `PUT …/:key/marks/report`, which civitai.com still serves for apps bundled with an SDK
+   * older than 0.30: the same report, gates and budget as `app.moderation.report`, answered
+   * `{ marked: true }`, never a count. `report` is the only name the route takes; every other
+   * mark was removed with marks and counters.
    *
-   * - `{ $inc: { [counter]: by } }` adds `by` to a declared counter and resolves
-   *   `{ value }`, the new total. In a `write: "none"` collection the first increment
-   *   of an absent key creates the document.
-   * - `{ $mark: name }` sets the viewer's mark (a declared mark, or the built-in
-   *   `report`) and resolves `{ marked: true, count }`. Idempotent. `count` is absent
-   *   for `report`, whose count is never exposed.
-   * - `{ $unmark: name }` removes it and resolves `{ marked: false, count }`.
-   *   Idempotent. A `report` cannot be withdrawn: the server refuses it
-   *   `invalid_request` (400) for every caller.
-   *
-   * A body the server cannot read as one operator is refused `invalid_request`, with
-   * `details.reason` saying why (`empty_patch`, `unknown_operator`, `multiple_operators`,
-   * `merge_patch_unsupported` or `malformed_operator`).
-   *
-   * Needs a civitai.com that serves the PATCH route (civitai/civitai#8292); the
-   * deprecated methods below keep their own routes and do not.
-   *
-   * @deprecated Counters, marks and this PATCH route are being removed. A vote, like or
-   * per-viewer entry is the viewer's own document in a viewer-keyed collection (`keyedBy`): read it
-   * with {@link StorageCollection.getMine}, set it with {@link StorageCollection.putMine},
-   * clear it with {@link StorageCollection.deleteMine}, and count by listing with `keyPrefix`.
-   * There is no server-side counter. A report is `app.moderation.report`.
-   *
-   * @example
-   * ```ts
-   * await plays.update('model-123', { $inc: { plays: 1 } }); // { value }
-   * await requests.update('r1', { $mark: 'vote' }); // { marked: true, count }
-   * await requests.update('r1', { $unmark: 'vote' }); // { marked: false, count }
-   * ```
+   * @deprecated Use `app.moderation.report({ collection, key, from? })`. A vote or like is the
+   * viewer's own document in a viewer-keyed collection (`keyedBy`):
+   * {@link StorageCollection.putMine} / {@link StorageCollection.deleteMine}.
    */
-  update(key: string, op: StorageIncrementOp, opts?: DocumentCallOptions): Promise<{ value: number }>;
-  /** @deprecated Counters, marks and `update` are being removed; see the first overload. */
-  update(key: string, op: StorageMarkOp, opts?: DocumentCallOptions): Promise<{ marked: true; count?: number }>;
-  /** @deprecated Counters, marks and `update` are being removed; see the first overload. */
-  update(key: string, op: StorageUnmarkOp, opts?: DocumentCallOptions): Promise<{ marked: false; count?: number }>;
-  /**
-   * An operator chosen at run time; the reply is the one its operator gives.
-   *
-   * @deprecated Counters, marks and `update` are being removed; see the first `update` overload.
-   */
-  update(
-    key: string,
-    op: StorageUpdateOp,
-    opts?: DocumentCallOptions,
-  ): Promise<{ value: number } | { marked: boolean; count?: number }>;
-  /**
-   * Add `by` (the server's default when omitted) to a declared counter of a shared document. In a
-   * `write: "none"` collection the first increment of an absent key creates the
-   * document. Sends `POST …/:key/counters/:counter`, the deprecated per-tally route.
-   *
-   * @deprecated Counters are being removed, and {@link StorageCollection.update} with them, so
-   * do not move to `update`. Keep what each viewer did in a viewer-keyed collection (`keyedBy`)
-   * ({@link StorageCollection.putMine}) and count by listing it; there is no server-side counter.
-   */
-  increment(
-    key: string,
-    counter: string,
-    by?: number,
-    opts?: DocumentCallOptions,
-  ): Promise<{ value: number }>;
-  /**
-   * Set the viewer's mark on a shared document — a declared mark, or the
-   * built-in `report`. Idempotent. `count` is absent for `report`, whose count is
-   * never exposed. Sends `PUT …/:key/marks/:name`, the deprecated per-tally route.
-   *
-   * @deprecated Marks are being removed, and {@link StorageCollection.update} with them, so do
-   * not move to `update`. A vote or like is the viewer's own document in
-   * a viewer-keyed collection (`keyedBy`): set it with {@link StorageCollection.putMine}. A report
-   * is `app.moderation.report`.
-   */
-  mark(key: string, name: string, opts?: DocumentCallOptions): Promise<{ marked: true; count?: number }>;
-  /**
-   * Remove the viewer's mark. Idempotent. A `report` cannot be withdrawn: the
-   * server refuses it `invalid_request` (400) for every caller. Sends
-   * `DELETE …/:key/marks/:name`, the deprecated per-tally route.
-   *
-   * @deprecated Marks are being removed, and {@link StorageCollection.update} with them, so do
-   * not move to `update`. Withdraw a vote or like in a viewer-keyed collection (`keyedBy`) with
-   * {@link StorageCollection.deleteMine}.
-   */
-  unmark(key: string, name: string, opts?: DocumentCallOptions): Promise<{ marked: false; count?: number }>;
-  /**
-   * Server-side PUBLISH into this SHARED collection: the server copies the viewer's own
-   * documents at `keys` from this app's PRIVATE collection `from`, authored by the viewer, in
-   * ONE transaction — every copy lands or none does. The data never travels through the app.
-   * Sends `POST …/_publish/:collection`.
-   *
-   * - A re-publish writes only new or changed documents; `unchanged` ones cost nothing.
-   * - Each copy is checked as a `put` would be (publish consent, trust, schema,
-   *   `ownedModelVersions`, moderation, the viewer's and the app's ceilings). Any refusal
-   *   refuses the whole publish; `details.key` names the document where it applies.
-   * - A private document that changes while the publish runs: `version_conflict` with
-   *   `details.reason: 'source_changed'`; a shared copy that changes: `'target_changed'`.
-   *   Publish again.
-   * - Its own budget, never the shared write budget: about 10 publishes per viewer per day.
-   *   Refused: `rate_limited` (429) with `details.bucket: 'publish'` and
-   *   {@link StorageError.retryAfter}. Every call, one that changes nothing included, also
-   *   spends one token of the private-write window (`details.bucket: 'write'` when empty).
-   * - Refused before anything is spent: no keys (`reason: 'empty_keys'`), more than 500
-   *   (`too_many_keys`) or a key twice (`duplicate_key`).
-   *
-   * A civitai.com that does not serve publish — an older release, or the app's host flag off —
-   * answers as an unknown route; this method then rejects with the LOCAL code
-   * `publish_unavailable` (status 404). Fall back to writing the copies one by one, waiting
-   * out each `rate_limited` for its `retryAfter`.
-   *
-   * @example
-   * ```ts
-   * const r = await app.storage.collection('clips').publish({ from: 'my_clips', keys, prune: true });
-   * ```
-   *
-   * @deprecated Server-side publish is being removed. Read the private documents with
-   * {@link StorageCollection.get} / {@link StorageCollection.getMany} and write the shared
-   * copies one by one with {@link StorageCollection.put}, the fallback an app already uses
-   * when publish is unavailable.
-   */
-  publish(request: StoragePublishRequest, opts?: DocumentCallOptions): Promise<StoragePublishResult>;
-  /**
-   * Delete the viewer's own documents at `keys` (1 to 500) from this SHARED collection in ONE
-   * transaction. Another user's document at a key is skipped as `not_author`, never touched.
-   * Sends `POST …/_unpublish/:collection`. Same `publish_unavailable` as {@link publish}.
-   *
-   * @deprecated Server-side unpublish is being removed. Delete the shared copies one by one with
-   * {@link StorageCollection.delete}.
-   */
-  unpublish(keys: readonly string[], opts?: DocumentCallOptions): Promise<StorageUnpublishResult>;
+  mark(key: string, name: 'report', opts?: DocumentCallOptions): Promise<{ marked: true }>;
   /**
    * VIEWER-KEYED collections (`keyedBy` in the manifest): the signed-in viewer's own document,
    * or `null` when they have none. `parent` names the parent key on a `parent+viewer`
@@ -484,10 +222,6 @@ export interface StorageCollectionInfo {
   visibility: 'private' | 'shared';
   /** Shared collections only. */
   write?: string;
-  /** @deprecated Counters are being removed; a viewer-keyed collection reports `keyedBy`. */
-  counters: string[];
-  /** @deprecated Marks are being removed; a viewer-keyed collection reports `keyedBy`. */
-  marks: string[];
   indexes: Record<string, StorageIndexType>;
   showAuthor: boolean;
   /** Present on a viewer-keyed collection only: how its keys are derived. */
@@ -518,7 +252,6 @@ export interface StorageLimits {
   rate: {
     readsPerMinute: number;
     privateWritesPerMinute: number;
-    marksAndCountersPerMinute: number;
     reportsPerDay: number;
     sharedWritesBurst: number;
     sharedWritesPerDay: number;
@@ -547,7 +280,7 @@ export interface CollectionOptions {
    * (refusals: {@link storageImportRefusal}). Only an ordinary block token imports: a
    * dev-tunnel preview, a dev token, a hub token and a review are refused.
    *
-   * A create, put, counter, mark or unmark in one of the source's SHARED collections also
+   * A create or put in one of the source's SHARED collections also
    * needs the viewer's `apps:storage:publish` grant IN THE SOURCE APP (civitai/civitai#7586).
    * On `app.storage` the client asks the host for it by itself when the source refuses
    * for want of it: one prompt, then the same call ONCE more on the next host-pushed token
@@ -624,11 +357,6 @@ export type StorageErrorCode =
   | 'local_preview_invalid_manifest'
   /** LOCAL, never sent by the server: the local preview's in-memory store could not be loaded. */
   | 'local_preview_unavailable'
-  /**
-   * LOCAL, never sent by the server: `publish` / `unpublish` reached a civitai.com that does not
-   * serve them (an older release, or the app's host flag off), which answered `404 not_found`.
-   */
-  | 'publish_unavailable'
   /**
    * LOCAL, never sent by the server: `app.moderation.report` reached a civitai.com that does not
    * serve the report API (an older release without the route, or the app's host flag off).
@@ -777,7 +505,7 @@ const refusedThroughImport = new WeakSet<StorageError>();
  *   (a token that already carries the scope is re-minted without it), then
  *   `await app.requestGrants(['apps:storage:import'])`. `false` means "not now": do not loop.
  * - `source_publish_consent` — 403 `consent_required` naming `apps:storage:publish` AND a
- *   `from`: a create, put, counter, mark or unmark in one of the SOURCE app's shared
+ *   `from`: a create or put in one of the SOURCE app's shared
  *   collections needs the viewer's publish consent IN THE SOURCE APP. An import grant is
  *   not that consent. `app.storage` has ALREADY asked the host for it (see
  *   {@link CollectionOptions.from}) by the time this reaches the app, so it means "not
@@ -983,8 +711,8 @@ export interface DocumentStorageOptions {
   /**
    * SERVICE MODE: send this app's own collections and `info` to the app-data service instead of
    * the site — `http` is a client for the service's base URL, `slug` the app's blockId. A
-   * collection opened through an import (`{ from }`), `update` and the deprecated `increment`,
-   * `mark`, `unmark`, `publish` and `unpublish` keep the site's routes, and so does every call
+   * collection opened through an import (`{ from }`) and `mark` (the report compatibility route)
+   * keep the site's routes, and so does every call
    * while `active()` is false. Absent, nothing changes. See {@link DocumentStorage} for what a reply carries there.
    */
   service?: AppDataServiceOptions;
@@ -1168,10 +896,6 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
       const from = typeof options?.from === 'string' ? options.from : undefined;
       const authoring = <R>(signal: AbortSignal | undefined, attempt: () => Promise<R>) =>
         withSourcePublishGrant(ask, from, signal, attempt);
-      // `update`: ONE update operator, PATCHed onto the document. The counter or mark name
-      // travels in the body, so no URL rewrites it and none is refused here.
-      const patch = (key: string, op: unknown, signal: AbortSignal | undefined) =>
-        authoring(signal, () => call<unknown>('PATCH', docPath(key), { query: q(), body: op, signal }));
 
       const site: StorageCollection<T> = {
         async get(key, { signal } = {}) {
@@ -1226,8 +950,6 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
           const params: Query = {
             sort: query.sort,
             author: query.author,
-            markedBy: query.markedBy,
-            mark: query.mark,
             keyPrefix: query.keyPrefix,
             limit: query.limit,
             cursor: query.cursor,
@@ -1250,75 +972,13 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
           return { items: reply.items.map((item) => doc(item, 'list')), nextCursor: reply.nextCursor };
         },
 
-        update: (async (key: string, op: StorageUpdateOp, { signal }: DocumentCallOptions = {}) => {
-          const reply = await patch(key, op, signal);
-          // The reply is the one the operator gives. The operator is sent as the caller
-          // wrote it, so a body that is not one operator is the server's to refuse (with
-          // a `details.reason`) and never reaches this line.
-          //
-          // Read the operator from the body AS SENT, not from `op`: JSON drops a key whose
-          // value is `undefined`, and `?: never` admits `undefined` without
-          // `exactOptionalPropertyTypes`, so `{ $unmark: 'v', $mark: undefined }` puts only
-          // `$unmark` on the wire and must read the `$unmark` reply. The http layer sends
-          // `JSON.stringify(op)`; this is that same serialisation, read back.
-          const sent: unknown = op === undefined ? undefined : JSON.parse(JSON.stringify(op));
-          const has = (field: string) => isRecord(sent) && Object.prototype.hasOwnProperty.call(sent, field);
-          if (has('$inc')) return toValueResult(reply, `${name}.update`);
-          if (has('$mark')) return toMarkResult(reply, true, `${name}.update`);
-          if (has('$unmark')) return toMarkResult(reply, false, `${name}.update`);
-          throw new CivitaiError(`storage ${name}.update: the server accepted a body with no update operator`);
-        }) as StorageCollection<T>['update'],
-
-        // The deprecated three: their pre-PR routes and request shapes, unchanged, so they
-        // do not depend on a civitai.com that serves PATCH. Only `update` sends PATCH.
-        async increment(key, counter, by, { signal } = {}) {
-          const reply = await authoring(signal, () =>
-            call<{ value?: unknown }>(
-              'POST',
-              `${docPath(key)}/counters/${segment('counter', counter)}`,
-              // No body at all when `by` is omitted: the server's default applies.
-              { query: q(), body: by === undefined ? undefined : { by }, signal },
-            ),
-          );
-          return toValueResult(reply, `${name}.increment`);
-        },
-
+        // The report compatibility route (see `mark` on StorageCollection): its pre-0.30 path
+        // and request shape, unchanged.
         async mark(key, markName, { signal } = {}) {
           const reply = await authoring(signal, () =>
             call('PUT', `${docPath(key)}/marks/${segment('mark', markName)}`, { query: q(), signal }),
           );
-          return toMarkResult(reply, true, `${name}.mark`);
-        },
-
-        async unmark(key, markName, { signal } = {}) {
-          const reply = await authoring(signal, () =>
-            call('DELETE', `${docPath(key)}/marks/${segment('mark', markName)}`, { query: q(), signal }),
-          );
-          return toMarkResult(reply, false, `${name}.unmark`);
-        },
-
-        async publish(request, { signal } = {}) {
-          refusePublishImport(options, 'publish');
-          const { from: source, keys, prune } = request ?? ({} as StoragePublishRequest);
-          const reply = await publishCall(() =>
-            call('POST', `${BASE}/${PUBLISH}/${coll()}`, {
-              // Named rather than spread: JSON drops an undefined `prune`.
-              body: { from: source, keys: Array.isArray(keys) ? [...keys] : keys, prune },
-              signal,
-            }),
-          );
-          return toPublishResult(reply, `${name}.publish`);
-        },
-
-        async unpublish(keys, { signal } = {}) {
-          refusePublishImport(options, 'unpublish');
-          const reply = await publishCall(() =>
-            call('POST', `${BASE}/${UNPUBLISH}/${coll()}`, {
-              body: { keys: Array.isArray(keys) ? [...keys] : keys },
-              signal,
-            }),
-          );
-          return toUnpublishResult(reply, `${name}.unpublish`);
+          return toMarkResult(reply, `${name}.mark`);
         },
 
         // VIEWER-KEYED (`@me`): the server derives the key from the verified viewer, so none is
@@ -1380,7 +1040,7 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
   };
 }
 
-/** The sorts the service serves; a list with any other, or with `where` / `markedBy` / `mark`, goes to the site. */
+/** The sorts the service serves; a list with any other, or with `where`, goes to the site. */
 const SERVICE_SORTS: ReadonlySet<string> = new Set(['key', '-key']);
 /** The store's list bounds (`listLimitDefault`, `listLimitMax`), applied here to a private answer. */
 const LIST_LIMIT_DEFAULT = 25;
@@ -1428,11 +1088,11 @@ export interface AppDataServiceOptions {
  * - LISTS: `keyPrefix`, `author`, `sort` (`key` / `-key`), `limit` and `cursor` go to the service.
  *   A private collection's answer is the whole collection, so it is paged HERE: key order, `limit`
  *   (the store's default 25, at most 100), and a key cursor (`ka~~<key>` / `kd~~<key>`, the store's
- *   own shape). TRANSITIONAL: a list with `where`, `markedBy` / `mark` or another sort goes to the
- *   site, which serves them; the service does not yet.
+ *   own shape). TRANSITIONAL: a list with `where` or another sort goes to the site, which serves
+ *   them; the service does not yet.
  * - `getMany` has no route there: it is keyed gets, at most {@link SERVICE_GET_MANY_CONCURRENCY}
  *   at once, in the order of `keys`; the first failure stops it.
- * - Not here: `update`, `increment`, `mark`, `unmark`, `publish` and `unpublish` stay on the site.
+ * - Not here: `mark` (the report compatibility route) stays on the site.
  */
 function serviceStore(service: AppDataServiceOptions, options: DocumentStorageOptions) {
   const call = createStorageCall(service.http, options, true);
@@ -1517,7 +1177,7 @@ function serviceStore(service: AppDataServiceOptions, options: DocumentStorageOp
         async list(query = {}, opts = {}) {
           // TRANSITIONAL: what the service does not serve yet is the site's.
           const where = query.where !== undefined && Object.keys(query.where).length > 0;
-          if (where || query.markedBy !== undefined || query.mark !== undefined || (query.sort !== undefined && !SERVICE_SORTS.has(query.sort))) {
+          if (where || (query.sort !== undefined && !SERVICE_SORTS.has(query.sort))) {
             return site.list(query, opts);
           }
           const reply = await call<{ items?: unknown; nextCursor?: unknown }>('GET', records(), {
@@ -1602,74 +1262,6 @@ function pagePrivate<T extends object>(
   return { items: page, nextCursor };
 }
 
-/**
- * A publish runs in this app only: the server refuses `?from=`, so a collection opened through an
- * import is refused before sending, with the server's code.
- */
-function refusePublishImport(options: CollectionOptions | undefined, op: string): void {
-  if (options !== undefined && options !== null && typeof options === 'object' && Object.prototype.hasOwnProperty.call(options, 'from')) {
-    throw invalidFrom(
-      `${op} runs in this app only: it cannot reach another app's collection through an import (refused before sending)`,
-      (options as { from?: unknown }).from,
-    );
-  }
-}
-
-/**
- * A server that does not serve publish answers as an unknown route (`404 not_found`): an older
- * civitai.com, or the app's host flag off. Publish itself never sends `not_found` (a missing
- * document is reported in `skipped`), so that code means exactly this.
- */
-async function publishCall<R>(send: () => Promise<R>): Promise<R> {
-  try {
-    return await send();
-  } catch (error) {
-    if (error instanceof StorageError && error.code === 'not_found' && error.status === 404) {
-      throw new StorageError(
-        404,
-        'publish_unavailable',
-        'this civitai.com does not serve storage publish yet (an older release, or not enabled for this app)',
-        error.body,
-        error.details,
-        { cause: error },
-      );
-    }
-    throw error;
-  }
-}
-
-const isStringList = (value: unknown): value is string[] =>
-  Array.isArray(value) && value.every((v) => typeof v === 'string');
-
-function toSkipped<R extends string>(value: unknown, op: string): { key: string; reason: R }[] {
-  if (!Array.isArray(value) || !value.every((s) => isRecord(s) && typeof s.key === 'string' && typeof s.reason === 'string')) {
-    throw new CivitaiError(`storage ${op}: malformed \`skipped\``);
-  }
-  return value.map((s: Record<string, unknown>) => ({ key: s.key as string, reason: s.reason as R }));
-}
-
-function toPublishResult(reply: unknown, op: string): StoragePublishResult {
-  const r = isRecord(reply) ? reply : {};
-  for (const field of ['created', 'updated', 'unchanged', 'pruned'] as const) {
-    if (!isStringList(r[field])) throw new CivitaiError(`storage ${op}: reply carried no \`${field}\` list`);
-  }
-  if (typeof r.pruneIncomplete !== 'boolean') throw new CivitaiError(`storage ${op}: reply carried no \`pruneIncomplete\``);
-  return {
-    created: [...(r.created as string[])],
-    updated: [...(r.updated as string[])],
-    unchanged: [...(r.unchanged as string[])],
-    pruned: [...(r.pruned as string[])],
-    skipped: toSkipped<StoragePublishSkipReason>(r.skipped, op),
-    pruneIncomplete: r.pruneIncomplete,
-  };
-}
-
-function toUnpublishResult(reply: unknown, op: string): StorageUnpublishResult {
-  const r = isRecord(reply) ? reply : {};
-  if (!isStringList(r.deleted)) throw new CivitaiError(`storage ${op}: reply carried no \`deleted\` list`);
-  return { deleted: [...r.deleted], skipped: toSkipped(r.skipped, op) };
-}
-
 /** Refused with the code the server gives an unusable `from`, so a caller branches once. */
 export function invalidFrom(message: string, from: unknown): StorageError {
   const details = { from };
@@ -1712,22 +1304,11 @@ function refuseInfoImport(opts: object): void {
   }
 }
 
-function toValueResult(reply: unknown, op: string): { value: number } {
-  const value = (reply as { value?: unknown } | null | undefined)?.value;
-  if (typeof value !== 'number') throw new CivitaiError(`storage ${op}: reply carried no \`value\``);
-  return { value };
-}
-
-function toMarkResult<M extends boolean>(
-  reply: unknown,
-  marked: M,
-  op: string,
-): { marked: M; count?: number } {
-  const r = (reply ?? {}) as { marked?: unknown; count?: unknown };
-  if (r.marked !== marked || (r.count !== undefined && typeof r.count !== 'number')) {
+function toMarkResult(reply: unknown, op: string): { marked: true } {
+  if ((reply as { marked?: unknown } | null | undefined)?.marked !== true) {
     throw new CivitaiError(`storage ${op}: malformed reply`);
   }
-  return r.count === undefined ? { marked } : { marked, count: r.count };
+  return { marked: true };
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -1753,24 +1334,12 @@ function toAuthor(value: unknown, op: string): DocumentAuthor {
   throw new CivitaiError(`storage ${op}: malformed \`author\``);
 }
 
-function toCounts(value: unknown, op: string, field: string): Record<string, number> {
-  if (!isRecord(value) || Object.values(value).some((n) => typeof n !== 'number')) {
-    throw new CivitaiError(`storage ${op}: malformed \`${field}\``);
-  }
-  return { ...(value as Record<string, number>) };
-}
-
 function toDocument<T extends object>(reply: unknown, op: string): StorageDocument<T> {
   if (!isRecord(reply) || typeof reply.key !== 'string' || !isRecord(reply.data) || typeof reply.version !== 'number') {
     throw new CivitaiError(`storage ${op}: reply is not a document`);
   }
-  const viewer = reply.viewer;
-  if (
-    viewer !== null &&
-    !(isRecord(viewer) && Array.isArray(viewer.marks) && viewer.marks.every((m) => typeof m === 'string'))
-  ) {
-    throw new CivitaiError(`storage ${op}: malformed \`viewer\``);
-  }
+  // Every field copied by name: the server's leftover `counters`, `marks` and `viewer` (sent
+  // empty for SDKs before 0.33) and anything a later server adds never reach a reader.
   return {
     key: reply.key,
     data: reply.data as T,
@@ -1778,17 +1347,14 @@ function toDocument<T extends object>(reply: unknown, op: string): StorageDocume
     createdAt: toDate(reply.createdAt, op, 'createdAt'),
     updatedAt: toDate(reply.updatedAt, op, 'updatedAt'),
     author: toAuthor(reply.author, op),
-    counters: toCounts(reply.counters, op, 'counters'),
-    marks: toCounts(reply.marks, op, 'marks'),
-    viewer: viewer === null ? null : { marks: [...(viewer.marks as string[])] },
   };
 }
 
 /**
  * A document as the app-data service answers one: a write's answer is the store's own document;
  * a read's item carries what its stream holds. A field the item does not carry reads as
- * {@link serviceStore} says (a private item: the viewer's own, version `0`, epoch timestamps, no
- * counters or marks). A field it DOES carry is checked as {@link toDocument} checks it.
+ * {@link serviceStore} says (a private item: the viewer's own, version `0`, epoch timestamps). A
+ * field it DOES carry is checked as {@link toDocument} checks it.
  */
 function toServiceDocument<T extends object>(reply: unknown, op: string): StorageDocument<T> {
   if (!isRecord(reply) || typeof reply.key !== 'string' || !isRecord(reply.data)) {
@@ -1796,13 +1362,6 @@ function toServiceDocument<T extends object>(reply: unknown, op: string): Storag
   }
   const carries = (field: string) => reply[field] !== undefined;
   if (carries('version') && typeof reply.version !== 'number') throw new CivitaiError(`storage ${op}: reply is not a document`);
-  const viewer = carries('viewer') ? reply.viewer : { marks: [] };
-  if (
-    viewer !== null &&
-    !(isRecord(viewer) && Array.isArray(viewer.marks) && viewer.marks.every((m) => typeof m === 'string'))
-  ) {
-    throw new CivitaiError(`storage ${op}: malformed \`viewer\``);
-  }
   return {
     key: reply.key,
     data: reply.data as T,
@@ -1810,9 +1369,6 @@ function toServiceDocument<T extends object>(reply: unknown, op: string): Storag
     createdAt: carries('createdAt') ? toDate(reply.createdAt, op, 'createdAt') : new Date(0),
     updatedAt: carries('updatedAt') ? toDate(reply.updatedAt, op, 'updatedAt') : new Date(0),
     author: carries('author') ? toServiceAuthor(reply.author, op) : { kind: 'user', isViewer: true },
-    counters: carries('counters') ? toCounts(reply.counters, op, 'counters') : {},
-    marks: carries('marks') ? toCounts(reply.marks, op, 'marks') : {},
-    viewer: viewer === null ? null : { marks: [...(viewer.marks as string[])] },
   };
 }
 

@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { initialize } from '../../src/app/index.js';
 import { ApiError } from '../../src/http/index.js';
 import { createFakeTransport } from '../../src/testing.js';
-import { createFakeAppStorage } from '../support/fake-app-storage.js';
 import { fakeFetch, json } from '../support/fake-fetch.js';
 
 /**
@@ -55,10 +54,25 @@ describe('(a) a block token for a signed-in viewer is not in itself an error', (
   });
 
   it('reaches app.storage, which REQUIRES the block token', async () => {
-    const fake = createFakeAppStorage({ seed: [{ key: 'k', value: { n: 1 } }] });
-    const app = await initialize({ transport: blockTokenTransport(), fetch: fake.fetch });
+    const at = '2026-11-20T10:00:00.000Z';
+    const { fetch, calls } = fakeFetch([
+      () =>
+        json(200, {
+          key: 'k',
+          data: { n: 1 },
+          version: 3,
+          createdAt: at,
+          updatedAt: at,
+          author: { kind: 'user', isViewer: true },
+        }),
+    ]);
+    const app = await initialize({ transport: blockTokenTransport(), fetch });
 
-    await expect(app.storage.get('k')).resolves.toEqual({ n: 1 });
+    await expect(app.storage.collection('notes').get('k')).resolves.toMatchObject({ key: 'k', data: { n: 1 }, version: 3 });
+    expect(calls[0]).toMatchObject({
+      url: 'https://civitai.com/api/v1/blocks/storage/notes/k',
+      headers: { Authorization: 'Bearer jwt' },
+    });
   });
 
   it('reaches a blocks/* route through app.site — the token was minted for it', async () => {
@@ -180,7 +194,7 @@ describe('(b2) the diagnosis is never added where the block token is the RIGHT t
     ]);
     const app = await initialize({ transport: blockTokenTransport(), fetch });
 
-    const error = await app.site.get('blocks/shared-storage/get').catch((e: unknown) => e);
+    const error = await app.site.get('blocks/sub-listings/mine').catch((e: unknown) => e);
 
     expect((error as ApiError).message).toBe('Unauthorized');
     expect((error as ApiError).message).not.toContain('oauth');
@@ -193,7 +207,7 @@ describe('(b2) the diagnosis is never added where the block token is the RIGHT t
     ]);
     const app = await initialize({ transport: blockTokenTransport(), fetch });
 
-    const error = await app.storage.get('k').catch((e: unknown) => e);
+    const error = await app.storage.collection('notes').get('k').catch((e: unknown) => e);
 
     expect((error as ApiError).message).toBe('Unauthorized');
     expect((error as ApiError).message).not.toContain('oauth');

@@ -59,9 +59,8 @@ Both give you:
 | `app.site` | The public REST API at `/api/v1`: `get`, `post`, `request` |
 | `app.workflows` | Generation for a **block**, through the host's `blocks/workflows/*` routes: `estimate`, `submit`, `get`, `watch`, `wait`, `cancel`, `list`. Needs the block token: an OAuth access token is answered `401`, and a block holding one generates through `app.orchestration`. See [Multi-step workflows](#multi-step-workflows) |
 | `app.orchestration` | The orchestrator itself, for an app holding an OAuth access token: `submitWorkflow`, `estimateWorkflow`, `getWorkflow`, `watchWorkflow`, `waitForWorkflow`, `cancelWorkflow`, `queryWorkflows` |
-| `app.storage` | Document storage: `collection(name)` and `info()` over the collections the manifest declares. Needs the block token. See [Document storage](#document-storage). Its legacy `get`/`set`/`delete`/`list`/`getQuota` are `@deprecated` and reject with `410` |
+| `app.storage` | Document storage: `collection(name)` and `info()` over the collections the manifest declares. Needs the block token. See [Document storage](#document-storage). The legacy `get`/`set`/`delete`/`list`/`getQuota` were removed in 0.33 |
 | `app.moderation` | `report({ collection, key, from? })`: report one shared document to civitai.com's moderators. Needs the block token and a signed-in viewer. See [Reporting a document](#reporting-a-document) |
-| `app.sharedStorage` | `@deprecated`: the legacy shared store, removed on 2026-11-10, so every call rejects with `410`. Use a `shared` collection. See [Shared storage](#shared-storage) |
 | `app.subListings` | The viewer's own App Store items for this app: `upsert`, `withdraw`, `mine`. Needs the block token and `apps:store:items:write`. See [Store sub-listings](#store-sub-listings) |
 | `app.requestGrants(scopes)` | Asks for more scopes; resolves `false` when they cannot be granted |
 | `app.getToken()` | For a call this client does not make |
@@ -95,14 +94,13 @@ missing `user:read:self` only shows up after approval. And `auth: "oauth"` canno
 **not** an error in itself: the host's OAuth mint is flag-gated, so an opted-in
 block can legitimately receive the block token, and that token serves the
 `/api/v1/blocks/*` routes it was minted for, `GET /api/v1/models/{id}`, and
-`app.storage` and `app.sharedStorage` — which an OAuth token cannot reach at all.
+`app.storage` — which an OAuth token cannot reach at all.
 What it does not reach is the rest of `/api/v1`, the orchestrator or the MCP. So
 the refusal sits at the surface, not at startup:
 
 | You call | Holding a block token, signed in |
 |---|---|
-| `app.storage.*` | Works for document storage (`app.storage.collection(name)`). This is the token app storage requires. The legacy `get`/`set`/`delete`/`list`/`getQuota` reject with `410` `legacy_store_removed`: civitai.com removed that store on 2026-11-10 |
-| `app.sharedStorage.*` | Rejects with `410` `legacy_store_removed`: civitai.com removed the legacy shared store on 2026-11-10. Use a `shared` document-storage collection |
+| `app.storage.*` | Works (`app.storage.collection(name)`, `app.storage.info()`). This is the token app storage requires |
 | `app.subListings.*` | Works for a signed-in viewer when the token carries `apps:store:items:write` — never in a dev-token, dev-tunnel or review session |
 | `app.site` on `blocks/…` | Works. These are the routes the token was minted for |
 | `app.site.get('me')` and the rest of `/api/v1` | The API's own 401/403, with `auth: "oauth"` named in the message. `status` and `body` are untouched, so a caller can still branch on them |
@@ -205,16 +203,17 @@ reading one.
 An app declares its **collections** in its manifest, and `app.storage.collection(name)`
 reads and writes their JSON documents. `private` collections hold one key space per
 viewer; `shared` ones one key space every viewer reads, written under the policy the
-collection declares (`own`: viewers create, only the author edits or deletes;
-`none`: nobody writes documents, viewers only increment counters and set marks).
+collection declares (`own`: viewers create, only the author edits or deletes). A vote,
+a like or any per-viewer entry is the viewer's own document in a
+[viewer-keyed](#viewer-keyed-documents-one-per-viewer) collection, counted by listing.
 
 ```json
 "scopes": ["apps:storage", "apps:storage:publish"],
 "storage": { "collections": {
   "prefs":    { "visibility": "private" },
-  "requests": { "visibility": "shared", "write": "own", "marks": ["vote"],
+  "requests": { "visibility": "shared", "write": "own",
                 "indexes": { "status": "string" }, "showAuthor": true },
-  "plays":    { "visibility": "shared", "write": "none", "counters": ["plays"] }
+  "votes":    { "visibility": "shared", "write": "own", "keyedBy": "parent+viewer" }
 }}
 ```
 
@@ -225,52 +224,42 @@ interface Request {
 }
 
 const requests = app.storage.collection<Request>('requests');
+const votes = app.storage.collection<{ value: 1 }>('votes');
 
 const created = await requests.create({ title: 'More lighting presets', status: 'open' });
 const doc = await requests.get(created.key); // null when there is none
 await requests.put(created.key, { title: 'More lighting presets', status: 'done' }, { ifVersion: doc?.version });
-await requests.update(created.key, { $mark: 'vote' }); // { marked: true, count }
+await votes.putMine({ value: 1 }, { parent: created.key }); // the viewer's vote on it
 
-const page = await requests.list({ where: { status: 'open' }, sort: '-mark:vote', limit: 20 });
+const page = await requests.list({ where: { status: 'open' }, sort: '-createdAt', limit: 20 });
 for (const item of page.items) {
-  console.log(item.data.title, item.marks.vote, item.author, item.viewer?.marks);
+  const onIt = await votes.list({ keyPrefix: `${item.key}:`, limit: 100 }); // count by listing
+  console.log(item.data.title, onIt.items.length, item.author);
 }
 const mine = await requests.list({ author: 'me' });
-const voted = await requests.list({ markedBy: 'me', mark: 'vote' });
-
-await app.storage.collection('plays').update('model-123', { $inc: { plays: 1 } }); // { value }; creates the doc in a `none` collection
 const { limits, usage } = await app.storage.info();
 ```
 
-- **Documents** are `{ key, data, version, createdAt, updatedAt, author, counters,
-  marks, viewer }`. `createdAt`/`updatedAt` are `Date`s. `author` is
-  `{ kind: 'user', isViewer, username? }` (the username only in a `showAuthor`
-  collection), `{ kind: 'counter' }` for a document a counter created, or
-  `{ kind: 'app' }` — never a numeric user id. `viewer` is `null` for an anonymous
-  viewer.
-- **Counters and marks are update operators.** `update(key, op)` sends ONE operator,
-  `PATCH /api/v1/blocks/storage/:collection/:key`: `{ $inc: { [counter]: by } }`
-  resolves `{ value }` (the new total; `by` is required, an integer from 1 to 100),
-  `{ $mark: name }` resolves `{ marked: true, count }` and `{ $unmark: name }`
-  `{ marked: false, count }` (`count` is absent for the built-in `report`, which
-  cannot be withdrawn). A tally never changes `data` or `version`. A second operator,
-  an unknown one, a mark name that is not a string and a `by` that is not a number
-  do not type-check; a body that still reaches the server as anything but one
-  operator is refused `invalid_request` with a `details.reason`: `empty_patch`,
-  `unknown_operator`, `multiple_operators`, `merge_patch_unsupported` (plain fields:
-  a merge-patch of `data` is reserved) or `malformed_operator`. `update` needs a
-  civitai.com that serves the PATCH route (civitai/civitai#8292).
-- **`increment`, `mark` and `unmark` are deprecated** for `update`. They are
-  unchanged: same signatures, replies and routes (`POST …/counters/:name`,
-  `PUT`/`DELETE …/marks/:name`, which civitai.com answers with a `Deprecation`
-  header), so they keep working against a civitai.com without the PATCH route.
+- **Documents** are `{ key, data, version, createdAt, updatedAt, author }`.
+  `createdAt`/`updatedAt` are `Date`s. `author` is `{ kind: 'user', isViewer,
+  username? }` (the username only in a `showAuthor` collection), `{ kind: 'counter' }`
+  for an old document a removed counter created, or `{ kind: 'app' }` — never a numeric
+  user id. Any other field the server sends is not read (civitai.com still sends an
+  empty `counters`, `marks` and `viewer` for SDKs before 0.33).
+- **No counters, marks or server-side publish** (removed in 0.33, as civitai.com removed
+  them): keep each viewer's vote, like or entry in a viewer-keyed collection
+  (`getMine`/`putMine`/`deleteMine`) and count by listing with `keyPrefix`; there is no
+  sort by count. Report a document with [`app.moderation.report`](#reporting-a-document).
+  Copy a private document into a shared collection by reading it and `put`ting it. A
+  manifest may still declare `marks`, `counters` or `write: "none"`; nothing serves them,
+  and a `write: "none"` collection is read-only (`write_policy` on every write).
 - **Conditional writes:** `put(key, data, { ifVersion })` and
   `delete(key, { ifVersion })` write only at that version (`0` = only if absent);
   a mismatch rejects `version_conflict` with `details.currentVersion`.
 - **Lists** take ONE equality on a declared index (`where`), one `sort`
-  (`[-]key|createdAt|updatedAt|<index>|counter:<n>|mark:<n>`), `author: 'me'`,
-  `markedBy: 'me'` with `mark`, `keyPrefix`, `limit` and `cursor`. `nextCursor` is
-  `null` exactly on the last page; pass it back with the same query.
+  (`[-]key|createdAt|updatedAt|<index>`), `author: 'me'`, `keyPrefix`, `limit` and
+  `cursor`. `nextCursor` is `null` exactly on the last page; pass it back with the same
+  query.
 - **A refusal in the storage envelope is a `StorageError`** (an `ApiError`) with
   the server's `code`, `status` and `details`; `retryAfter` is set when the server
   named a wait. So is a name or key the client refuses before sending (an invalid
@@ -293,39 +282,17 @@ try {
 }
 ```
 
-A counter or mark through `update`, with a refused body told apart by its reason:
-
-```ts
-import { StorageError, type StorageCollection } from '@civitai/sdk';
-
-declare const board: StorageCollection<{ title: string }>;
-
-const { value } = await board.update('r1', { $inc: { views: 1 } });
-const { marked, count } = await board.update('r1', { $mark: 'vote' });
-console.log(value, marked, count);
-
-try {
-  await board.update('r1', { $unmark: 'vote' });
-} catch (error) {
-  // Absent for a wrong value inside a well-formed operator, and for other codes.
-  if (error instanceof StorageError && error.code === 'invalid_request' && error.details?.reason) {
-    console.error('not one update operator:', error.details.reason);
-  }
-  throw error;
-}
-```
-
 Anonymous viewers may read `shared` collections and nothing else
 (`sign_in_required`). Creating or editing a document in a viewer-written shared
-collection needs the consent-gated `apps:storage:publish`; deleting your own, marks
-and counters need only `apps:storage`. Shared writes pass a minimum-trust gate and
+collection needs the consent-gated `apps:storage:publish`; deleting your own needs
+only `apps:storage`. Shared writes pass a minimum-trust gate and
 moderation. A shared `write: "own"` collection whose manifest declares
 `ownedModelVersions` (pointers such as `/workflow/modelVersionId`) refuses a create
 or `put` whose `data` holds, at one of those fields, anything but a model version
 the viewer owns: `resource_not_owned` (403), `details.pointer` naming the field,
 before moderation and before any write budget. An absent field is allowed;
 ownership is checked only when the document is written. Only phase-one operations exist: no batch writes, change feed, TTL or
-owner-written documents yet (server-side publish, below, is the one multi-document write).
+owner-written documents yet.
 
 ### Viewer-keyed documents: one per viewer
 
@@ -435,62 +402,11 @@ try {
 - **Older hosts.** civitai.com serves the report API behind a per-app flag. A host that
   does not serve it rejects with the LOCAL code `report_unavailable` (404): the flag off
   (the route's exact `404 not_found` "no such route") or no such page (a 404 without the
-  storage envelope). Any other 404 surfaces as it is; the
-  `{ $mark: 'report' }` update is the route it had before.
-
-### Publishing private documents in one call
-
-`collection(to).publish({ from, keys, prune? })` asks the server to copy
-the viewer's own documents at `keys` (1 to 500) from this app's PRIVATE collection
-`from` into the SHARED collection `to`, authored by the viewer, in one transaction:
-every copy lands or none does, and the data never travels through the app. It is
-for "make this public" flows that would otherwise cost one shared write per document.
-
-- **Only what changed is written.** A copy whose content equals its private document
-  is reported `unchanged` and costs nothing.
-- **Each copy is checked like a `put`** (publish consent, trust, schema,
-  `ownedModelVersions`, moderation, the viewer's and the app's ceilings, and copies
-  count against the viewer's document cap). Any refusal refuses the whole publish;
-  `details.key` names the document where it applies.
-- **Skipped, never refused:** `missing` (no private document at that key),
-  `not_author` (another viewer's copy holds the key; it is never touched), `hidden`
-  (your own copy, hidden by a moderator; never rewritten).
-- **`prune: true`** also deletes your own copies in `to` whose key has no document
-  in `from`, at most 500 per call (`pruneIncomplete: true` means call again).
-  Copies whose private documents still exist in `from` are never pruned. **Prune is
-  scoped by `from`, not by where a copy came from:** if several private collections
-  feed one shared collection, a prune from one of them deletes the copies you
-  published from the others.
-- **Its own budget**, about 10 publishes per viewer per app per day, never the shared
-  write budget. A refusal is `rate_limited` with `details.bucket: 'publish'` and
-  `error.retryAfter`. Every call, even one that changes nothing, also spends one token
-  of the private-write window (120 a minute; `details.bucket: 'write'` when empty). A
-  private document changed mid-publish is `version_conflict` with `details.reason:
-  'source_changed'`, a shared copy that changed with `'target_changed'`: publish again.
-- `collection(to).unpublish(keys)` deletes your own copies in one transaction.
-
-**Older hosts.** civitai.com ships publish behind a per-app flag. A host that does not
-serve it answers as an unknown route; the client rejects with the LOCAL code
-`publish_unavailable`. Fall back to one `put` per document, waiting out each
-`rate_limited` for its `retryAfter` (this client never retries by itself), and write
-the listing last:
-
-```ts
-import { StorageError, type StorageCollection } from '@civitai/sdk';
-
-declare const clips: StorageCollection;
-declare const keys: string[];
-declare function putEachWithBackoff(keys: string[]): Promise<void>;
-
-try {
-  const r = await clips.publish({ from: 'my_clips', keys, prune: true });
-  console.log(r.created.length, r.updated.length, r.unchanged.length, r.skipped);
-} catch (error) {
-  if (error instanceof StorageError && error.code === 'publish_unavailable') await putEachWithBackoff(keys);
-  else if (error instanceof StorageError && error.code === 'rate_limited') console.log('retry in', error.retryAfter, 's');
-  else throw error;
-}
-```
+  storage envelope). Any other 404 surfaces as it is.
+- **`collection(name).mark(key, 'report')`** is the report route SDKs before 0.30 used
+  (`PUT …/:key/marks/report`). civitai.com still serves it, whatever the per-app flag
+  says, filing the same report with the same gates and budget, and it answers
+  `{ marked: true }`. `report` is the only name it takes; prefer `app.moderation.report`.
 
 ### Another app's collections: imports
 
@@ -535,8 +451,7 @@ try {
 ```
 
 - **Every call carries `?from=<blockId>`**: `get`, `getMany`, `put`, `create`,
-  `delete`, `list`, `update` (and the deprecated `increment`, `mark` — a report
-  included — and `unmark`), with the same
+  `delete`, `list`, the `…Mine` calls and `mark(key, 'report')`, with the same
   path, body and reply as without it. `collection(name)` without `from` is this app's
   own collection, even when it has the same name. `info()` takes no `from` — a source
   app's limits and usage cannot be read through an import — and a `from` passed to it
@@ -551,7 +466,7 @@ try {
   and can remove it under Apps → Permissions; a new version that imports more is prompted
   for again.
 - **Publishing in the source is the source's permission, and the client asks for it.**
-  A create, put, counter, mark or unmark in one of the source's SHARED collections also
+  A create, put or report in one of the source's SHARED collections also
   needs the viewer's `apps:storage:publish` grant IN THE SOURCE APP (the import grant is
   not it, and neither is this app's own `apps:storage:publish`). When the source refuses
   for want of it, `app.storage` asks the host by itself —
@@ -629,16 +544,14 @@ if (app.storage.mode === 'local-preview') {
   `ownedModelVersions` fields accept any well-formed model version id in a preview;
   the server checks that the writer owns it. A malformed value is still refused.
 - **One viewer, one tab, gone on reload.** It cannot show other people's entries,
-  real vote totals, ranking across users, the minimum-trust gate on shared writes,
-  or moderation of real content.
+  other viewers' votes, the minimum-trust gate on shared writes, or moderation of real
+  content.
 - **Viewer-keyed collections and reports work in the tab.** `getMine`/`putMine`/
   `deleteMine` keep one document per (parent and) viewer, every switch is open (as in any
   development namespace), and `app.moderation.report` files against the tab's documents.
 - **No imports.** `collection(name, { from })` (and a report with `from`) is refused locally with the server's own
   answer to a dev token, 403 `not_eligible` (`import_dev_token`); nothing is sent. Test
   a fork reading its parent with [the fake's `sources`](#a-fake-document-store).
-- **Only the document store.** The deprecated `app.storage.get/set/…` and
-  `app.sharedStorage` keep calling the real routes, which refuse a preview.
 - **Only on the host's signal.** `app.storage.mode` is latched when `initialize()`
   resolves, and never inferred from the token: a published app whose manifest forgot
   `apps:storage` holds a token that looks the same, and keeps getting the real
@@ -647,170 +560,12 @@ if (app.storage.mode === 'local-preview') {
   that in a preview this SDK would have kept the data locally had the host marked the
   frame.
 
-The legacy stores below were removed on 2026-11-10: civitai.com answers their routes
-`410` with `{ error: 'legacy_store_removed', message, docs }`, and their methods are
-`@deprecated`. Nothing is copied from them into collections. Moving an app off them:
-https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores.
+### The legacy key/value stores
 
-## App storage
-
-> **Deprecated** in favour of [document storage](#document-storage): declare a
-> `private` collection and use `app.storage.collection(name)`.
-
-🔴 **Removed on 2026-11-10**, with the shared store. A request to any of its five
-routes that passes the block-token and scope checks is answered **`410`** with
-`{ error: 'legacy_store_removed', message, docs }`, so `get`, `set`, `delete`,
-`list` and `getQuota` reject. Move the app to the document store:
-https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores. The rest of this
-section describes the store as it behaved before the removal.
-
-`app.storage`'s `get`/`set`/`delete`/`list`/`getQuota` are the viewer's own key/value store, scoped to this app and this
-block instance. It needs the block token the host mints — an app holding an
-OAuth access token has no per-viewer app storage — and an anonymous viewer is
-refused, so gate on `app.viewer` rather than reading an empty page as "nothing
-stored".
-
-```ts
-await app.storage.set('draft:latest', { prompt, steps: 30 });
-const draft = await app.storage.get<Draft>('draft:latest'); // null when unset
-const { keys, nextCursor } = await app.storage.list({ prefix: 'draft:' });
-const quota = await app.storage.getQuota();
-```
-
-Three properties the surface is built around:
-
-- **Every failure rejects.** Nothing here resolves to mean "not written", and
-  nothing resolves to mean "could not read". A malformed success throws a
-  `CivitaiError`; a refusal is an `ApiError` carrying `status`. A caller that
-  must not act on a partial view branches on the rejection, never on an empty
-  result.
-- **`nextCursor` is present exactly when there may be more rows**, and is passed
-  through untouched. Its absence is your proof a scan completed. Page it
-  yourself, with a bound — the client adds no iterator, because the truncation
-  policy is the caller's to choose.
-- **`set`'s `sizeBytes` is the wire unit; `getQuota`'s `usedBytes` is the stored
-  unit.** They are not a fixed multiple — measured, a numeric-heavy value stores
-  up to 44.4x its wire size — so summing `sizeBytes` under-counts your quota.
-  `getQuota()` is the authority, and it reports neither the key-length cap nor
-  the per-value cap.
-
-A write refused for size or quota arrives as `413`, whichever ceiling fired — the
-server names which one only in prose, so test the status, not the message:
-
-```ts
-try {
-  await app.storage.set('draft:latest', huge);
-} catch (error) {
-  if (error instanceof ApiError && error.status === 413) askTheUserToFreeSpace();
-  else throw error;
-}
-```
-
-## Shared storage
-
-> **Deprecated** in favour of [document storage](#document-storage): declare a
-> `shared` collection, which has authorship, counters and marks built in.
-
-🔴 **Removed on 2026-11-10.** civitai.com shut off the legacy shared store on that
-date. A request to any of its eleven routes that passes the block-token and scope
-checks is answered **`410`** with `{ error: 'legacy_store_removed', message, docs }`,
-so every `app.sharedStorage` call rejects with an `ApiError` whose `status` is
-`410`. Move the app to the document store:
-https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores. The rest of this
-section describes the store as it behaved before the removal.
-
-`app.sharedStorage` is this app's **cross-user** key/value store — one namespace
-every viewer reads and writes, unlike `app.storage`, which is private per viewer.
-Five methods: `list`, `get`, `append`, `update`, `withdraw`.
-
-```ts
-const { items, nextCursor } = await app.sharedStorage.list({ limit: 20 }); // newest first
-const { key } = await app.sharedStorage.append({ title: 'My deck', data: { cards } });
-const row = await app.sharedStorage.get(key);        // null when hidden or absent
-await app.sharedStorage.update(key, { title: 'Renamed' });
-const { deleted } = await app.sharedStorage.withdraw(key);
-```
-
-🔴 **Generic key/value on purpose — and deliberately smaller than the route
-table.** The platform serves eleven shared-storage routes; this client wraps the
-five that are key/value operations. `vote`, `unvote`, `counts`, `top`,
-`increment` and `report` are **intentionally absent**: an app that needs voting,
-counters or reporting builds them at its own layer on top of these five, and the
-platform surface expands only if demand shows up. The routes existing is not a
-reason to expect a method here.
-
-Reading a tally still works — `SharedItem` carries `count` and `viewerVoted` as
-the server projects them, which is exactly what makes an app-layer vote feature
-possible. You just cast the vote yourself.
-
-🔴 **Reads and writes have different audiences, and one does not imply the
-other.** This is the opposite of `app.storage`, so do not carry that gate over:
-
-- **An anonymous viewer MAY read** (`list`, `get`) — signed-out browsing is a
-  supported path — and may **never** write. An anon write is a `403` from the
-  scope binding, not the `401` a missing token gives.
-- **A signed-in viewer is not automatically a permitted writer.** Writes clear a
-  server-side minimum-trust gate (account age, completed onboarding, verified
-  email or a linked OAuth account, not banned or muted). Treat a write refusal
-  as a normal outcome with a real message in the UI, not an unexpected error.
-
-So gate the write affordances on `app.viewer`, and render the reads regardless.
-
-Four shape differences from `app.storage`, each of which would otherwise be a bug
-that type-checks:
-
-- **The two reads are `GET`**; the three writes are `POST`. A read sent as `POST`
-  is a `405`.
-- **`list` returns `items` with values included** — so one request renders a page
-  rather than needing a `get` per key — and its `nextCursor` arrives nested under
-  the reply's `metadata`. The client lifts it for you; the rule is the same as
-  `app.storage`'s, absence proves the scan completed.
-- **`append` takes no key.** The server mints a ULID and returns it, so one
-  viewer cannot overwrite another's row. Use `update` for an in-place edit of a
-  row this viewer authored. It also means `list`'s `prefix` is no namespace of
-  yours: a prefix you choose (`'deck:'`) matches none of the rows `append`
-  creates. Put what you filter by in `data` and filter the page yourself.
-- **`value` is `unknown` on the way out.** The row was written by some other
-  viewer's copy of your app, possibly an older version, so its shape is a fact
-  about the data rather than a promise the client can make. Narrow it yourself.
-
-⚠ **`limit` is validated, not normalised.** Out of range, non-integer, `NaN` and
-`Infinity` are each a `400` and a rejected promise — not a silently adjusted page.
-Pass a value inside the server's range, or omit it and take the server's default.
-🔴 The sharp edge: `Number(searchParams.get('n'))` on a missing param is `NaN`, so
-a pattern that used to fall through to a default is now a failed request.
-
-The `400` body is `{ error: 'Invalid query', details }` and the SDK reads `error`
-first, so `ApiError.message` says only "Invalid query" — the field-level reason is
-in `ApiError.body.details`.
-
-**Writes are rate-limited per (viewer, app)**; the limits are listed once, in
-[the `@civitai/blocks-react` README](https://github.com/civitai/civitai-app-starters/blob/main/packages/civitai-blocks-react/README.md#shared-storage-write-limits). A write refused for a limit is an `ApiError` with
-`status === 429`, a `Retry-After` header the client does not expose, and a body
-of `{ code: 'TOO_MANY_REQUESTS', message, error, rateLimit: { retryAfterSeconds,
-retryAt } }`. This client does not validate `body.rateLimit`, so check it before
-you render it:
-
-```ts
-import { ApiError } from '@civitai/sdk';
-
-try {
-  await app.sharedStorage.append({ title: 'My deck' });
-} catch (error) {
-  const rateLimit =
-    error instanceof ApiError && error.status === 429
-      ? (error.body as { rateLimit?: { retryAt?: unknown } } | null)?.rateLimit
-      : undefined;
-  if (typeof rateLimit?.retryAt === 'string') showRetryAt(new Date(rateLimit.retryAt));
-  else throw error;
-}
-```
-
-`withdraw` answers `{ ok: true, deleted: false }` identically for another
-author's key, an already-withdrawn row and a key that never existed — it is not
-an existence oracle, so do not report that as "someone else owns this". Put every
-string other viewers will read in `title`/`body`, which the server moderates;
-`data` is unmoderated app structure.
+`app.storage.get`/`set`/`delete`/`list`/`getQuota` and `app.sharedStorage` were removed in
+0.33. civitai.com shut both stores down on 2026-11-10 (their routes answer `410`
+`legacy_store_removed`), and nothing is copied from them into collections. Moving an app
+off them: https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores.
 
 ## Store sub-listings
 
@@ -848,8 +603,8 @@ const { items } = await app.subListings.mine(); // oldest first, with review sta
   does a hidden or missing document, and a document someone else authored is
   `not_your_item`. Deleting the document withdraws its card; a moderator hiding
   it hides the card. An app whose approved manifest declares no such collection
-  is still on legacy [shared storage](#shared-storage): its keys resolve old
-  shared-storage rows, which can no longer be created.
+  is still on the removed [legacy shared storage](#the-legacy-keyvalue-stores): its
+  keys resolve old shared-storage rows, which can no longer be created.
 - **`upsert` replaces the whole item, it does not patch it.** An optional that is
   `null` or `undefined` is left out of the request, and the server stores a
   left-out optional as empty — so an edit that sends only `title` clears the
@@ -1418,14 +1173,13 @@ const anon = fake.as({ viewer: null }).storage;
 
 **Rate limits are OFF by default**, so your own tests are never throttled. Pass
 `enforceRateLimits: true` to apply the server's — the per-minute and per-day windows
-for reads, private writes and deletes, marks and counters, and reports, plus the
-shared write budget — when you want to test how the app handles `rate_limited`
-(drive the clock with `now`).
+for reads, private writes and deletes, and reports, plus the shared write budget —
+when you want to test how the app handles `rate_limited` (drive the clock with `now`).
 
-`publish` and `unpublish` are OFF by default, as on civitai.com, where they sit
-behind a per-app flag: both answer as an unknown route, which the client reports as
-`publish_unavailable`, so your default tests exercise the fallback. Pass
-`publish: true` to serve them with the server's rules and budget.
+The removed routes answer as civitai.com answers them: the tally `PATCH` is `405`,
+`…/counters/:name`, every mark but `report`, `_publish` and `_unpublish` are `404
+not_found`, a list naming `markedBy`, `mark` or a `counter:`/`mark:` sort is refused,
+and a `write: "none"` collection is read-only.
 
 The report API is OFF by default too, for the same reason (`fake.moderation.report`
 rejects `report_unavailable`); pass `reports: true` to serve it. Viewer-keyed
@@ -1596,7 +1350,7 @@ to `@civitai/sdk` imports neither, which is why this line exists.
 The fallback is session-scoped — nothing survives a reload, which is the honest
 semantic at an opaque origin, since there is no origin to persist against. Treat
 web storage in a block as a cache, never a source of truth. The durable
-per-viewer store is [app storage](#app-storage).
+per-viewer store is a `private` [document-storage](#document-storage) collection.
 
 ## Checks
 

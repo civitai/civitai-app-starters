@@ -25,7 +25,7 @@ Vite + React + TS) or at the React examples under
 - Vite + TypeScript strict, no framework, no JSX
 - `@civitai/sdk` — the host bridge (`initialize`, `app.host`, `app.onChange`)
   plus the API clients (`app.site`, `app.workflows`, `app.storage`,
-  `app.sharedStorage`, `app.orchestration`). A block generates with
+  `app.moderation`, `app.orchestration`). A block generates with
   `app.workflows`, never `app.orchestration` (see Extending). Its README
   (`node_modules/@civitai/sdk/README.md`) is the reference; read `app.host`'s
   methods from the installed types rather than from a list here.
@@ -179,9 +179,12 @@ separate.
   once, after the view is created, with `addEventListener`.
 - **Host UI** (resource picker, Buzz purchase, image upload, navigation,
   sign-in) — `app.host.*`; each rejects with a `BridgeError` carrying a `code`.
-- **Per-viewer storage** — `app.storage` (`get` / `set` / `list` /
-  `getQuota`); refused for an anonymous viewer, so gate on
-  `isSignedIn(app.viewer)`. Cross-viewer data: `app.sharedStorage`.
+- **Storage** — `app.storage.collection(name)`, over the collections the
+  manifest declares under `storage.collections`: a `private` collection for
+  per-viewer data (refused for an anonymous viewer, so gate on
+  `isSignedIn(app.viewer)`), a `shared` one for cross-viewer data, and a
+  viewer-keyed one (`keyedBy`, `getMine` / `putMine`) for a vote or like, counted
+  by listing. Report a shared document with `app.moderation.report`.
 - **Money calls — two rules the React hooks used to apply for you.** Generation
   goes through `app.workflows`; `@civitai/sdk` has no goods helper yet, so a
   purchase calls the `blocks/goods/*` routes through `app.site`. Neither asks

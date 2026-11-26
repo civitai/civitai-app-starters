@@ -66,7 +66,18 @@ import {
  * THE REPORT API (`POST blocks/moderation/reports`, civitai/civitai#10215) is served with
  * `reports: true`; off, as on civitai.com by default, it answers as an unknown route, which the
  * client reports as `report_unavailable`. A report is one per (document, viewer), idempotent,
- * cannot be withdrawn, and is never counted in any answer.
+ * cannot be withdrawn, and is never counted in any answer. The report compatibility route
+ * (`PUT …/:c/:key/marks/report`, what `collection.mark(key, 'report')` sends) files the same
+ * report whatever `reports` says, as civitai.com serves it for SDKs older than 0.30.
+ *
+ * REMOVED, as civitai.com removed them (civitai/civitai#10391): marks, counters, their tallies
+ * and server-side publish. A collection may still declare `marks`, `counters` or `write: "none"`,
+ * but nothing serves them: `PATCH /:c/:key` is 405, `/:c/:key/counters/:name`, every other
+ * `/:c/:key/marks/:name` and `_publish` / `_unpublish` are 404 `not_found`, a list refuses
+ * `markedBy` / `mark` and `sort=counter:…` / `mark:…`, and a `write: "none"` collection is
+ * read-only (403 `write_policy` on every create, put and delete). A document still carries
+ * `counters: {}`, `marks: {}` and `viewer`, and `info()` lists `counters: []` and `marks: []`
+ * and `marksAndCountersPerMinute: 0`, as the server still sends them for older SDKs.
  *
  * NOT MODELLED: moderator hides (a hidden document reads as not found on the server;
  * nothing here hides one), moderator exemption from the scanner, the review-preview
@@ -92,7 +103,6 @@ const MAX_IMPORT_COLLECTIONS = 16;
 const DEFAULT_BLOCK_ID = 'this-app';
 
 const COLLECTION_NAME = /^[a-z][a-z0-9_]{0,31}$/;
-const TALLY_NAME = /^[a-z][a-z0-9_]{0,31}$/;
 const KEY = /^[A-Za-z0-9._:-]{1,128}$/;
 const DOT_ONLY = /^\.+$/;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
@@ -101,8 +111,6 @@ const REPORT = 'report';
 const MINE = '@me';
 const PARENT = /^[A-Za-z0-9._-]{1,96}$/;
 const KEYED_BY = ['viewer', 'parent+viewer'] as const;
-/** The update operators a PATCH may carry, and the deprecated tally route each one runs as. */
-const TALLY_OPERATORS = { $inc: 'increment', $mark: 'mark', $unmark: 'unmark' } as const;
 const INDEX_TYPES = ['string', 'number', 'boolean', 'time'] as const;
 
 const B = {
@@ -113,7 +121,6 @@ const B = {
   listLimitMax: 100,
   listLimitDefault: 25,
   getManyMax: 100,
-  incrementMax: 100,
 } as const;
 /** One document plus the request wrapper around it. */
 const BODY_LIMIT_BYTES = B.docBytes + 16 * 1024;
@@ -127,11 +134,10 @@ const DEFAULT_LIMITS = {
 
 const MINUTE = 60;
 const DAY = 24 * 60 * 60;
-type RateBucket = 'read' | 'write' | 'tally' | 'report';
+type RateBucket = 'read' | 'write' | 'report';
 const RATE: Record<RateBucket, { max: number; windowSeconds: number }> = {
   read: { max: 300, windowSeconds: MINUTE },
   write: { max: 120, windowSeconds: MINUTE },
-  tally: { max: 30, windowSeconds: MINUTE },
   report: { max: 20, windowSeconds: DAY },
 };
 /**
@@ -144,19 +150,6 @@ const SHARED_WRITE_BUDGET: readonly (readonly [number, number])[] = [
   [300, (DAY * 1000) / 300],
   [10, 30 * 60 * 1000],
 ];
-/**
- * Server-side publish's own budget (`DOC_STORE_PUBLISH_BUDGET`): one token per publish call,
- * burst 10 and daily 10, one back every 2.4 hours; rejections as above. Never the shared one.
- */
-const PUBLISH_BUDGET: readonly (readonly [number, number])[] = [
-  [10, (DAY * 1000) / 10],
-  [10, (DAY * 1000) / 10],
-  [10, 30 * 60 * 1000],
-];
-/** Keys per publish or unpublish call, and copies pruned per publish. */
-const PUBLISH_MAX_KEYS = 500;
-const PUBLISH_PRUNE_LIMIT = 500;
-
 /** The default scanner's words: the contract's `conventions`, so a test can reach each refusal. */
 export const FAKE_STORAGE_MODERATION = Object.freeze({
   blockedText: 'contract-blocked-term',
@@ -244,7 +237,7 @@ export interface FakeStorageSource {
   status?: string;
   /**
    * Scopes the viewer revoked IN THIS SOURCE. Revoking `apps:storage:publish` here is how a
-   * test reaches the publish-in-source refusal: a write, counter or mark through a
+   * test reaches the publish-in-source refusal: a write or report through a
    * `readwrite` import into one of this source's shared collections is refused
    * `consent_required` with `details: { scope: 'apps:storage:publish', from }`.
    */
@@ -295,7 +288,7 @@ export interface FakeStorageOptions {
   limits?: Partial<typeof DEFAULT_LIMITS>;
   /**
    * Apply the server's rate limits: the per-minute and per-day windows (reads, private
-   * writes and deletes, marks and counters, reports) and the shared write budget.
+   * writes and deletes, reports) and the shared write budget.
    * Default `false`, so an app's own tests are never throttled; turn it on to test how
    * the app handles `rate_limited`.
    */
@@ -307,13 +300,6 @@ export interface FakeStorageOptions {
    * Default: {@link FAKE_STORAGE_MODERATION}'s words.
    */
   moderate?: (text: string) => FakeModerationVerdict;
-  /**
-   * Serve server-side publish and unpublish (`POST …/_publish/:to`, `…/_unpublish/:to`). Default
-   * `false`, as on civitai.com, where they sit behind a per-app flag that is off: both answer as
-   * an unknown route (404 `not_found`), which the client reports as `publish_unavailable`, so an
-   * app's default tests exercise its fallback. `true` serves them, to test the publish path.
-   */
-  publish?: boolean;
   /**
    * Serve the report API (`POST blocks/moderation/reports`). Default `false`, as on civitai.com,
    * where it sits behind a per-app flag that is off: it answers as an unknown route (404
@@ -369,10 +355,8 @@ export interface FakeStorage extends FakeStorageSession {
 type IndexType = (typeof INDEX_TYPES)[number];
 interface Decl {
   visibility: 'private' | 'shared';
-  /** Shared collections only: the two policies phase one serves. */
+  /** Shared collections only: `own`, or `none` (read-only: nothing writes its documents). */
   write?: 'own' | 'none';
-  counters: string[];
-  marks: string[];
   indexes: Map<string, IndexType>;
   showAuthor: boolean;
   /** Pointers into `data` whose ids must be the writer's own model versions; empty when undeclared. */
@@ -425,7 +409,6 @@ function parseManifest(manifest: unknown): Map<string, Decl> {
     throw new Error('createFakeStorage: manifest.storage.collections must be an object');
   }
   const errors: string[] = [];
-  const names = (v: unknown) => (Array.isArray(v) ? v.filter((n): n is string => typeof n === 'string') : []);
   // The manifest-wide pattern cap counts the collections that parsed, as the server does.
   let patterns = 0;
   for (const [name, raw] of Object.entries(isObject(storage.collections) ? storage.collections : {})) {
@@ -480,8 +463,6 @@ function parseManifest(manifest: unknown): Map<string, Decl> {
     }
     const decl: Decl = {
       visibility: raw.visibility,
-      counters: shared ? names(raw.counters) : [],
-      marks: shared ? names(raw.marks) : [],
       indexes,
       showAuthor: shared && raw.showAuthor === true,
       exportable: raw.exportable !== false,
@@ -598,10 +579,8 @@ interface DocRow {
   authorUid: number;
   authorKind: 'user' | 'counter';
   index: Map<string, IndexRow>;
-  counters: Map<string, number>;
-  markCounts: Map<string, number>;
-  /** `${uid}:${name}` */
-  marks: Set<string>;
+  /** The uids that reported it: one report per (document, viewer). Never counted in an answer. */
+  reports: Set<number>;
 }
 
 interface Usage {
@@ -643,25 +622,6 @@ function byCodePoint(a: string, b: string): number {
     if (x[i] !== y[i]) return x[i]! < y[i]! ? -1 : 1;
   }
   return x.length - y.length < 0 ? -1 : x.length > y.length ? 1 : 0;
-}
-
-/**
- * A JSON value's text with every object's keys sorted: equal content, equal text, as the
- * server's jsonb text form compares a copy with its private document.
- */
-function canonical(value: unknown): string {
-  const sort = (v: unknown): unknown =>
-    Array.isArray(v)
-      ? v.map(sort)
-      : isObject(v)
-        ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sort(v[k])]))
-        : v;
-  return JSON.stringify(sort(value));
-}
-
-/** A refusal raised for one document of a publish, with its key added. */
-function withKey(err: unknown, key: string): unknown {
-  return err instanceof Refusal ? refuse(err.code, err.message, { ...err.details, key }) : err;
 }
 
 /**
@@ -830,15 +790,10 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     }
   }
 
-  /**
-   * Three continuously refilling buckets; each slot is the instant that bucket is full again.
-   * The shared write budget by default; a publish passes its own (its own key, too).
-   */
-  function reserveSharedWrite(
-    uid: string,
-    budget = SHARED_WRITE_BUDGET,
-    refusal = { message: 'shared write budget exhausted', bucket: 'shared-write' },
-  ): (rejected: boolean) => void {
+  /** The shared write budget: three continuously refilling buckets; each slot is the instant that bucket is full again. */
+  function reserveSharedWrite(uid: string): (rejected: boolean) => void {
+    const budget = SHARED_WRITE_BUDGET;
+    const refusal = { message: 'shared write budget exhausted', bucket: 'shared-write' };
     if (!options.enforceRateLimits) return () => undefined;
     const t = now();
     const full = (budgets.get(uid) ?? [t, t, t]).map((f) => Math.max(f, t));
@@ -875,7 +830,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
 
   function assertShareWritable(decl: Decl) {
     if (decl.visibility !== 'shared') return;
-    if (decl.write === 'none') throw refuse('write_policy', 'documents in this collection are written by counters only');
+    if (decl.write === 'none') throw refuse('write_policy', 'this collection is read-only: nothing writes its documents');
   }
 
   function assertKey(key: unknown): asserts key is string {
@@ -886,9 +841,6 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
   const requireViewer = (ctx: Ctx): number => {
     if (ctx.uid === null) throw refuse('sign_in_required', 'sign in required');
     return ctx.uid;
-  };
-  const requireShared = (decl: Decl, what: string) => {
-    if (decl.visibility !== 'shared') throw invalid(`${what} exist on shared collections only`);
   };
 
   /** Every path that names keys itself or writes beside the document, on a viewer-keyed collection. */
@@ -1021,12 +973,6 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
 
   function present(ctx: Ctx, coll: string, d: DocRow) {
     const decl = declOf(ctx, coll);
-    const counters: Record<string, number> = {};
-    const marks: Record<string, number> = {};
-    if (decl.visibility === 'shared') {
-      for (const n of decl.counters) counters[n] = d.counters.get(n) ?? 0;
-      for (const n of decl.marks) if (n !== REPORT) marks[n] = d.markCounts.get(n) ?? 0;
-    }
     const names = usernames();
     const author =
       d.authorKind === 'counter'
@@ -1036,15 +982,6 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
             isViewer: d.authorUid === ctx.uid,
             ...(decl.showAuthor && names.has(d.authorUid) ? { username: names.get(d.authorUid) } : {}),
           };
-    const mine =
-      ctx.uid === null
-        ? null
-        : {
-            marks: [...d.marks]
-              .filter((m) => decl.visibility === 'shared' && m.startsWith(`${ctx.uid}:`))
-              .map((m) => m.slice(m.indexOf(':') + 1))
-              .sort(),
-          };
     return {
       key: d.key,
       data: d.data,
@@ -1052,9 +989,10 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       createdAt: new Date(d.createdAt).toISOString(),
       updatedAt: new Date(d.updatedAt).toISOString(),
       author,
-      counters,
-      marks,
-      viewer: mine,
+      // SDK compatibility, not data (the server's `presentDocs`): always empty.
+      counters: {},
+      marks: {},
+      viewer: ctx.uid === null ? null : { marks: [] },
     };
   }
 
@@ -1116,9 +1054,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       authorUid: viewer,
       authorKind: 'user',
       index,
-      counters: new Map(),
-      markCounts: new Map(),
-      marks: new Set(),
+      reports: new Set(),
     };
     docs.set(id, row);
     return present(ctx, coll, row);
@@ -1148,80 +1084,10 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     return { deleted: true };
   }
 
-  function increment(ctx: Ctx, coll: string, key: string, counter: string, by = 1) {
-    const decl = declOf(ctx, coll);
-    assertKey(key);
-    requireShared(decl, 'counters');
-    refuseViewerKeyed(coll, decl, 'counters');
-    if (!TALLY_NAME.test(counter) || !decl.counters.includes(counter)) {
-      throw invalid(`counter ${counter} is not declared`, { counter });
-    }
-    if (!Number.isSafeInteger(by) || by < 1 || by > B.incrementMax) {
-      throw invalid(`by must be an integer from 1 to ${B.incrementMax}`);
-    }
-    const viewer = requireViewer(ctx);
-    storageOn();
-    const id = docId(ctx, coll, 0, key);
-    let row = docs.get(id);
-    if (!row) {
-      if ((decl.write ?? 'own') !== 'none') throw refuse('not_found', 'document not found');
-      const t = now();
-      const size = storedSize({});
-      chargeUsage(ctx, viewer, size, 1, 'viewer')();
-      row = {
-        key,
-        data: {},
-        size,
-        version: 1,
-        createdAt: t,
-        updatedAt: t,
-        authorUid: viewer,
-        authorKind: 'counter',
-        index: new Map(),
-        counters: new Map(),
-        markCounts: new Map(),
-        marks: new Set(),
-      };
-      docs.set(id, row);
-    }
-    const value = (row.counters.get(counter) ?? 0) + by;
-    row.counters.set(counter, value);
-    return { value };
-  }
-
-  function assertMarkName(decl: Decl, name: string, coll: string) {
-    requireShared(decl, 'marks');
-    // A report stays possible on every shared document, a viewer-keyed one included.
-    if (name === REPORT) return;
-    refuseViewerKeyed(coll, decl, 'marks');
-    if (!TALLY_NAME.test(name) || !decl.marks.includes(name)) throw invalid(`mark ${name} is not declared`, { mark: name });
-  }
-
-  function setMark(ctx: Ctx, coll: string, key: string, name: string, on: boolean) {
-    const decl = declOf(ctx, coll);
-    assertKey(key);
-    assertMarkName(decl, name, coll);
-    const viewer = requireViewer(ctx);
-    storageOn();
-    const row = docs.get(docId(ctx, coll, 0, key));
-    if (!row) throw refuse('not_found', 'document not found');
-    const id = `${viewer}:${name}`;
-    const had = row.marks.has(id);
-    if (on && !had) {
-      row.marks.add(id);
-      row.markCounts.set(name, (row.markCounts.get(name) ?? 0) + 1);
-    } else if (!on && had) {
-      row.marks.delete(id);
-      row.markCounts.set(name, (row.markCounts.get(name) ?? 0) - 1);
-    }
-    return { marked: on, count: row.markCounts.get(name) ?? 0 };
-  }
-
   type Sort =
     | { kind: 'key'; desc: boolean }
     | { kind: 'createdAt' | 'updatedAt'; desc: boolean }
-    | { kind: 'index'; desc: boolean; name: string; type: IndexType }
-    | { kind: 'tally'; desc: boolean; tally: 'counter' | 'mark'; name: string };
+    | { kind: 'index'; desc: boolean; name: string; type: IndexType };
 
   function parseSort(decl: Decl, raw: string | undefined): Sort {
     const s = raw ?? 'key';
@@ -1229,17 +1095,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     const field = desc ? s.slice(1) : s;
     if (field === 'key') return { kind: 'key', desc };
     if (field === 'createdAt' || field === 'updatedAt') return { kind: field, desc };
-    const tally = /^(counter|mark):(.+)$/.exec(field);
-    if (tally) {
-      requireShared(decl, 'counters and marks');
-      const kind = tally[1] as 'counter' | 'mark';
-      const name = tally[2]!;
-      const declared = kind === 'counter' ? decl.counters : decl.marks;
-      if (!declared.includes(name) || (kind === 'mark' && name === REPORT)) {
-        throw refuse('index_not_declared', `${kind} ${name} is not declared`, { field });
-      }
-      return { kind: 'tally', desc, tally: kind, name };
-    }
+    // `counter:<name>` / `mark:<name>` were removed: refused as any undeclared sort field.
     const type = decl.indexes.get(field);
     if (!type) throw refuse('index_not_declared', `sort field ${field} is not declared`, { field });
     return { kind: 'index', desc, name: field, type };
@@ -1254,8 +1110,6 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
         return d.createdAt;
       case 'updatedAt':
         return d.updatedAt;
-      case 'tally':
-        return (sort.tally === 'counter' ? d.counters : d.markCounts).get(sort.name) ?? 0;
       case 'index': {
         const row = d.index.get(sort.name);
         if (!row || row.type !== sort.type) return undefined;
@@ -1295,12 +1149,6 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       const me = requireViewer(ctx);
       rows = rows.filter((d) => d.authorKind === 'user' && d.authorUid === me);
     }
-    if (q.markedBy !== undefined || q.mark !== undefined) {
-      if (q.markedBy !== 'me' || q.mark === undefined) throw invalid('markedBy=me and mark are required together');
-      assertMarkName(decl, q.mark, coll);
-      const id = `${requireViewer(ctx)}:${q.mark}`;
-      rows = rows.filter((d) => d.marks.has(id));
-    }
 
     const keyed = rows
       .map((d) => ({ d, v: sortValue(sort, d) }))
@@ -1321,8 +1169,6 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       q.where ?? {},
       q.keyPrefix ?? null,
       q.author ?? null,
-      q.markedBy ?? null,
-      q.mark ?? null,
     ]);
     if (q.cursor !== undefined) {
       const cur = cursors.get(q.cursor);
@@ -1348,15 +1194,12 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
   type Route =
     | { op: 'info' }
     | { op: 'list' | 'create' | 'getMany'; collection: string }
-    | { op: 'publish' | 'unpublish'; collection: string }
     | { op: 'get' | 'put' | 'delete'; collection: string; key: string }
     // The viewer's own document in a viewer-keyed collection; run as get / put / delete at the
     // derived key. `parent` is the raw path segment, checked by `viewerKeyedDocKey`.
     | { op: 'getMine' | 'putMine' | 'deleteMine'; collection: string; parent: string | null }
-    | { op: 'increment' | 'mark' | 'unmark'; collection: string; key: string; name: string }
-    // One update operator on one document; translated by `parseTallyPatch` before it runs.
-    | { op: 'patch'; collection: string; key: string };
-  type TallyRoute = Extract<Route, { op: 'increment' | 'mark' | 'unmark' }>;
+    // The report compatibility route (`PUT`/`DELETE /:c/:key/marks/report`) and its refused withdrawal.
+    | { op: 'reportMark' | 'unreportMark'; collection: string; key: string };
 
   function match(method: string, s: string[]): { route: Route } | { methods: string[] } | null {
     const [a, b, c, d] = s;
@@ -1376,83 +1219,33 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
         return pick({ GET: { op: 'list', collection: a! }, POST: { op: 'create', collection: a! } });
       case 2:
         if (a === '_get') return pick({ POST: { op: 'getMany', collection: b! } });
-        // Off, publish is not a route at all, as on a server that does not serve it.
-        if (a === '_publish' && options.publish === true) return pick({ POST: { op: 'publish', collection: b! } });
-        if (a === '_unpublish' && options.publish === true) return pick({ POST: { op: 'unpublish', collection: b! } });
+        // `_publish` / `_unpublish` were removed: no route, as any other `_` segment.
         if (a!.startsWith('_')) return null;
         if (b === MINE) return pickMine(a!, null);
         return pick({
           GET: { op: 'get', collection: a!, key: b! },
           PUT: { op: 'put', collection: a!, key: b! },
           DELETE: { op: 'delete', collection: a!, key: b! },
-          PATCH: { op: 'patch', collection: a!, key: b! },
         });
       case 3:
         if (a!.startsWith('_') || b !== MINE) return null;
         return pickMine(a!, c!);
       case 4:
-        if (a!.startsWith('_')) return null;
-        if (c === 'counters') return pick({ POST: { op: 'increment', collection: a!, key: b!, name: d! } });
-        if (c === 'marks') {
-          return pick({
-            PUT: { op: 'mark', collection: a!, key: b!, name: d! },
-            DELETE: { op: 'unmark', collection: a!, key: b!, name: d! },
-          });
-        }
-        return null;
+        // Only the `report` mark: every other mark name, and every counter, is no route.
+        if (a!.startsWith('_') || c !== 'marks' || d !== REPORT) return null;
+        return pick({
+          PUT: { op: 'reportMark', collection: a!, key: b! },
+          DELETE: { op: 'unreportMark', collection: a!, key: b! },
+        });
       default:
         return null;
     }
-  }
-
-  /**
-   * A PATCH body → the tally route it runs as, and the body that route's own parser reads:
-   * the server's `parseTallyPatch` (civitai/civitai#8292), with its messages and its
-   * `details.reason` values. Only the operator's SHAPE is checked here; every value (`by`,
-   * the counter or mark name, a report withdrawal) is the route's, checked where the
-   * deprecated route checks it.
-   */
-  function parseTallyPatch(at: { collection: string; key: string }, body: unknown): { route: TallyRoute; body: unknown } {
-    const refusal = (reason: string, message: string, extra?: Record<string, unknown>) =>
-      invalid(message, { reason, ...extra });
-    if (body === undefined) throw refusal('empty_patch', 'PATCH needs an update operator');
-    if (!isObject(body)) throw refusal('malformed_operator', 'PATCH body must be an object holding one update operator');
-    const fields = Object.keys(body);
-    if (fields.length === 0) throw refusal('empty_patch', 'PATCH needs an update operator');
-    const isOperator = (f: string): f is keyof typeof TALLY_OPERATORS =>
-      Object.prototype.hasOwnProperty.call(TALLY_OPERATORS, f);
-    const unknown = fields.find((f) => f.startsWith('$') && !isOperator(f));
-    if (unknown !== undefined) throw refusal('unknown_operator', `unknown update operator ${unknown}`, { operator: unknown });
-    const operators = fields.filter(isOperator);
-    if (operators.length > 1) throw refusal('multiple_operators', 'PATCH takes exactly one update operator', { operators });
-    const [operator] = operators;
-    if (operator === undefined) {
-      throw refusal(
-        'merge_patch_unsupported',
-        'PATCH takes an update operator ($inc, $mark or $unmark); to change data, PUT the document',
-      );
-    }
-    if (fields.length > 1) throw refusal('malformed_operator', `${operator} cannot be combined with other fields`, { operator });
-    const value = body[operator];
-    const where = { collection: at.collection, key: at.key };
-    if (operator === '$inc') {
-      const counters = isObject(value) ? Object.entries(value) : [];
-      if (counters.length !== 1) throw refusal('malformed_operator', '$inc names exactly one counter: {"<counter>": by}');
-      const [[name, by]] = counters as [[string, unknown]];
-      // The deprecated route's own body, `{ by }`, read by its own parser.
-      return { route: { op: 'increment', ...where, name }, body: { by } };
-    }
-    if (typeof value !== 'string') throw refusal('malformed_operator', `${operator} takes a mark name`, { operator });
-    // A mark's body is empty on the deprecated route too.
-    return { route: { op: TALLY_OPERATORS[operator], ...where, name: value }, body: undefined };
   }
 
   type ListQuery = {
     where?: Record<string, string | number | boolean>;
     sort?: string;
     author?: string;
-    markedBy?: string;
-    mark?: string;
     keyPrefix?: string;
     limit?: number;
     cursor?: string;
@@ -1480,17 +1273,18 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
         continue;
       }
       if (name === 'from') continue; // the import selector, resolved before the route runs
-      if (!['sort', 'author', 'markedBy', 'mark', 'keyPrefix', 'limit', 'cursor'].includes(name)) {
+      // `markedBy` and `mark` were removed: refused as any unknown parameter.
+      if (!['sort', 'author', 'keyPrefix', 'limit', 'cursor'].includes(name)) {
         throw invalid(`unknown query parameter ${name}`);
       }
       if (name === 'limit') {
         if (!/^[0-9]{1,3}$/.test(raw)) throw invalid('limit must be an integer');
         q.limit = Number(raw);
-      } else if (name === 'author' || name === 'markedBy') {
+      } else if (name === 'author') {
         if (raw !== 'me') throw invalid(`${name} must be "me"`);
-        q[name] = 'me';
+        q.author = 'me';
       } else {
-        q[name as 'sort' | 'mark' | 'keyPrefix' | 'cursor'] = raw;
+        q[name as 'sort' | 'keyPrefix' | 'cursor'] = raw;
       }
     }
     return q;
@@ -1622,9 +1416,9 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     } catch {
       throw refuse('not_found', 'no such storage route');
     }
-    // The wire: only POST, PUT and PATCH bodies are read, and only what JSON carries.
-    let body =
-      (method === 'POST' || method === 'PUT' || method === 'PATCH') && sent !== undefined
+    // The wire: only POST and PUT bodies are read, and only what JSON carries.
+    const body =
+      (method === 'POST' || method === 'PUT') && sent !== undefined
         ? (JSON.parse(JSON.stringify(sent)) as unknown)
         : undefined;
     const viewer = caller.viewer === undefined ? defaultViewer : caller.viewer;
@@ -1660,7 +1454,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
         ? null
         : route.op === 'delete' || route.op === 'deleteMine'
           ? ['ifVersion', 'from']
-          : route.op === 'info' || route.op === 'publish' || route.op === 'unpublish'
+          : route.op === 'info'
             ? []
             : ['from'];
     if (allowedQuery) {
@@ -1673,7 +1467,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     // Before the body is read, as the server resolves it; the call then runs AS THE SOURCE:
     // its data, declarations, ceilings and rate limits, and only the scopes the import confers.
     const imported =
-      route.op === 'info' || route.op === 'publish' || route.op === 'unpublish'
+      route.op === 'info'
         ? null
         : resolveImport(caller, route.collection, importOpOf(route), query.from, ownCtx, tokenScopes, consentUnavailable);
     const ctx = imported?.ctx ?? ownCtx;
@@ -1689,14 +1483,6 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
           : refuse('consent_required', `${PUBLISH_SCOPE} has not been granted in ${from}`, { scope: PUBLISH_SCOPE, from });
     if (body !== undefined && utf8Length(JSON.stringify(body)) > BODY_LIMIT_BYTES) {
       throw refuse('too_large', `request body exceeds ${BODY_LIMIT_BYTES} bytes`, { limit: BODY_LIMIT_BYTES });
-    }
-    // A PATCH runs AS the tally route its operator names, with that route's own body, so
-    // every check below is the deprecated route's. Translated once the body is read and
-    // before sign-in, any budget or the collection is looked at, as the server does.
-    if (route.op === 'patch') {
-      const tally = parseTallyPatch(route, body);
-      route = tally.route;
-      body = tally.body;
     }
     const requireSignedIn = (): number => {
       if (uid === null) throw refuse('sign_in_required', 'sign in required');
@@ -1723,8 +1509,9 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
                 kind: 'docs',
                 visibility: d.visibility,
                 ...(d.visibility === 'shared' ? { write: d.write ?? 'own' } : {}),
-                counters: [...d.counters],
-                marks: [...d.marks],
+                // Always empty, whatever the manifest declares (the server's `presentDeclaration`).
+                counters: [],
+                marks: [],
                 indexes: Object.fromEntries(d.indexes),
                 showAuthor: d.showAuthor,
                 // `open`: whether a `@me` write can land at all (`isViewerKeyedWritable`).
@@ -1745,7 +1532,8 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
             rate: {
               readsPerMinute: RATE.read.max,
               privateWritesPerMinute: RATE.write.max,
-              marksAndCountersPerMinute: RATE.tally.max,
+              // Removed with marks and counters; the server still sends 0 for SDKs before 0.33.
+              marksAndCountersPerMinute: 0,
               reportsPerDay: RATE.report.max,
               sharedWritesBurst: SHARED_WRITE_BUDGET[0]![0],
               sharedWritesPerDay: SHARED_WRITE_BUDGET[1]![0],
@@ -1847,243 +1635,14 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
           throw err;
         }
       }
-      case 'increment': {
-        requireSignedIn();
-        // Through an import, a tally in a SHARED source collection changes what its other
-        // viewers see, so it needs the viewer's publish consent there, whatever `write` is.
-        if (from !== undefined && shared && !scopes.includes(PUBLISH_SCOPE)) throw publishRefusal();
-        const { by } = parseBody(body, { by: isNumber });
-        charge('tally', uid, ctx.app.id);
-        if (shared) assertTrusted(viewer!);
-        if (shared && decl.write === 'none') moderateWrite({ key: route.key });
-        return { status: 200, body: increment(ctx, coll, route.key, route.name, by as number | undefined) };
-      }
-      case 'publish':
-        return { status: 200, body: publishDocs(ctx, coll, body, viewer!, requireSignedIn(), scopes, publishRefusal) };
-      case 'unpublish':
-        return { status: 200, body: unpublishDocs(ctx, coll, body, requireSignedIn()) };
-      case 'mark':
-      case 'unmark': {
-        // A report cannot be withdrawn (withdraw + re-file would re-open a document a
-        // moderator dismissed). The server refuses it FIRST — before sign-in, any budget
-        // or the trust lookup — so it is a 400 for everyone and costs nothing.
-        if (route.op === 'unmark' && route.name === REPORT) {
-          throw invalid('a report cannot be withdrawn', { mark: route.name });
-        }
-        requireSignedIn();
-        if (from !== undefined && shared && !scopes.includes(PUBLISH_SCOPE)) throw publishRefusal();
-        if (route.op === 'mark') parseBody(body, {});
-        charge('tally', uid, ctx.app.id);
-        if (route.op === 'mark' && route.name === REPORT) charge('report', uid, ctx.app.id);
-        if (shared) assertTrusted(viewer!);
-        const result = setMark(ctx, coll, route.key, route.name, route.op === 'mark');
-        return { status: 200, body: route.name === REPORT ? { marked: result.marked } : result };
-      }
+      case 'reportMark':
+        // A mark never carried a body; then the report, as the report API files it.
+        parseBody(body, {});
+        return { status: 200, body: fileReport(ctx, coll, decl, route.key, viewer, imported) };
+      case 'unreportMark':
+        // As the removed route answered it: refused before any budget or trust lookup.
+        throw invalid('a report cannot be withdrawn', { mark: REPORT });
     }
-  }
-
-  /**
-   * Server-side publish, as the server's `runPublish` and `publishCopies` do it, in their order:
-   * the body and the keys, the two collections, the publish consent, the trust gate, then every
-   * body that would be written checked (schema, `ownedModelVersions`) before the publish budget
-   * is spent, then moderation, then every change applied at once — the ceilings checked for the
-   * whole publish first, so a refusal leaves the store exactly as it was. Moderator hides are not
-   * modelled, so `hidden` never appears here.
-   */
-  function publishDocs(
-    ctx: Ctx,
-    to: string,
-    body: unknown,
-    viewer: FakeStorageViewer,
-    me: number,
-    scopes: readonly string[],
-    publishRefusal: () => Refusal,
-  ) {
-    const input = parseBody(
-      body,
-      { from: (v) => typeof v === 'string', keys: isStringArray, prune: (v) => typeof v === 'boolean' },
-      ['from', 'keys'],
-    );
-    const keys = assertPublishKeys(input.keys as string[]);
-    const prune = input.prune === true;
-    const from = input.from as string;
-    if (!COLLECTION_NAME.test(from) || !ctx.app.collections.has(from)) {
-      throw refuse('collection_not_declared', `collection ${from} is not declared`, { collection: from });
-    }
-    const fromDecl = declOf(ctx, from);
-    const toDecl = declOf(ctx, to);
-    if (fromDecl.visibility !== 'private' || toDecl.visibility !== 'shared') {
-      throw invalid('publish copies from a private collection into a shared one', { reason: 'publish_visibility' });
-    }
-    assertShareWritable(toDecl);
-    refuseViewerKeyed(to, toDecl, 'publish');
-    if (!scopes.includes(PUBLISH_SCOPE)) throw publishRefusal();
-    // One token of the private-write / delete window per call, never given back, before the
-    // trust gate and any read: the server's throttle on publishes that change nothing.
-    charge('write', me, ctx.app.id);
-    assertTrusted(viewer);
-    storageOn();
-
-    const sourceOf = (key: string) => docs.get(docId(ctx, from, me, key));
-    const copyOf = (key: string) => docs.get(docId(ctx, to, 0, key));
-    const mine = (d: DocRow) => d.authorKind === 'user' && d.authorUid === me;
-    const plan = keys.map((key) => {
-      const source = sourceOf(key);
-      const copy = copyOf(key);
-      let action: 'create' | 'update' | 'unchanged' | 'missing' | 'not_author';
-      if (copy && !mine(copy)) action = 'not_author';
-      else if (!source) action = 'missing';
-      else if (!copy) action = 'create';
-      else action = canonical(copy.data) === canonical(source.data) ? 'unchanged' : 'update';
-      return { key, action, source, copy };
-    });
-    const toWrite = plan.filter((p) => p.action === 'create' || p.action === 'update');
-    for (const p of toWrite) {
-      try {
-        assertMatchesSchema(to, toDecl, p.source!.data);
-        assertOwnedModelVersions(toDecl, p.source!.data, viewer);
-      } catch (err) {
-        throw withKey(err, p.key);
-      }
-    }
-    const release = reserveSharedWrite(`${ctx.app.id}:${me}:publish`, PUBLISH_BUDGET, {
-      message: 'publish budget exhausted',
-      bucket: 'publish',
-    });
-    let landed = false;
-    try {
-      for (const p of toWrite) {
-        try {
-          moderateWrite({ data: p.source!.data, key: p.key });
-        } catch (err) {
-          throw withKey(err, p.key);
-        }
-      }
-      // The caller's own visible copies whose key has no private document left.
-      let candidates: string[] = [];
-      let pruneIncomplete = false;
-      if (prune) {
-        candidates = docsIn(ctx, to, 0)
-          .filter((d) => mine(d) && !sourceOf(d.key))
-          .map((d) => d.key)
-          .sort(byCodePoint);
-        pruneIncomplete = candidates.length > PUBLISH_PRUNE_LIMIT;
-        candidates = candidates.slice(0, PUBLISH_PRUNE_LIMIT);
-      }
-      const pruneSet = new Set(candidates);
-      let bytes = 0;
-      let count = 0;
-      for (const p of toWrite) {
-        const doc = serialize(p.source!.data);
-        indexRows(toDecl, doc);
-        const size = storedSize(doc);
-        bytes += size - (p.copy?.size ?? 0);
-        if (!p.copy) count += 1;
-      }
-      for (const key of candidates) {
-        bytes -= copyOf(key)!.size;
-        count -= 1;
-      }
-      const commit = chargeUsage(ctx, me, bytes, count, 'author');
-      commit();
-      const t = now();
-      const result = {
-        created: [] as string[],
-        updated: [] as string[],
-        unchanged: [] as string[],
-        pruned: [] as string[],
-        skipped: [] as { key: string; reason: string }[],
-        pruneIncomplete,
-      };
-      for (const p of plan) {
-        if (p.action === 'create' || p.action === 'update') {
-          const data = JSON.parse(JSON.stringify(p.source!.data)) as Record<string, unknown>;
-          const index = indexRows(toDecl, data);
-          const size = storedSize(data);
-          if (p.copy) {
-            Object.assign(p.copy, { data, size, version: p.copy.version + 1, updatedAt: t, index });
-            result.updated.push(p.key);
-          } else {
-            docs.set(docId(ctx, to, 0, p.key), {
-              key: p.key,
-              data,
-              size,
-              version: 1,
-              createdAt: t,
-              updatedAt: t,
-              authorUid: me,
-              authorKind: 'user',
-              index,
-              counters: new Map(),
-              markCounts: new Map(),
-              marks: new Set(),
-            });
-            result.created.push(p.key);
-          }
-        } else if (p.action === 'unchanged') {
-          result.unchanged.push(p.key);
-        } else if (!(p.action === 'missing' && pruneSet.has(p.key))) {
-          result.skipped.push({ key: p.key, reason: p.action });
-        }
-      }
-      for (const key of candidates) {
-        docs.delete(docId(ctx, to, 0, key));
-        result.pruned.push(key);
-      }
-      landed = true;
-      // A publish that changed nothing gives its token back.
-      if (result.created.length + result.updated.length + result.pruned.length === 0) release(false);
-      return result;
-    } catch (err) {
-      if (!landed) release(!isOurFault(err));
-      throw err;
-    }
-  }
-
-  function unpublishDocs(ctx: Ctx, to: string, body: unknown, me: number) {
-    const { keys: raw } = parseBody(body, { keys: isStringArray }, ['keys']);
-    const keys = assertPublishKeys(raw as string[]);
-    const toDecl = declOf(ctx, to);
-    if (toDecl.visibility !== 'shared') {
-      throw invalid('unpublish removes documents from a shared collection', { reason: 'publish_visibility' });
-    }
-    assertShareWritable(toDecl);
-    refuseViewerKeyed(to, toDecl, 'unpublish');
-    charge('write', me, ctx.app.id);
-    storageOn();
-    const result = { deleted: [] as string[], skipped: [] as { key: string; reason: string }[] };
-    let bytes = 0;
-    const gone: string[] = [];
-    for (const key of keys) {
-      const copy = docs.get(docId(ctx, to, 0, key));
-      if (!copy) result.skipped.push({ key, reason: 'missing' });
-      else if (!(copy.authorKind === 'user' && copy.authorUid === me)) result.skipped.push({ key, reason: 'not_author' });
-      else {
-        bytes += copy.size;
-        gone.push(key);
-      }
-    }
-    if (gone.length > 0) chargeUsage(ctx, me, -bytes, -gone.length, 'author')();
-    for (const key of gone) {
-      docs.delete(docId(ctx, to, 0, key));
-      result.deleted.push(key);
-    }
-    return result;
-  }
-
-  /** 1–500 keys, each valid, none twice; returned in key order. */
-  function assertPublishKeys(keys: string[]): string[] {
-    if (keys.length === 0) throw invalid('keys must name at least one document', { reason: 'empty_keys' });
-    if (keys.length > PUBLISH_MAX_KEYS) {
-      throw invalid(`at most ${PUBLISH_MAX_KEYS} keys per call`, { reason: 'too_many_keys', max: PUBLISH_MAX_KEYS });
-    }
-    const seen = new Set<string>();
-    for (const key of keys) {
-      assertKey(key);
-      if (seen.has(key)) throw invalid('a key is named twice', { reason: 'duplicate_key', key });
-      seen.add(key);
-    }
-    return [...seen].sort(byCodePoint);
   }
 
   /**
@@ -2134,7 +1693,24 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     if (!COLLECTION_NAME.test(coll) || !ctx.app.collections.has(coll)) {
       throw refuse('collection_not_declared', `collection ${coll} is not declared`, { collection: coll });
     }
-    const decl = declOf(ctx, coll);
+    fileReport(ctx, coll, declOf(ctx, coll), input.key as string, viewer, imported);
+    return { status: 200, body: { reported: true } };
+  }
+
+  /**
+   * FILE ONE REPORT: the one path behind the report API and the report compatibility route, as
+   * the server's `fileReport` runs it, in its order: sign-in, shared only, the import's publish
+   * scope, the daily report budget, the trust gate, then the document. One row per (document,
+   * viewer); the answer is the same whether or not it was new, and never a count.
+   */
+  function fileReport(
+    ctx: Ctx,
+    coll: string,
+    decl: Decl,
+    key: string,
+    viewer: FakeStorageViewer | null,
+    imported: { scopes: readonly string[]; from: string } | null,
+  ): { marked: true } {
     const uid = requireViewer(ctx);
     if (decl.visibility !== 'shared') throw invalid('reports exist on shared collections only');
     if (imported && !imported.scopes.includes(PUBLISH_SCOPE)) {
@@ -2145,14 +1721,12 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     }
     charge('report', uid, ctx.app.id);
     assertTrusted(viewer!);
-    const key = input.key as string;
     assertKey(key);
     storageOn();
     const row = docs.get(docId(ctx, coll, 0, key));
     if (!row) throw refuse('not_found', 'document not found');
-    // The `report` mark's row, without a tally: nothing a reader sees counts reports.
-    row.marks.add(`${uid}:${REPORT}`);
-    return { status: 200, body: { reported: true } };
+    row.reports.add(uid);
+    return { marked: true };
   }
 
   /**

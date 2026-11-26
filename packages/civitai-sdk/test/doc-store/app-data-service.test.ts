@@ -217,30 +217,24 @@ describe('service mode: each call goes to the service route', () => {
     expect(calls.map(at)).toEqual(['GET https://civitai.com/api/v1/blocks/storage/notes/p1?from=parent-app']);
   });
 
-  it('TRANSITIONAL: a list the service cannot serve (where, mark, another sort) goes to the site', async () => {
+  it('TRANSITIONAL: a list the service cannot serve (where, another sort) goes to the site', async () => {
     const page = () => json(200, { items: [], nextCursor: null });
-    const { app, calls } = await serviceApp([page, page, page, page]);
+    const { app, calls } = await serviceApp([page, page, page]);
     const posts = app.storage.collection('posts');
     await posts.list({ where: { status: 'open' } });
-    await posts.list({ markedBy: 'me', mark: 'vote' });
     await posts.list({ sort: 'createdAt' });
     await posts.list({ sort: '-key' });
     expect(calls.map(at)).toEqual([
       'GET https://civitai.com/api/v1/blocks/storage/posts?where%5Bstatus%5D=open',
-      'GET https://civitai.com/api/v1/blocks/storage/posts?markedBy=me&mark=vote',
       'GET https://civitai.com/api/v1/blocks/storage/posts?sort=createdAt',
       `GET ${RECORDS}/posts/records?sort=-key`,
     ]);
   });
 
-  it('update stays on the site route (the service PATCH is being removed), beside increment', async () => {
-    const { app, calls } = await serviceApp([() => json(200, { value: 9 }), () => json(200, { value: 10 })]);
-    await app.storage.collection('posts').update('p4', { $inc: { plays: 2 } });
-    await app.storage.collection('posts').increment('p4', 'plays');
-    expect(calls.map(at)).toEqual([
-      'PATCH https://civitai.com/api/v1/blocks/storage/posts/p4',
-      'POST https://civitai.com/api/v1/blocks/storage/posts/p4/counters/plays',
-    ]);
+  it("mark('report'), the report compatibility route, stays on the site route", async () => {
+    const { app, calls } = await serviceApp([() => json(200, { marked: true })]);
+    await expect(app.storage.collection('posts').mark('p4', 'report')).resolves.toEqual({ marked: true });
+    expect(calls.map(at)).toEqual(['PUT https://civitai.com/api/v1/blocks/storage/posts/p4/marks/report']);
   });
 
   it('service mode lasts only while the token is a block token: an OAuth token sends storage to the site, a block token back', async () => {
@@ -310,9 +304,6 @@ describe('service mode: reading the answers', () => {
       createdAt: new Date(0),
       updatedAt: new Date(0),
       author: { kind: 'user', isViewer: true },
-      counters: {},
-      marks: {},
-      viewer: { marks: [] },
     });
   });
 
