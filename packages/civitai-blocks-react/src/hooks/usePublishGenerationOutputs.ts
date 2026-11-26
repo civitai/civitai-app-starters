@@ -4,6 +4,7 @@ import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useTransportConnection } from './useTransportConnection.js';
+import { withRateLimit } from '../transport/rateLimit.js';
 
 /**
  * What {@link usePublishGenerationOutputs} returns.
@@ -95,7 +96,10 @@ export function usePublishGenerationOutputs(): UsePublishGenerationOutputs {
         // host `error: ''` is a VALID reply that reaches here. `??` replaces only
         // null/undefined, so it would throw an Error with an EMPTY message — the
         // worst place for one, since the generation is already billed.
-        throw new Error(reply.error || 'failed to publish generation outputs');
+        throw withRateLimit(
+          new Error(reply.error || 'failed to publish generation outputs'),
+          reply,
+        );
       }
       return reply.result.imageIds;
     },

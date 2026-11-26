@@ -6,6 +6,7 @@ import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
 import { useTransportConnection } from './useTransportConnection.js';
+import { withRateLimit } from '../transport/rateLimit.js';
 
 /**
  * One Buzz-transaction row, REHYDRATED for block consumption: identical to the
@@ -103,7 +104,9 @@ export function useBuzzTransactions(params?: BlockBuzzTransactionsParams): UseBu
           // `||`, not `??`: the reply validator gates `error` on SHAPE only, so a
           // host `error: ''` is a VALID reply that reaches here. `??` replaces only
           // null/undefined, so it would surface an Error with an EMPTY message.
-          setError(new Error(result.error || 'failed to fetch buzz transactions'));
+          setError(
+            withRateLimit(new Error(result.error || 'failed to fetch buzz transactions'), result),
+          );
           setLoading(false);
           return;
         }

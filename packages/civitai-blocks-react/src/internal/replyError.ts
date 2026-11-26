@@ -1,3 +1,5 @@
+import { withRateLimit } from '../transport/rateLimit.js';
+
 /**
  * The uniform `{ ok, error }` reply REJECT test, single-sourced.
  *
@@ -64,6 +66,8 @@
  *
  * For replies whose error path is `{ requestId, error }` with no `ok` field.
  *
+ * The thrown `Error` carries the reply's `rateLimit` (see `withRateLimit`) when the host sent one.
+ *
  * @param result   the validated reply payload
  * @param fallback developer-facing copy used when `error` is present but empty
  */
@@ -72,7 +76,7 @@ export function throwOnReplyError(
   fallback: string,
 ): void {
   if (result.error !== undefined) {
-    throw new Error(result.error || fallback);
+    throw withRateLimit(new Error(result.error || fallback), result);
   }
 }
 
@@ -92,6 +96,6 @@ export function throwOnFailedReply(
   fallback: string,
 ): void {
   if (result.error !== undefined || !result.ok) {
-    throw new Error(result.error || fallback);
+    throw withRateLimit(new Error(result.error || fallback), result);
   }
 }

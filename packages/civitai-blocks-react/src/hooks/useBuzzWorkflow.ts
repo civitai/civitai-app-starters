@@ -13,6 +13,7 @@ import type {
 } from '@civitai/app-sdk/blocks';
 import { BLOCK_SCOPES } from '@civitai/app-sdk/blocks';
 
+import { parseRateLimitMeta, type RateLimitMeta } from '../transport/rateLimit.js';
 import { withConsentRetry } from '../internal/withConsentRetry.js';
 import { WORKFLOW_REQUEST_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
@@ -476,6 +477,15 @@ export class WorkflowEstimateError extends Error {
    */
   readonly snapshot: BlockWorkflowSnapshot;
 
+  /**
+   * The rate limit that refused the request — which limit, when to retry
+   * (`retryAfterSeconds`, `retryAt`) and, where it publishes them, its counts —
+   * copied from {@link BlockWorkflowSnapshot.rateLimit}. Absent when the refusal
+   * was not a rate limit, and on a host that predates the field.
+   */
+  // `declare`: no own property at all unless the host sent the meta.
+  declare readonly rateLimit?: RateLimitMeta;
+
   constructor(snapshot: BlockWorkflowSnapshot, code: 'failed' | 'no-cost') {
     // 🔴 GENERIC, AND DELIBERATELY NOT `snapshot.error`. `message` is the field an
     // uncaught rejection PRINTS and the field a third-party block's error
@@ -495,6 +505,8 @@ export class WorkflowEstimateError extends Error {
     this.name = 'WorkflowEstimateError';
     this.code = code;
     this.snapshot = snapshot;
+    const rateLimit = parseRateLimitMeta((snapshot as { rateLimit?: unknown }).rateLimit);
+    if (rateLimit) this.rateLimit = rateLimit;
   }
 }
 
@@ -700,6 +712,15 @@ export class WorkflowSubmitError extends Error {
    */
   readonly snapshot: BlockWorkflowSnapshot;
 
+  /**
+   * The rate limit that refused the request — which limit, when to retry
+   * (`retryAfterSeconds`, `retryAt`) and, where it publishes them, its counts —
+   * copied from {@link BlockWorkflowSnapshot.rateLimit}. Absent when the refusal
+   * was not a rate limit, and on a host that predates the field.
+   */
+  // `declare`: no own property at all unless the host sent the meta.
+  declare readonly rateLimit?: RateLimitMeta;
+
   constructor(snapshot: BlockWorkflowSnapshot, code: WorkflowSubmitErrorCode) {
     // 🔴 GENERIC, AND DELIBERATELY NOT `snapshot.error` — see the class docs and
     // civitai/civitai-app-starters#253. `message` is the field an uncaught
@@ -720,6 +741,8 @@ export class WorkflowSubmitError extends Error {
     this.name = 'WorkflowSubmitError';
     this.code = code;
     this.snapshot = snapshot;
+    const rateLimit = parseRateLimitMeta((snapshot as { rateLimit?: unknown }).rateLimit);
+    if (rateLimit) this.rateLimit = rateLimit;
   }
 }
 
@@ -741,11 +764,22 @@ export class WorkflowCancelNotIssuedError extends Error {
   /** The host's throttled reply, as received. Not an observation of the workflow. */
   readonly snapshot: BlockWorkflowSnapshot;
 
+  /**
+   * The rate limit that shed the cancel — which limit, when to retry
+   * (`retryAfterSeconds`, `retryAt`) and, where it publishes them, its counts —
+   * copied from {@link BlockWorkflowSnapshot.rateLimit}. Absent when the refusal
+   * was not a rate limit, and on a host that predates the field.
+   */
+  // `declare`: no own property at all unless the host sent the meta.
+  declare readonly rateLimit?: RateLimitMeta;
+
   constructor(workflowId: string, snapshot: BlockWorkflowSnapshot) {
     super(`cancel was not issued for ${workflowId} (the host could not serve the request) — retry it`);
     this.name = 'WorkflowCancelNotIssuedError';
     this.workflowId = workflowId;
     this.snapshot = snapshot;
+    const rateLimit = parseRateLimitMeta((snapshot as { rateLimit?: unknown }).rateLimit);
+    if (rateLimit) this.rateLimit = rateLimit;
   }
 }
 

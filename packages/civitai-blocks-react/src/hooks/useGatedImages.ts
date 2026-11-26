@@ -5,6 +5,7 @@ import type { BlockGatedImage } from '@civitai/app-sdk/blocks';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useTransportConnection } from './useTransportConnection.js';
+import { withRateLimit } from '../transport/rateLimit.js';
 
 export type { BlockGatedImage };
 
@@ -88,7 +89,7 @@ export function useGatedImages(): UseGatedImages {
       // `||`, not `??`: `isValidImagesResult` gates `error` on SHAPE only, so a host
       // `error: ''` is a VALID reply that reaches here. `??` replaces only
       // null/undefined, so it would throw an Error with an EMPTY message.
-      throw new Error(reply.error || 'failed to fetch gated images');
+      throw withRateLimit(new Error(reply.error || 'failed to fetch gated images'), reply);
     }
     return reply.result.images;
   }, []);

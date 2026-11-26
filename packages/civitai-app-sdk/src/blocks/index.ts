@@ -246,6 +246,7 @@ export type {
   BlockShareLinkResult,
   BlockTextToImageParams,
   BlockWorkflowSnapshot,
+  RateLimitMeta,
   BlockEstimateBatchAggregate,
   BlockModelSubstitution,
   ModelSubstitutionReason,

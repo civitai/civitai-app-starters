@@ -14,6 +14,7 @@ import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
 import type { ConsentRetryOptions } from './consentRetryOptions.js';
 import { useTransportConnection } from './useTransportConnection.js';
+import { withRateLimit } from '../transport/rateLimit.js';
 
 /**
  * The consent-gated scope this bridge requires — `posts:write:self`, named in
@@ -266,7 +267,7 @@ export function useCreatePostFromApp(): UseCreatePostFromApp {
         // then throw an Error with an EMPTY message for a public post, which
         // renders as a blank failure. Fall through to a code that at least
         // names a real outcome.
-        throw new CreatePostError(reply.error || 'no images to post');
+        throw withRateLimit(new CreatePostError(reply.error || 'no images to post'), reply);
       }
       return reply.result;
     },

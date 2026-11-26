@@ -11,6 +11,7 @@ import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
 import { useTransportConnection } from './useTransportConnection.js';
+import { withRateLimit } from '../transport/rateLimit.js';
 
 export type { BlockRunConfirmedStepHostError, BlockStepQuote, WorkflowBodyPassThroughStep };
 
@@ -327,7 +328,10 @@ export function useRunConfirmedStep(): UseRunConfirmedStep {
           // CAUTIOUS code — with neither a snapshot nor a reason, nothing says a
           // job was not started, so the block must not be told it was safe to
           // retry.
-          throw new RunConfirmedStepError(reply.error || 'submission-unconfirmed');
+          throw withRateLimit(
+            new RunConfirmedStepError(reply.error || 'submission-unconfirmed'),
+            reply,
+          );
         }
         // 🔴 A RESOLVED SNAPSHOT IS NOT ALWAYS A RUN. The host's confirmed submit
         // answers its spend-cap refusals (refunded, nothing started) with a
@@ -340,9 +344,12 @@ export function useRunConfirmedStep(): UseRunConfirmedStep {
           reply.snapshot.workflowId === HOST_REFUSAL_WORKFLOW_ID &&
           reply.snapshot.status === 'failed'
         ) {
-          throw new RunConfirmedStepError(reply.snapshot.error || 'confirmed step refused', {
-            refusedSnapshot: reply.snapshot,
-          });
+          throw withRateLimit(
+            new RunConfirmedStepError(reply.snapshot.error || 'confirmed step refused', {
+              refusedSnapshot: reply.snapshot,
+            }),
+            reply.snapshot,
+          );
         }
         return reply.snapshot;
       } catch (err: unknown) {

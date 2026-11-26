@@ -1110,7 +1110,15 @@ failed. Branch on `err.code`:
 | `'unsupported'` | The host answered `unsupported on this host`. | Price each cell with `estimate()`. |
 | `'timeout'` | No reply in time. A host that supports the batch replies within its own time budget, well inside the default wait, so this usually means a slow host, not an old one. | Show the estimate as unavailable and retry later. **Do not** fall back to one `estimate()` per cell: that sends up to 16 more estimates at a host that is already slow. |
 | `'invalid-request'` | Empty list, or more than 16 bodies. Refused before sending. | Fix the list. |
-| `'failed'` | Any other whole-call refusal: the scope, a rate limit, review preview. The reason is on `err.hostError`; log it, don't render it. | Show your own copy and retry later. |
+| `'failed'` | Any other whole-call refusal: the scope, a rate limit, review preview. The reason is on `err.hostError`; log it, don't render it. A rate-limit refusal also carries `err.rateLimit` (see below). | Show your own copy and retry later. |
+
+**Rate limits.** When the host refuses a call under a rate limit, the error any
+hook throws (or sets as its `error`) carries the limit's retry metadata. Read it
+with `rateLimitOf(err)`: it returns `{ retryAfterSeconds, retryAt, id?, kind?, … }`,
+or `undefined` when the refusal was not a rate limit or the host predates the
+field. The workflow errors (`WorkflowEstimateError`, `WorkflowSubmitError`,
+`WorkflowCancelNotIssuedError`, `BatchEstimateError`) also declare it as
+`err.rateLimit`, and a workflow snapshot carries it as `snapshot.rateLimit`.
 
 A 2 × 2 grid (two prompts × two checkpoints), falling back to per-cell estimates
 only on a host that answers `'unsupported'`:

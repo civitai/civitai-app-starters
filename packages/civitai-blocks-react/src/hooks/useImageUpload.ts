@@ -20,6 +20,7 @@ import {
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest, subscribeTyped } from '../transport/transport.js';
 import { useTransportConnection } from './useTransportConnection.js';
+import { withRateLimit } from '../transport/rateLimit.js';
 
 /**
  * Generous hook-side backstop for {@link BlockImageScanResult} delivery. The
@@ -165,7 +166,9 @@ export interface UseImageUploadOptions {
  * reply resolves `null`).
  */
 function throwIfShareRefused(share: boolean, reply: { error?: string }): void {
-  if (share && typeof reply.error === 'string' && reply.error.length > 0) throw new Error(reply.error);
+  if (share && typeof reply.error === 'string' && reply.error.length > 0) {
+    throw withRateLimit(new Error(reply.error), reply);
+  }
 }
 
 /** Per-upload scan-tracking entry (keyed by `imageId` in the hook's internal map). */

@@ -158,6 +158,11 @@ export interface WorkflowListResult {
  * `cost.total` it would not charge. `estimate`, `submit`, `get`, `wait` and
  * `cancel` all RESOLVE with that snapshot. Branch on `snapshot.status`.
  *
+ * A refusal under a rate limit carries the limit's retry metadata: on the
+ * snapshot (`snapshot.rateLimit`) when the host answered with one — a shed
+ * `get` or `cancel` (`throttled: true`) — and on {@link ApiError.rateLimit} when
+ * it answered `429`. Both are absent on a host that predates them.
+ *
  * What rejects is an `ApiError` carrying the HTTP status, a `CivitaiError` for
  * a `2xx` that carried no snapshot, or whatever `fetch` threw. A `400` is a
  * malformed body or key; a `403` on `get` or `cancel` is a workflow that is

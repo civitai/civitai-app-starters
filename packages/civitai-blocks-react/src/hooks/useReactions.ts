@@ -13,6 +13,7 @@ import type {
 import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
 import { useTransportConnection } from './useTransportConnection.js';
+import { withRateLimit } from '../transport/rateLimit.js';
 
 export type {
   BlockAppReaction,
@@ -292,7 +293,7 @@ export function useReactions(
             'ENTITY_REACTIONS_RESULT',
           );
           if (reply.error || !reply.result) {
-            throw new ReactionError(reply.error || 'entity-unavailable');
+            throw withRateLimit(new ReactionError(reply.error || 'entity-unavailable'), reply);
           }
           const result = reply.result;
           if (!mountedRef.current) return;
@@ -416,7 +417,7 @@ export function useReactions(
           'ENTITY_REACTION_RESULT',
         );
         if (reply.error || !reply.result) {
-          throw new ReactionError(reply.error || 'entity-unavailable');
+          throw withRateLimit(new ReactionError(reply.error || 'entity-unavailable'), reply);
         }
         const result = reply.result;
         if (mountedRef.current) {
