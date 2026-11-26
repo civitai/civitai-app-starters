@@ -376,7 +376,7 @@ async function sendViaClient(fake: FakeStorage, caller: FakeStorageCaller, op: E
  * `counters: {}`, `marks: {}` and `viewer` (`{ marks: [] }` or `null`). The raw pass pins them as
  * the contract states them (`viewer` may be the `$null` matcher); the client drops them, so in the client pass they are expected ABSENT
  * (`$absent`, which the matcher checks). Recognised by their document shape, so `info`'s
- * declarations (`counters: []`, `marks: []`) and `usage.viewer` (`{ bytes, docs }`) are untouched.
+ * declarations (whose `counters`/`marks` the contract states as `$absent`) and `usage.viewer` (`{ bytes, docs }`) are untouched.
  */
 const isRemovedDocField = (k: string, v: unknown) =>
   ((k === 'counters' || k === 'marks') && !!v && typeof v === 'object' && !Array.isArray(v)) ||

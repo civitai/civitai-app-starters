@@ -74,8 +74,9 @@ import {
  * `/:c/:key/marks/:name` and `_publish` / `_unpublish` are 404 `not_found`, a list refuses
  * `markedBy` / `mark` and `sort=counter:…` / `mark:…`, and a `write: "none"` collection is
  * read-only (403 `write_policy` on every create, put and delete). A document still carries
- * `counters: {}`, `marks: {}` and `viewer`, and `info()` lists `counters: []` and `marks: []`
- * and `marksAndCountersPerMinute: 0`, as the server still sends them for older SDKs.
+ * `counters: {}`, `marks: {}` and `viewer`, and `info()` reports `marksAndCountersPerMinute: 0`,
+ * as the server still sends them for older SDKs; `info()` declarations carry no `counters` or
+ * `marks` (civitai/civitai#10590).
  *
  * DIFFERS ON PURPOSE: civitai.com still answers `PUT /:c/:key/marks/report` as a report (and its
  * `DELETE` 400), an alias kept only for apps already built on SDKs before 0.30. No SDK from 0.33
@@ -1501,9 +1502,6 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
                 kind: 'docs',
                 visibility: d.visibility,
                 ...(d.visibility === 'shared' ? { write: d.write ?? 'own' } : {}),
-                // Always empty, whatever the manifest declares (the server's `presentDeclaration`).
-                counters: [],
-                marks: [],
                 indexes: Object.fromEntries(d.indexes),
                 showAuthor: d.showAuthor,
                 // `open`: whether a `@me` write can land at all (`isViewerKeyedWritable`).

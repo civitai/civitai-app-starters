@@ -224,7 +224,7 @@ describe('the fake answers the removed routes as civitai.com does', () => {
     expect(await raw(method, path, opts)).toEqual([status, code]);
   });
 
-  it('a report goes through app.moderation; a write: none collection is read-only; documents and info carry the empty compatibility fields', async () => {
+  it('a report goes through app.moderation; a write: none collection is read-only; documents carry the empty compatibility fields and info declarations carry none', async () => {
     const fake = createFakeStorage({ manifest: MANIFEST, reports: true });
     const posts = fake.storage.collection('posts');
     await posts.put('p1', { t: 1 });
@@ -233,9 +233,13 @@ describe('the fake answers the removed routes as civitai.com does', () => {
     await posts.get('p1');
     expect(fake.calls.at(-1)!.response).toMatchObject({ counters: {}, marks: {}, viewer: { marks: [] } });
     await fake.storage.info();
-    expect(fake.calls.at(-1)!.response).toMatchObject({
-      collections: { posts: { counters: [], marks: [] }, plays: { counters: [], marks: [] } },
-      limits: { rate: { marksAndCountersPerMinute: 0 } },
-    });
+    const infoReply = fake.calls.at(-1)!.response as {
+      collections: Record<string, Record<string, unknown>>;
+      limits: unknown;
+    };
+    for (const name of ['posts', 'plays']) {
+      expect(Object.keys(infoReply.collections[name]!).sort()).toEqual(['indexes', 'kind', 'showAuthor', 'visibility', 'write']);
+    }
+    expect(infoReply.limits).toMatchObject({ rate: { marksAndCountersPerMinute: 0 } });
   });
 });
