@@ -466,12 +466,6 @@ describe('fake: refusals in the server\'s order', () => {
     expect('open' in info.collections.records!).toBe(false);
   });
 
-  it('a viewer-keyed document is reportable through the report compatibility route too', async () => {
-    const fake = fakeWith();
-    const votes = fake.storage.collection('votes');
-    const { key } = await votes.putMine({ value: 1 }, { parent: 'r1' });
-    expect(await fake.as({ viewer: { username: 'bob' } }).storage.collection('votes').mark(key, 'report')).toEqual({ marked: true });
-  });
 
   it('moderation scans the data and the PARENT, never the derived key', async () => {
     // A scanner that refuses every string shaped like a digest, so scanning the key would refuse.

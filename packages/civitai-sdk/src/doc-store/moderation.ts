@@ -79,8 +79,7 @@ export interface ModerationClient {
    * A civitai.com that does not serve the report API — an older release, or the app's host flag
    * off — rejects with the LOCAL code `report_unavailable` (404): only the route's exact
    * `not_found` "no such route", or a 404 without the storage envelope. Any other 404 surfaces
-   * as it is. Hide the report action then;
-   * a `report` mark (`update(key, { $mark: 'report' })`) is the older route.
+   * as it is. Hide the report action then: this SDK has no other way to report.
    *
    * @example
    * ```ts

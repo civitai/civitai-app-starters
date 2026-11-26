@@ -191,14 +191,13 @@ describe('dev-tunnel preview: the removed tallies, as civitai.com answers them',
     },
   };
 
-  it("serves the report compatibility route locally; a write: none collection is read-only", async () => {
+  it('a write: none collection is read-only locally; documents carry no tally fields', async () => {
     injectManifest(TALLY_MANIFEST);
     const { fetch, calls } = realRoutes();
     const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
     const posts = app.storage.collection('posts');
 
     await posts.put('p', { title: 'local' });
-    await expect(posts.mark('p', 'report')).resolves.toEqual({ marked: true });
     await expect(app.storage.collection('plays').put('m', { n: 1 })).rejects.toMatchObject({ code: 'write_policy', status: 403 });
     const doc = await posts.get('p');
     expect(Object.keys(doc!).sort()).toEqual(['author', 'createdAt', 'data', 'key', 'updatedAt', 'version']);

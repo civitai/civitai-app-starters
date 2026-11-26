@@ -66,18 +66,20 @@ import {
  * THE REPORT API (`POST blocks/moderation/reports`, civitai/civitai#10215) is served with
  * `reports: true`; off, as on civitai.com by default, it answers as an unknown route, which the
  * client reports as `report_unavailable`. A report is one per (document, viewer), idempotent,
- * cannot be withdrawn, and is never counted in any answer. The report compatibility route
- * (`PUT …/:c/:key/marks/report`, what `collection.mark(key, 'report')` sends) files the same
- * report whatever `reports` says, as civitai.com serves it for SDKs older than 0.30.
+ * cannot be withdrawn, and is never counted in any answer.
  *
  * REMOVED, as civitai.com removed them (civitai/civitai#10391): marks, counters, their tallies
  * and server-side publish. A collection may still declare `marks`, `counters` or `write: "none"`,
- * but nothing serves them: `PATCH /:c/:key` is 405, `/:c/:key/counters/:name`, every other
+ * but nothing serves them: `PATCH /:c/:key` is 405, `/:c/:key/counters/:name`,
  * `/:c/:key/marks/:name` and `_publish` / `_unpublish` are 404 `not_found`, a list refuses
  * `markedBy` / `mark` and `sort=counter:…` / `mark:…`, and a `write: "none"` collection is
  * read-only (403 `write_policy` on every create, put and delete). A document still carries
  * `counters: {}`, `marks: {}` and `viewer`, and `info()` lists `counters: []` and `marks: []`
  * and `marksAndCountersPerMinute: 0`, as the server still sends them for older SDKs.
+ *
+ * DIFFERS ON PURPOSE: civitai.com still answers `PUT /:c/:key/marks/report` as a report (and its
+ * `DELETE` 400), an alias kept only for apps already built on SDKs before 0.30. No SDK from 0.33
+ * on can send it, so the fake does not serve it: every `marks/<name>` path is 404 here.
  *
  * NOT MODELLED: moderator hides (a hidden document reads as not found on the server;
  * nothing here hides one), moderator exemption from the scanner, the review-preview
@@ -106,7 +108,6 @@ const COLLECTION_NAME = /^[a-z][a-z0-9_]{0,31}$/;
 const KEY = /^[A-Za-z0-9._:-]{1,128}$/;
 const DOT_ONLY = /^\.+$/;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
-const REPORT = 'report';
 /** The viewer's own document's path segment, and a parent key's grammar (the key's, without `:`). */
 const MINE = '@me';
 const PARENT = /^[A-Za-z0-9._-]{1,96}$/;
@@ -1198,11 +1199,9 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     // The viewer's own document in a viewer-keyed collection; run as get / put / delete at the
     // derived key. `parent` is the raw path segment, checked by `viewerKeyedDocKey`.
     | { op: 'getMine' | 'putMine' | 'deleteMine'; collection: string; parent: string | null }
-    // The report compatibility route (`PUT`/`DELETE /:c/:key/marks/report`) and its refused withdrawal.
-    | { op: 'reportMark' | 'unreportMark'; collection: string; key: string };
 
   function match(method: string, s: string[]): { route: Route } | { methods: string[] } | null {
-    const [a, b, c, d] = s;
+    const [a, b, c] = s;
     const pick = (table: Record<string, Route>) =>
       table[method] ? { route: table[method]! } : { methods: Object.keys(table) };
     const pickMine = (collection: string, parent: string | null) =>
@@ -1230,13 +1229,6 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
       case 3:
         if (a!.startsWith('_') || b !== MINE) return null;
         return pickMine(a!, c!);
-      case 4:
-        // Only the `report` mark: every other mark name, and every counter, is no route.
-        if (a!.startsWith('_') || c !== 'marks' || d !== REPORT) return null;
-        return pick({
-          PUT: { op: 'reportMark', collection: a!, key: b! },
-          DELETE: { op: 'unreportMark', collection: a!, key: b! },
-        });
       default:
         return null;
     }
@@ -1635,13 +1627,6 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
           throw err;
         }
       }
-      case 'reportMark':
-        // A mark never carried a body; then the report, as the report API files it.
-        parseBody(body, {});
-        return { status: 200, body: fileReport(ctx, coll, decl, route.key, viewer, imported) };
-      case 'unreportMark':
-        // As the removed route answered it: refused before any budget or trust lookup.
-        throw invalid('a report cannot be withdrawn', { mark: REPORT });
     }
   }
 
@@ -1698,8 +1683,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
   }
 
   /**
-   * FILE ONE REPORT: the one path behind the report API and the report compatibility route, as
-   * the server's `fileReport` runs it, in its order: sign-in, shared only, the import's publish
+   * FILE ONE REPORT, as the server's `fileReport` runs it, in its order: sign-in, shared only, the import's publish
    * scope, the daily report budget, the trust gate, then the document. One row per (document,
    * viewer); the answer is the same whether or not it was new, and never a count.
    */
@@ -1710,7 +1694,7 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     key: string,
     viewer: FakeStorageViewer | null,
     imported: { scopes: readonly string[]; from: string } | null,
-  ): { marked: true } {
+  ): void {
     const uid = requireViewer(ctx);
     if (decl.visibility !== 'shared') throw invalid('reports exist on shared collections only');
     if (imported && !imported.scopes.includes(PUBLISH_SCOPE)) {
@@ -1726,7 +1710,6 @@ export function createFakeStorage(options: FakeStorageOptions): FakeStorage {
     const row = docs.get(docId(ctx, coll, 0, key));
     if (!row) throw refuse('not_found', 'document not found');
     row.reports.add(uid);
-    return { marked: true };
   }
 
   /**

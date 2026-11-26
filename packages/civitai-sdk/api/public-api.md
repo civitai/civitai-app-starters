@@ -498,20 +498,6 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
     /** One page. Follow `nextCursor` with the same query for the next one. */
     list(query?: DocumentListQuery, opts?: DocumentCallOptions): Promise<DocumentPage<T>>;
     /**
-     * Report a shared document to moderation through the compatibility route
-     * `PUT …/:key/marks/report`, which civitai.com still serves for apps bundled with an SDK
-     * older than 0.30: the same report, gates and budget as `app.moderation.report`, answered
-     * `{ marked: true }`, never a count. `report` is the only name the route takes; every other
-     * mark was removed with marks and counters.
-     *
-     * @deprecated Use `app.moderation.report({ collection, key, from? })`. A vote or like is the
-     * viewer's own document in a viewer-keyed collection (`keyedBy`):
-     * {@link StorageCollection.putMine} / {@link StorageCollection.deleteMine}.
-     */
-    mark(key: string, name: 'report', opts?: DocumentCallOptions): Promise<{
-        marked: true;
-    }>;
-    /**
      * VIEWER-KEYED collections (`keyedBy` in the manifest): the signed-in viewer's own document,
      * or `null` when they have none. `parent` names the parent key on a `parent+viewer`
      * collection and is omitted on a `viewer` one. Sends `GET …/:collection/@me[/:parent]`; the
@@ -831,8 +817,7 @@ export interface ModerationClient {
      * A civitai.com that does not serve the report API — an older release, or the app's host flag
      * off — rejects with the LOCAL code `report_unavailable` (404): only the route's exact
      * `not_found` "no such route", or a 404 without the storage envelope. Any other 404 surfaces
-     * as it is. Hide the report action then;
-     * a `report` mark (`update(key, { $mark: 'report' })`) is the older route.
+     * as it is. Hide the report action then: this SDK has no other way to report.
      *
      * @example
      * ```ts

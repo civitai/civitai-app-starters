@@ -92,7 +92,6 @@ const WIRE_DOC = {
 
 describe('the client: `from` on every collection call', () => {
   const answer = (method: string, path: string) => {
-    if (path.endsWith('/marks/report')) return { marked: true };
     if (path.startsWith('blocks/storage/_get/')) return { items: [WIRE_DOC] };
     if (method === 'DELETE') return { deleted: true };
     if (method === 'GET' && path === 'blocks/storage/notes') return { items: [], nextCursor: null };
@@ -101,7 +100,7 @@ describe('the client: `from` on every collection call', () => {
   const queryOf = (opts: RequestOptions) =>
     Object.fromEntries(Object.entries(opts.query ?? {}).filter(([, v]) => v !== undefined));
 
-  it("sends ?from=<blockId> on get, getMany, put, create, delete, list and mark('report') — path, verb and body unchanged", async () => {
+  it('sends ?from=<blockId> on get, getMany, put, create, delete and list — path, verb and body unchanged', async () => {
     const r = recorder(answer);
     const notes = r.storage.collection('notes', { from: PARENT });
     await notes.get('n1');
@@ -110,7 +109,6 @@ describe('the client: `from` on every collection call', () => {
     await notes.create({ text: 'c' });
     await notes.delete('n1', { ifVersion: 3 });
     await notes.list({ sort: '-updatedAt', limit: 5 });
-    await notes.mark('n1', 'report');
 
     expect(r.sent.map((s) => [s.method, s.path, queryOf(s.opts), s.opts.body])).toEqual([
       ['GET', 'blocks/storage/notes/n1', { from: PARENT }, undefined],
@@ -119,7 +117,6 @@ describe('the client: `from` on every collection call', () => {
       ['POST', 'blocks/storage/notes', { from: PARENT }, { data: { text: 'c' } }],
       ['DELETE', 'blocks/storage/notes/n1', { ifVersion: 3, from: PARENT }, undefined],
       ['GET', 'blocks/storage/notes', { sort: '-updatedAt', limit: 5, from: PARENT }, undefined],
-      ['PUT', 'blocks/storage/notes/n1/marks/report', { from: PARENT }, undefined],
     ]);
   });
 
@@ -263,16 +260,17 @@ describe('the fake: a fork reads and writes its parent\'s data', () => {
     expect(await fake.storage.collection('notes').get('n2')).toBeNull();
   });
 
-  it('a shared source collection reads as the parent shows it; a report and a write land there with publish consent in the parent', async () => {
+  it('a shared source collection reads as the parent shows it; a write lands there with publish consent in the parent', async () => {
     const fake = forkAndParent();
     await fake.as({ app: PARENT, viewer: { username: 'carol' } }).storage.collection('board').put('b1', { title: 'hi' });
     const board = fake.storage.collection('board', { from: PARENT });
-    expect(await board.mark('b1', 'report')).toEqual({ marked: true });
     expect((await board.get('b1'))?.data).toEqual({ title: 'hi' });
     expect((await board.create({ title: 'by alice via the fork' })).author).toEqual({ kind: 'user', isViewer: true });
-    // The removed tallies are no route through an import either.
+    // The removed tallies and marks (`report` included) are no route through an import either.
     const raw = await fake.http('POST', 'blocks/storage/board/b1/counters/views', { query: { from: PARENT } }).catch((e: unknown) => e);
     expect(raw).toMatchObject({ status: 404, body: { code: 'not_found' } });
+    const mark = await fake.http('PUT', 'blocks/storage/board/b1/marks/report', { query: { from: PARENT } }).catch((e: unknown) => e);
+    expect(mark).toMatchObject({ status: 404, body: { code: 'not_found' } });
   });
 
   it('list pages through the source with a cursor the fork\'s own collection refuses', async () => {
@@ -299,8 +297,7 @@ describe('the fake: import refusals, in the server\'s order', () => {
       },
     });
     const notes = fake.storage.collection('notes', { from: PARENT });
-    const board = fake.storage.collection('board', { from: PARENT });
-    for (const p of [notes.put('k', {}), notes.create({}), notes.delete('k'), board.mark('k', 'report')]) {
+    for (const p of [notes.put('k', {}), notes.create({}), notes.delete('k')]) {
       const error = await refusal(p);
       expect([error.status, error.code, error.details]).toEqual([403, 'write_policy', { from: PARENT, reason: 'import_read_only' }]);
     }
@@ -383,13 +380,6 @@ describe('the fake: import refusals, in the server\'s order', () => {
         expect([error.status, error.code, error.details]).toEqual([403, 'consent_required', PUBLISH_IN_PARENT]);
         expect(storageImportRefusal(error)).toEqual({ kind: 'source_publish_consent', ...PUBLISH_IN_PARENT });
       }
-    });
-
-    it('a report (the compatibility route) needs it too', async () => {
-      // No document needs to exist: the refusal comes before the store is read.
-      const fake = withoutPublishInParent();
-      const error = await refusal(fake.storage.collection('board', { from: PARENT }).mark('b1', 'report'));
-      expect([error.code, error.details]).toEqual(['consent_required', PUBLISH_IN_PARENT]);
     });
 
     it('a private source collection needs only the import grant; a delete in a shared one never needs it', async () => {
@@ -510,7 +500,6 @@ describe('the client: publish consent in the source — ask the host, then retry
   const ops = [
     ['create', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).create({ t: 'c' }), 'POST', `${BASE_URL}/board?from=${PARENT}`, { data: { t: 'c' } }, WIRE_DOC],
     ['put', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).put('b1', { t: 'p' }), 'PUT', `${BASE_URL}/board/b1?from=${PARENT}`, { data: { t: 'p' } }, WIRE_DOC],
-    ['mark', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).mark('b1', 'report'), 'PUT', `${BASE_URL}/board/b1/marks/report?from=${PARENT}`, undefined, { marked: true }],
   ] as const;
 
   it.each(ops)('%s: asks once with { scopes, from }, waits for the refresh, then sends the SAME request once more', async (_op, run, method, url, body, reply) => {
@@ -527,8 +516,7 @@ describe('the client: publish consent in the source — ask the host, then retry
       [method, url, body],
     ]);
     expect(s.asks()).toHaveLength(1);
-    if ('marked' in reply) expect(result).toEqual({ marked: true });
-    else expect(result).toMatchObject({ key: WIRE_DOC.key, data: WIRE_DOC.data });
+    expect(result).toMatchObject({ key: WIRE_DOC.key, data: WIRE_DOC.data });
   });
 
   it('CONSENT_UNAVAILABLE ends it at once: the original refusal surfaces, nothing is retried', async () => {

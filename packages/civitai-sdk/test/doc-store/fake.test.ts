@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { StorageError } from '../../src/doc-store/index.js';
-import type { ApiError } from '../../src/http/index.js';
 import { createFakeStorage, type FakeStorageOptions } from '../../src/testing.js';
 
 /**
@@ -16,7 +15,6 @@ import { createFakeStorage, type FakeStorageOptions } from '../../src/testing.js
  *     daily 300 refilling one every 4.8 min, the rejection bucket (10, one back every
  *     30 min), refunds on a refused write and none charged for an outage, per viewer;
  *   - fixed-window resets and `retryAfter` values; anonymous reads sharing one window;
- *   - a report withdrawal refused BEFORE sign-in and any budget;
  *   - typed `where` filters (number, boolean, time) and the one-filter limit;
  *   - sorts by an index (key tiebreak in the sort direction), `createdAt`; `keyPrefix`;
  *   - authorship display (`username` only under `showAuthor`);
@@ -97,12 +95,12 @@ describe('the manifest', () => {
 
 describe('rate limits are opt-in', () => {
   it('off by default: no window and no shared write budget throttles an app\'s tests', async () => {
-    const { fake } = make({ enforceRateLimits: false });
+    const { fake } = make({ enforceRateLimits: false, reports: true });
     const posts = fake.storage.collection('posts');
     // 35 shared writes: past the burst of 30 that would refuse the 31st with limits on.
     for (let i = 0; i < 35; i++) await posts.put(`p${i}`, {});
     // 25 reports: past the 20 a day that would refuse the 21st with limits on.
-    for (let i = 0; i < 25; i++) await posts.mark('p0', 'report');
+    for (let i = 0; i < 25; i++) await fake.moderation.report({ collection: 'posts', key: 'p0' });
     await expect(posts.list({ limit: 100 })).resolves.toMatchObject({ items: { length: 35 } });
   });
 
@@ -185,37 +183,16 @@ describe('the shared write budget', () => {
 });
 
 describe('fixed windows', () => {
-  it('reports: 20 a day from the first, then a fresh window; the report route and the report API share it', async () => {
+  it('reports: 20 a day from the first, then a fresh window', async () => {
     const { fake, clock } = make({ reports: true });
+    const report = () => fake.moderation.report({ collection: 'posts', key: 'p' });
     await fake.storage.collection('posts').put('p', {});
-    for (let i = 0; i < 10; i++) await fake.storage.collection('posts').mark('p', 'report');
-    for (let i = 0; i < 10; i++) await fake.moderation.report({ collection: 'posts', key: 'p' });
+    for (let i = 0; i < 20; i++) await report();
     clock.advance(60_000);
-    const e = await refusal(fake.storage.collection('posts').mark('p', 'report'));
+    const e = await refusal(report());
     expect(e.details).toEqual({ bucket: 'report', retryAfter: 24 * 60 * 60 - 60 });
     clock.advance((24 * 60 * 60 - 60) * 1000);
-    await expect(fake.storage.collection('posts').mark('p', 'report')).resolves.toEqual({ marked: true });
-  });
-
-  it('withdrawing a report is refused before sign-in and before any budget', async () => {
-    const { fake } = make();
-    const posts = fake.storage.collection('posts');
-    await posts.put('p', {});
-    await posts.mark('p', 'report'); // 1 of 20 report tokens
-    // Ordering: a 400 for everyone — an anonymous caller is NOT told sign_in_required.
-    // The client has no way to send it any more; the route still answers, as civitai.com's does.
-    const unmark = async (http: typeof fake.http) => {
-      const e = (await http('DELETE', 'blocks/storage/posts/p/marks/report').then(
-        () => expect.fail('a report withdrawal resolved'),
-        (error: unknown) => error,
-      )) as ApiError;
-      return [e.status, (e.body as { code?: unknown }).code, (e.body as { details?: unknown }).details];
-    };
-    expect(await unmark(fake.as({ viewer: null }).http)).toEqual([400, 'invalid_request', { mark: 'report' }]);
-    expect(await unmark(fake.http)).toEqual([400, 'invalid_request', { mark: 'report' }]);
-    // Neither refusal spent a report token: 19 more fit the day's 20.
-    for (let i = 0; i < 19; i++) await posts.mark('p', 'report');
-    expect((await refusal(posts.mark('p', 'report'))).details).toMatchObject({ bucket: 'report' });
+    await expect(report()).resolves.toEqual({ reported: true });
   });
 
   it('reads: 300 a minute; anonymous readers share one (client IP) window', async () => {

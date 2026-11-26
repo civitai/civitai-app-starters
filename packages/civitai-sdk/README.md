@@ -403,10 +403,9 @@ try {
   does not serve it rejects with the LOCAL code `report_unavailable` (404): the flag off
   (the route's exact `404 not_found` "no such route") or no such page (a 404 without the
   storage envelope). Any other 404 surfaces as it is.
-- **`collection(name).mark(key, 'report')`** is the report route SDKs before 0.30 used
-  (`PUT …/:key/marks/report`). civitai.com still serves it, whatever the per-app flag
-  says, filing the same report with the same gates and budget, and it answers
-  `{ marked: true }`. `report` is the only name it takes; prefer `app.moderation.report`.
+- **This is the only way to report.** `collection().mark` was removed in 0.33 with the
+  other marks, `report` included. (civitai.com still answers `PUT …/:key/marks/report`, but
+  only for apps already built on SDKs before 0.30.)
 
 ### Another app's collections: imports
 
@@ -451,7 +450,7 @@ try {
 ```
 
 - **Every call carries `?from=<blockId>`**: `get`, `getMany`, `put`, `create`,
-  `delete`, `list`, the `…Mine` calls and `mark(key, 'report')`, with the same
+  `delete`, `list` and the `…Mine` calls, with the same
   path, body and reply as without it. `collection(name)` without `from` is this app's
   own collection, even when it has the same name. `info()` takes no `from` — a source
   app's limits and usage cannot be read through an import — and a `from` passed to it
@@ -1191,6 +1190,8 @@ two.
 
 Where it differs from the server on purpose:
 
+- `PUT …/:key/marks/report`, which civitai.com still answers as a report for apps built
+  on SDKs before 0.30, is `404` here like every other mark: no SDK from 0.33 on sends it.
 - A declaration using a feature the platform has not shipped — `write: "owner"` or
   `"anyone"`, `kind: "log"`/`maxEntries`, `ttlSeconds`, `dailyWritesPerAuthor` —
   makes `createFakeStorage` throw, naming it, instead of failing per request. It is

@@ -196,7 +196,6 @@ function refusingStorage(code: string, message: string): LocalPreviewStorage {
     create: refuse,
     delete: refuse,
     list: refuse,
-    mark: refuse,
     getMine: refuse,
     putMine: refuse,
     deleteMine: refuse,

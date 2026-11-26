@@ -159,18 +159,6 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
   /** One page. Follow `nextCursor` with the same query for the next one. */
   list(query?: DocumentListQuery, opts?: DocumentCallOptions): Promise<DocumentPage<T>>;
   /**
-   * Report a shared document to moderation through the compatibility route
-   * `PUT …/:key/marks/report`, which civitai.com still serves for apps bundled with an SDK
-   * older than 0.30: the same report, gates and budget as `app.moderation.report`, answered
-   * `{ marked: true }`, never a count. `report` is the only name the route takes; every other
-   * mark was removed with marks and counters.
-   *
-   * @deprecated Use `app.moderation.report({ collection, key, from? })`. A vote or like is the
-   * viewer's own document in a viewer-keyed collection (`keyedBy`):
-   * {@link StorageCollection.putMine} / {@link StorageCollection.deleteMine}.
-   */
-  mark(key: string, name: 'report', opts?: DocumentCallOptions): Promise<{ marked: true }>;
-  /**
    * VIEWER-KEYED collections (`keyedBy` in the manifest): the signed-in viewer's own document,
    * or `null` when they have none. `parent` names the parent key on a `parent+viewer`
    * collection and is omitted on a `viewer` one. Sends `GET …/:collection/@me[/:parent]`; the
@@ -711,8 +699,7 @@ export interface DocumentStorageOptions {
   /**
    * SERVICE MODE: send this app's own collections and `info` to the app-data service instead of
    * the site — `http` is a client for the service's base URL, `slug` the app's blockId. A
-   * collection opened through an import (`{ from }`) and `mark` (the report compatibility route)
-   * keep the site's routes, and so does every call
+   * collection opened through an import (`{ from }`) keeps the site's routes, and so does every call
    * while `active()` is false. Absent, nothing changes. See {@link DocumentStorage} for what a reply carries there.
    */
   service?: AppDataServiceOptions;
@@ -972,15 +959,6 @@ export function createDocumentStorage(http: Http, options: DocumentStorageOption
           return { items: reply.items.map((item) => doc(item, 'list')), nextCursor: reply.nextCursor };
         },
 
-        // The report compatibility route (see `mark` on StorageCollection): its pre-0.30 path
-        // and request shape, unchanged.
-        async mark(key, markName, { signal } = {}) {
-          const reply = await authoring(signal, () =>
-            call('PUT', `${docPath(key)}/marks/${segment('mark', markName)}`, { query: q(), signal }),
-          );
-          return toMarkResult(reply, `${name}.mark`);
-        },
-
         // VIEWER-KEYED (`@me`): the server derives the key from the verified viewer, so none is
         // sent. Every call carries `?from=` when importing, as any collection call does.
         async getMine(parent, { signal } = {}) {
@@ -1092,7 +1070,6 @@ export interface AppDataServiceOptions {
  *   them; the service does not yet.
  * - `getMany` has no route there: it is keyed gets, at most {@link SERVICE_GET_MANY_CONCURRENCY}
  *   at once, in the order of `keys`; the first failure stops it.
- * - Not here: `mark` (the report compatibility route) stays on the site.
  */
 function serviceStore(service: AppDataServiceOptions, options: DocumentStorageOptions) {
   const call = createStorageCall(service.http, options, true);
@@ -1302,13 +1279,6 @@ function refuseInfoImport(opts: object): void {
       (opts as { from?: unknown }).from,
     );
   }
-}
-
-function toMarkResult(reply: unknown, op: string): { marked: true } {
-  if ((reply as { marked?: unknown } | null | undefined)?.marked !== true) {
-    throw new CivitaiError(`storage ${op}: malformed reply`);
-  }
-  return { marked: true };
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

@@ -319,13 +319,6 @@ function clientOp(method: string, path: string, query: Record<string, string>, b
       });
     }
   }
-  // The report compatibility route: the only mark the client can still send.
-  if (seg.length === 4 && seg[2] === 'marks' && seg[3] === 'report' && method === 'PUT') {
-    const [c, k] = seg as [string, string];
-    return why(strayQuery(() => false) ?? (body === undefined ? null : strayBody([])), {
-      run: (s) => s.collection(c).mark(k, 'report'),
-    });
-  }
   return { raw: `no client method for ${seg.length} segments` };
 }
 

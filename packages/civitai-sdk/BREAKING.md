@@ -79,11 +79,12 @@ with `keyPrefix`) for a vote, like or per-viewer entry; `app.moderation.report` 
 ## Document-store tallies and server-side publish
 
 🔴 **Removed in 0.33**, as civitai.com removed them (civitai#10391, 2026-11-25): `collection().update`
-(the tally `PATCH`, now `405`), `increment`, `unmark`, `publish` and `unpublish` (their routes `404`), the
+(the tally `PATCH`, now `405`), `increment`, `mark`, `unmark`, `publish` and `unpublish`, the
 operator and publish types, the documents' `counters` / `marks` / `viewer`, `info()`'s `counters` / `marks`,
 the list options `markedBy` / `mark` and the `counter:` / `mark:` sorts. Keep each viewer's vote in a
-viewer-keyed collection and count by listing; write shared copies with `put`. `mark(key, 'report')` stays:
-civitai.com still serves that one mark as a report, for SDKs before 0.30.
+viewer-keyed collection and count by listing; write shared copies with `put`; report with
+`app.moderation.report`. (civitai.com still answers `PUT …/:key/marks/report` as a report, but only for apps
+already built on SDKs before 0.30; no SDK from 0.33 on sends it.)
 
 ## Batch image fetch
 

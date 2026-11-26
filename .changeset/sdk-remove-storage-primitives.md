@@ -7,12 +7,12 @@
 Removed:
 
 - `collection().update` (every overload; the tally `PATCH` now answers `405`) and its types `StorageIncrementOp`, `StorageMarkOp`, `StorageUnmarkOp`, `StorageUpdateOp`.
-- `collection().increment`, `unmark`, `publish` and `unpublish` (their routes answer `404`), the types `StoragePublishRequest`, `StoragePublishSkipReason`, `StoragePublishResult`, `StorageUnpublishResult`, and the local error code `publish_unavailable`.
+- `collection().increment`, `mark`, `unmark`, `publish` and `unpublish`, the types `StoragePublishRequest`, `StoragePublishSkipReason`, `StoragePublishResult`, `StorageUnpublishResult`, and the local error code `publish_unavailable`.
 - The tally fields: `StorageDocument.counters`, `.marks` and `.viewer`; `StorageCollectionInfo.counters` and `.marks`; `StorageLimits.rate.marksAndCountersPerMinute`. The list options `markedBy` and `mark`, and the `counter:<name>` / `mark:<name>` sorts.
 - The legacy key/value methods on `app.storage` (`get`, `set`, `delete`, `list`, `getQuota`) and `app.sharedStorage`, with their types (`StorageClient`, `StorageCallOptions`, `StorageKeyEntry`, `StorageListQuery`, `StorageListResult`, `StorageQuota`, `SharedStorageClient`, `SharedItem`, `SharedListQuery`, `SharedListResult`, `SharedStorageCallOptions`, `SharedValue`). `app.storage` is the document store only: `collection(name)`, `info()` and `mode`.
-- `@civitai/sdk/testing`: `createFakeStorage`'s `publish` option. The fake now answers the removed routes as civitai.com does (`PATCH` 405; counters, every mark but `report`, `_publish` and `_unpublish` 404; `markedBy` / `mark` and tally sorts refused; a `write: "none"` collection read-only), as does the dev-tunnel local preview.
+- `@civitai/sdk/testing`: `createFakeStorage`'s `publish` option. The fake now answers the removed routes as civitai.com does (`PATCH` 405; counters, marks, `_publish` and `_unpublish` 404; `markedBy` / `mark` and tally sorts refused; a `write: "none"` collection read-only), as does the dev-tunnel local preview.
 
-Kept: `collection().mark(key, 'report')`, narrowed to that one name, because civitai.com still serves `PUT …/:key/marks/report` as a report (for SDKs before 0.30); it resolves `{ marked: true }`. Prefer `app.moderation.report`.
+`collection().mark` is removed entirely, `report` included: a report goes through `app.moderation.report`. civitai.com still answers `PUT …/:key/marks/report` as a report, but only for apps already built on SDKs before 0.30; `createFakeStorage` and the local preview answer it `404`, as every other mark.
 
 Works against today's server: a document reply's leftover `counters: {}`, `marks: {}` and `viewer` (and `info()`'s `counters: []`, `marks: []`, `marksAndCountersPerMinute: 0`), which civitai.com still sends for older SDKs, are ignored, as is any field the client does not name.
 

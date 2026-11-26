@@ -52,8 +52,7 @@ const envelope = (status: number, code: string, details?: Record<string, unknown
  * them: that pass already sends get, getMany, put/delete with a non-zero `ifVersion`,
  * create, list with `where`/`sort`/`author`/`limit`/`cursor` and info through this client
  * and checks the fake's answer, so a wrong path, verb or body there fails it. What it does
- * not reach: `ifVersion: 0`, a `Date` filter, `keyPrefix`, the report compatibility route,
- * encoding, and the segments a URL would rewrite (the fake sits below URL resolution).
+ * not reach: `ifVersion: 0`, a `Date` filter, `keyPrefix`, encoding, and the segments a URL would rewrite (the fake sits below URL resolution).
  */
 describe('request shapes the contract run does not cover', () => {
   it('`ifVersion: 0` (only if absent) is sent, not dropped as falsy', async () => {
@@ -101,15 +100,14 @@ describe('request shapes the contract run does not cover', () => {
   it('encodes every caller-supplied segment', async () => {
     const r = recorder(() => WIRE_DOC);
     await r.storage.collection('c').get('a:b/c d?e');
-    await r.storage.collection('c').mark('a#b?c', 'report').catch(() => undefined);
-    expect(r.sent.map((x) => x.path)).toEqual(['blocks/storage/c/a%3Ab%2Fc%20d%3Fe', 'blocks/storage/c/a%23b%3Fc/marks/report']);
+    await r.storage.collection('c').put('a#b?c', {});
+    expect(r.sent.map((x) => x.path)).toEqual(['blocks/storage/c/a%3Ab%2Fc%20d%3Fe', 'blocks/storage/c/a%23b%3Fc']);
   });
 
   it.each([
     ['key', '', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').get('')],
     ['key', '.', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').put('.', {})],
     ['key', '..', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').delete('..')],
-    ['key', '.', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').mark('.', 'report')],
   ])('refuses a %s of %j before sending — a URL would rewrite it into another route', async (_what, _value, run) => {
     const r = recorder();
     const error = await run(r.storage).catch((e: unknown) => e);
@@ -174,34 +172,19 @@ describe('reading replies', () => {
     items = [WIRE_DOC];
     await expect(r.storage.collection('posts').getMany(['missing', 'p1'])).rejects.toThrow(/items/);
   });
-
-  it("mark('report'): `{ marked: true }` and nothing else; any other reply throws", async () => {
-    let reply: unknown = { marked: true, count: 4 };
-    const r = recorder(() => reply);
-    expect(await r.storage.collection('posts').mark('p1', 'report')).toEqual({ marked: true });
-    reply = { marked: false };
-    await expect(r.storage.collection('posts').mark('p1', 'report')).rejects.toThrow(/malformed/);
-    reply = {};
-    await expect(r.storage.collection('posts').mark('p1', 'report')).rejects.toThrow(/malformed/);
-    expect(r.sent.map((x) => [x.method, x.path, x.opts.body])).toEqual([
-      ['PUT', 'blocks/storage/posts/p1/marks/report', undefined],
-      ['PUT', 'blocks/storage/posts/p1/marks/report', undefined],
-      ['PUT', 'blocks/storage/posts/p1/marks/report', undefined],
-    ]);
-  });
 });
 
 describe('errors', () => {
   it('an envelope becomes a StorageError with code, status, details and retryAfter', async () => {
-    const original = envelope(429, 'rate_limited', { bucket: 'report', retryAfter: 17 });
+    const original = envelope(429, 'rate_limited', { bucket: 'write', retryAfter: 17 });
     const r = recorder(() => original);
-    const error = (await r.storage.collection('posts').mark('p1', 'report').catch((e: unknown) => e)) as StorageError;
+    const error = (await r.storage.collection('posts').put('p1', {}).catch((e: unknown) => e)) as StorageError;
     expect(error).toBeInstanceOf(StorageError);
     expect(error).toBeInstanceOf(ApiError);
     expect(error.name).toBe('StorageError');
     expect(error.code).toBe('rate_limited');
     expect(error.status).toBe(429);
-    expect(error.details).toEqual({ bucket: 'report', retryAfter: 17 });
+    expect(error.details).toEqual({ bucket: 'write', retryAfter: 17 });
     expect(error.retryAfter).toBe(17);
     expect(error.body).toBe(original.body);
     expect(error.message).toBe('rate_limited said the server');

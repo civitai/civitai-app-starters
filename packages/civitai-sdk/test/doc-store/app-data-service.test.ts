@@ -231,11 +231,6 @@ describe('service mode: each call goes to the service route', () => {
     ]);
   });
 
-  it("mark('report'), the report compatibility route, stays on the site route", async () => {
-    const { app, calls } = await serviceApp([() => json(200, { marked: true })]);
-    await expect(app.storage.collection('posts').mark('p4', 'report')).resolves.toEqual({ marked: true });
-    expect(calls.map(at)).toEqual(['PUT https://civitai.com/api/v1/blocks/storage/posts/p4/marks/report']);
-  });
 
   it('service mode lasts only while the token is a block token: an OAuth token sends storage to the site, a block token back', async () => {
     const doc = () => json(200, { source: 'registry', item: PRIVATE_ITEM('k') });

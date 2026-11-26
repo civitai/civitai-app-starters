@@ -39,7 +39,9 @@ import { fakeFetch, json } from '../support/fake-fetch.js';
  * 0.33 REMOVED what civitai.com stopped serving (civitai/civitai#10391, live 2026-11-25; the
  * legacy stores 2026-11-10): `collection().update`, `increment`, `unmark`, `publish`,
  * `unpublish`, the tally fields and list options, the legacy key/value methods on `app.storage`
- * and `app.sharedStorage`. `mark` stays for the one name the server still serves, `report`.
+ * and `app.sharedStorage`, and `mark` with its last name, `report`: a report is
+ * `app.moderation.report` (civitai.com keeps `PUT …/marks/report` only for apps already built on
+ * SDKs before 0.30).
  *
  * Two halves: the `@ts-expect-error` lines above and in `type-level` are checked by
  * `tsc -p tsconfig.test.json` (the package's `typecheck`, in CI), where each one fails as an
@@ -47,7 +49,7 @@ import { fakeFetch, json } from '../support/fake-fetch.js';
  */
 
 /** The methods 0.33 removed from a collection: none may be present on any store's collection. */
-const REMOVED_COLLECTION_METHODS = ['update', 'increment', 'unmark', 'publish', 'unpublish'];
+const REMOVED_COLLECTION_METHODS = ['update', 'increment', 'mark', 'unmark', 'publish', 'unpublish'];
 /** The legacy key/value methods 0.33 removed from `app.storage`. */
 const REMOVED_STORAGE_METHODS = ['get', 'set', 'delete', 'list', 'getQuota'];
 
@@ -94,8 +96,8 @@ describe('removed names are not exported', () => {
     ).storage.collection('posts');
     for (const [where, collection] of Object.entries({ site, service, fake, preview })) {
       for (const name of REMOVED_COLLECTION_METHODS) expect(name in collection, `${where}.${name}`).toBe(false);
-      // Control: the viewer-keyed API and the report route stay.
-      for (const name of ['getMine', 'putMine', 'deleteMine', 'mark']) expect(typeof (collection as unknown as Record<string, unknown>)[name], `${where}.${name}`).toBe('function');
+      // Control: the viewer-keyed API stays.
+      for (const name of ['getMine', 'putMine', 'deleteMine']) expect(typeof (collection as unknown as Record<string, unknown>)[name], `${where}.${name}`).toBe('function');
     }
   });
 
@@ -117,8 +119,8 @@ describe('removed names are not exported', () => {
       void collection.publish;
       // @ts-expect-error removed in 0.33
       void collection.unpublish;
-      // @ts-expect-error removed in 0.33: only `report` is a mark now
-      void collection.mark('k', 'vote');
+      // @ts-expect-error removed in 0.33: a report is `app.moderation.report`
+      void collection.mark;
       // @ts-expect-error removed in 0.33
       void doc.counters;
       // @ts-expect-error removed in 0.33
@@ -214,16 +216,19 @@ describe('the fake answers the removed routes as civitai.com does', () => {
     ['GET', 'posts', { query: { markedBy: 'me', mark: 'vote' } }, 400, 'invalid_request'],
     ['GET', 'posts', { query: { sort: 'counter:views' } }, 400, 'index_not_declared'],
     ['GET', 'posts', { query: { sort: '-mark:vote' } }, 400, 'index_not_declared'],
-    ['DELETE', 'posts/p1/marks/report', {}, 400, 'invalid_request'],
+    // The server keeps this one as an alias for apps built on SDKs before 0.30; no SDK from 0.33
+    // on sends it, and the fake does not serve it.
+    ['PUT', 'posts/p1/marks/report', {}, 404, 'not_found'],
+    ['DELETE', 'posts/p1/marks/report', {}, 404, 'not_found'],
   ] as const)('%s /%s %j → %i %s', async (method, path, opts, status, code) => {
     expect(await raw(method, path, opts)).toEqual([status, code]);
   });
 
-  it("mark('report') files a report; a write: none collection is read-only; documents and info carry the empty compatibility fields", async () => {
-    const fake = createFakeStorage({ manifest: MANIFEST });
+  it('a report goes through app.moderation; a write: none collection is read-only; documents and info carry the empty compatibility fields', async () => {
+    const fake = createFakeStorage({ manifest: MANIFEST, reports: true });
     const posts = fake.storage.collection('posts');
     await posts.put('p1', { t: 1 });
-    await expect(posts.mark('p1', 'report')).resolves.toEqual({ marked: true });
+    await expect(fake.moderation.report({ collection: 'posts', key: 'p1' })).resolves.toEqual({ reported: true });
     await expect(fake.storage.collection('plays').put('m', {})).rejects.toMatchObject({ status: 403, code: 'write_policy' });
     await posts.get('p1');
     expect(fake.calls.at(-1)!.response).toMatchObject({ counters: {}, marks: {}, viewer: { marks: [] } });
