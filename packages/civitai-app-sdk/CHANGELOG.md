@@ -1,5 +1,19 @@
 # @civitai/app-sdk
 
+## 0.96.0
+
+### Minor Changes
+
+- 7e4c2c8: **A workflow snapshot can carry the rate limit that refused it: `BlockWorkflowSnapshot.rateLimit`.** Additive and optional.
+
+  civitai.com now attaches `rateLimit` to a workflow refusal: the `failed` snapshot of an estimate, submit or cancel the limit turned away, and the `throttled` reply of a poll or cancel that a limit shed. It is the same retry metadata every other bridge error reply already carries: which limit, when to retry (`retryAfterSeconds`, `retryAt`) and, for a limit that publishes them, its counts.
+
+  - `@civitai/app-sdk/blocks` adds `BlockWorkflowSnapshot.rateLimit?: RateLimitMeta` and exports the `RateLimitMeta` type.
+  - `@civitai/sdk` picks up the same field through its generated copy of the workflow types. The root `RateLimitMeta` export is now that copy, which has the same shape as `BridgeError.rateLimit`.
+  - `@civitai/sdk`'s `ApiError` gains `rateLimit?: RateLimitMeta`, parsed from a `429` body's `rateLimit`. This covers a REST workflow call refused with a `429`.
+
+  The field is absent on a host that predates it and on every snapshot that was not refused, so nothing changes for code that does not read it.
+
 ## 0.95.1
 
 ### Patch Changes
@@ -1213,15 +1227,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                                                                                                                                                                            🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                                                                                                                                                                            stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                                                                                                                                                                            the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                                                                                                                                                                            same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                                                                                                                                                                            1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                                                                                                                                                                            code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                                                                                                                                                                            gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                                                                                                                                                                            `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                                                                                                                                                                            single measurements on one machine.
+                                                                                                                                                                                                🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                                                                                                                                                                stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                                                                                                                                                                the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                                                                                                                                                                same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                                                                                                                                                                1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                                                                                                                                                                code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                                                                                                                                                                gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                                                                                                                                                                `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                                                                                                                                                                single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -2129,10 +2143,10 @@ useCheckpointPicker>, UseCheckpointPicker>` row in `returnTypeLedger.ts` — whi
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                                                                                      before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                                                                                               @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                                                                                      after    @civitai/theme       0.3.1                   — 1 copy
-                                                                                                                               @civitai/components  0.4.2                   — 1 copy
+                                                                                                                        before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                                                                                 @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                                                                                        after    @civitai/theme       0.3.1                   — 1 copy
+                                                                                                                                 @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
