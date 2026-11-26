@@ -62,6 +62,7 @@ import type {
   WrappedToken,
 } from '@civitai/app-sdk/blocks';
 
+import { parseRateLimitMeta } from '../internal/rateLimit.js';
 import { isRoutableRequestId, isWireRequestIdShape } from './requestId.js';
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -490,6 +491,12 @@ export function projectWorkflowSnapshot(s: unknown): unknown {
   // is removed, so it can never be read as the marker (and `watch` never drops a
   // real snapshot over it).
   if (s.throttled !== undefined && s.throttled !== true) out = withoutKeys(out, ['throttled']);
+  // The rate-limit meta is kept as its known fields only, and removed whole when malformed — a bad
+  // value never costs the block the rest of the snapshot, and never reaches `err.rateLimit`.
+  if (s.rateLimit !== undefined) {
+    const rateLimit = parseRateLimitMeta(s.rateLimit);
+    out = rateLimit ? { ...out, rateLimit } : withoutKeys(out, ['rateLimit']);
+  }
   return out;
 }
 

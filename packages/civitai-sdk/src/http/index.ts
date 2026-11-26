@@ -1,4 +1,4 @@
-import { CivitaiError } from '../core/errors.js';
+import { CivitaiError, parseRateLimitMeta, type RateLimitMeta } from '../core/errors.js';
 import type { Session } from '../session/index.js';
 
 export type QueryValue = string | number | boolean | null | undefined;
@@ -14,12 +14,22 @@ export class ApiError extends CivitaiError {
   readonly status: number;
   /** The response body, parsed as JSON when it was JSON. */
   readonly body: unknown;
+  /**
+   * The retry metadata of the rate limit that refused the request (the body's `rateLimit`, on a
+   * `429`): which limit, when to retry and, where the limit publishes them, its counts. Absent when
+   * the body carries none, or a malformed one.
+   */
+  // `declare`: no own property at all unless the body carried the meta.
+  declare readonly rateLimit?: RateLimitMeta;
 
   constructor(status: number, message: string, body: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.body = body;
+    const raw = body && typeof body === 'object' ? (body as { rateLimit?: unknown }).rateLimit : undefined;
+    const rateLimit = parseRateLimitMeta(raw);
+    if (rateLimit) this.rateLimit = rateLimit;
   }
 }
 

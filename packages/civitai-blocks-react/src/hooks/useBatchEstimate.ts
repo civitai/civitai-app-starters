@@ -6,6 +6,7 @@ import type {
   WorkflowBody,
 } from '@civitai/app-sdk/blocks';
 
+import { withRateLimit, type RateLimitMeta } from '../internal/rateLimit.js';
 import { WORKFLOW_REQUEST_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
@@ -87,6 +88,12 @@ export class BatchEstimateError extends Error {
   readonly code: BatchEstimateErrorCode;
   /** The host's or server's reason, verbatim, when it gave one. */
   readonly hostError?: string;
+  /**
+   * The rate limit that refused the whole call (code `'failed'`): which limit and when to retry.
+   * Absent when the refusal was not a rate limit, and on a host that predates the field.
+   */
+  // `declare`: no own property at all unless the host sent the meta.
+  declare readonly rateLimit?: RateLimitMeta;
 
   constructor(code: BatchEstimateErrorCode, hostError?: string) {
     super(`batch estimate failed (${code})${hostError === undefined ? '' : ' — reason on .hostError'}`);
@@ -305,7 +312,7 @@ export function useBatchEstimate(): UseBatchEstimate {
           ) {
             throw new BatchEstimateError('invalid-request', reply.error);
           }
-          throw new BatchEstimateError('failed', reply.error);
+          throw withRateLimit(new BatchEstimateError('failed', reply.error), reply);
         }
         const { snapshots, aggregate } = reply;
         if (!snapshots || !aggregate || snapshots.length !== bodies.length) {

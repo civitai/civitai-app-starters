@@ -9,6 +9,7 @@ import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
 import { useTransportConnection } from './useTransportConnection.js';
+import { withRateLimit } from '../internal/rateLimit.js';
 
 /**
  * What {@link useDailyCompensation} returns.
@@ -87,7 +88,9 @@ export function useDailyCompensation(params: BlockDailyCompensationParams): UseD
           // `||`, not `??`: the reply validator gates `error` on SHAPE only, so a
           // host `error: ''` is a VALID reply that reaches here. `??` replaces only
           // null/undefined, so it would surface an Error with an EMPTY message.
-          setError(new Error(result.error || 'failed to fetch daily compensation'));
+          setError(
+            withRateLimit(new Error(result.error || 'failed to fetch daily compensation'), result),
+          );
           setLoading(false);
           return;
         }

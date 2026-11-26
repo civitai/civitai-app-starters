@@ -6,6 +6,7 @@ import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
 import { useTransportConnection } from './useTransportConnection.js';
+import { withRateLimit } from '../internal/rateLimit.js';
 
 export type { BlockWildcardPack, BlockWildcardPackErrorCode };
 
@@ -103,7 +104,7 @@ export function useWildcardPack(modelVersionId: number): UseWildcardPack {
           // rejected upstream and can never reach this line. The only value `??`
           // replaces here is a genuinely absent `error` (the `!result.pack` arm),
           // which is exactly what the `'parse-failed'` code is for.
-          setError(new WildcardPackError(result.error ?? 'parse-failed'));
+          setError(withRateLimit(new WildcardPackError(result.error ?? 'parse-failed'), result));
           setLoading(false);
           return;
         }

@@ -12,6 +12,7 @@ import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
 import { useTransportConnection } from './useTransportConnection.js';
+import { withRateLimit } from '../internal/rateLimit.js';
 
 export type {
   BlockRunTrainingHostError,
@@ -271,7 +272,7 @@ export function useRunTraining(): UseRunTraining {
           // CAUTIOUS code — with neither a snapshot nor a reason, nothing says a
           // run was not started, so the block must not be told it was safe to
           // retry.
-          throw new RunTrainingError(reply.error || 'submission-unconfirmed');
+          throw withRateLimit(new RunTrainingError(reply.error || 'submission-unconfirmed'), reply);
         }
         // 🔴 A RESOLVED SNAPSHOT IS NOT ALWAYS A RUN. The host's training submit
         // answers its spend-cap and temporary-availability refusals (refunded,
@@ -285,9 +286,12 @@ export function useRunTraining(): UseRunTraining {
           reply.snapshot.workflowId === HOST_REFUSAL_WORKFLOW_ID &&
           reply.snapshot.status === 'failed'
         ) {
-          throw new RunTrainingError(reply.snapshot.error || 'training run refused', {
-            refusedSnapshot: reply.snapshot,
-          });
+          throw withRateLimit(
+            new RunTrainingError(reply.snapshot.error || 'training run refused', {
+              refusedSnapshot: reply.snapshot,
+            }),
+            reply.snapshot,
+          );
         }
         return reply.snapshot;
       } catch (err: unknown) {

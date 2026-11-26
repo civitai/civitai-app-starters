@@ -9,6 +9,7 @@ import { WORKFLOW_REQUEST_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useTransportConnection } from './useTransportConnection.js';
+import { withRateLimit } from '../internal/rateLimit.js';
 
 /** What {@link usePersistGenerationSource} returns. */
 export interface UsePersistGenerationSource {
@@ -109,7 +110,7 @@ export function usePersistGenerationSource(): UsePersistGenerationSource {
         // here — the transport answers it as an `error` (see
         // `isValidGenerationSourcePersistedResult`).
         if (reply.error !== undefined || !reply.result) {
-          throw new Error(reply.error || PERSIST_FAILED);
+          throw withRateLimit(new Error(reply.error || PERSIST_FAILED), reply);
         }
         const { url, width, height, imageId, ready } = reply.result;
         return { url, width, height, imageId, ready };

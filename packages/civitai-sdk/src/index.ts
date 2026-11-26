@@ -115,6 +115,7 @@ export type {
   KnownBlockWorkflowQueueSupport,
   KnownBlockWorkflowRestrictionReason,
   ModelSubstitutionReason,
+  RateLimitMeta,
   WithWorkflowStepRefs,
   WorkflowBody,
   WorkflowBodyCustomComfy,
@@ -158,7 +159,10 @@ export type {
 export { ApiError } from './http/index.js';
 export type { Http, Query, QueryValue, RequestOptions } from './http/index.js';
 export { BridgeError, CivitaiError } from './core/errors.js';
-export type { BridgeErrorCode, BridgeErrorOptions, BridgeFailureCode, RateLimitMeta } from './core/errors.js';
+// `RateLimitMeta` is exported from the generated workflow types above (`snapshot.rateLimit`);
+// `core/errors.ts` keeps its own copy for `BridgeError.rateLimit`, because core may not import a
+// domain. `test/workflows/rate-limit-meta.test.ts` pins the two to one shape.
+export type { BridgeErrorCode, BridgeErrorOptions, BridgeFailureCode } from './core/errors.js';
 
 export { getTransport } from './core/get-transport.js';
 export type { DetectOptions } from './core/get-transport.js';

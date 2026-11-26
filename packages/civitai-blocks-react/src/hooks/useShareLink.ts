@@ -8,6 +8,7 @@ import { sendTypedRequest } from '../transport/transport.js';
 import { useTransportSnapshot } from './useBlockContext.js';
 import { useCivitaiLocation } from './useCivitaiLocation.js';
 import { useTransportConnection } from './useTransportConnection.js';
+import { withRateLimit } from '../internal/rateLimit.js';
 
 /** What {@link useShareLink} returns. */
 export interface UseShareLink {
@@ -121,7 +122,7 @@ export function useShareLink(): UseShareLink {
         { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
       );
       if (reply.error !== undefined || !reply.result) {
-        throw new Error(reply.error || SHARE_FAILED);
+        throw withRateLimit(new Error(reply.error || SHARE_FAILED), reply);
       }
       const { url, copied, method } = reply.result;
       const result: BlockShareLinkResult = { url, copied, method };

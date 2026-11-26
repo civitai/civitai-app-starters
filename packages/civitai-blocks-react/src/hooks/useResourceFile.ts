@@ -13,6 +13,7 @@ import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
 import { useTransportConnection } from './useTransportConnection.js';
+import { withRateLimit } from '../internal/rateLimit.js';
 
 export type {
   BlockResourceFile,
@@ -149,7 +150,7 @@ export function useResourceFile(modelVersionId: number, fileId?: number): UseRes
           // `??`, as in `useWildcardPack`: `isValidResourceFileResult` admits only
           // the closed code set, so `error: ''` never reaches here. The fallback
           // covers only a reply with neither field, which the validator drops too.
-          setError(new ResourceFileError(result.error ?? 'parse-failed'));
+          setError(withRateLimit(new ResourceFileError(result.error ?? 'parse-failed'), result));
           setLoading(false);
           return;
         }

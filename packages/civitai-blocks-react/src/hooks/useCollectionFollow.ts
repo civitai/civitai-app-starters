@@ -9,6 +9,7 @@ import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { RequestTimeoutError, sendTypedRequest } from '../transport/transport.js';
 import { useTransportConnection } from './useTransportConnection.js';
+import { withRateLimit } from '../internal/rateLimit.js';
 
 export type { BlockCollectionFollowErrorCode, BlockCollectionFollowResult };
 
@@ -219,7 +220,10 @@ export function useCollectionFollow(): UseCollectionFollow {
           // `??` would then throw an Error with an EMPTY message for an account
           // write, which renders as a blank failure. Fall through to a code that
           // at least names a real outcome.
-          throw new CollectionFollowError(reply.error || 'collection-unavailable');
+          throw withRateLimit(
+            new CollectionFollowError(reply.error || 'collection-unavailable'),
+            reply,
+          );
         }
         return reply.result;
       } catch (err: unknown) {

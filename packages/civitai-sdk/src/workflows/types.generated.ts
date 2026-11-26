@@ -1781,6 +1781,49 @@ export interface BlockWorkflowSnapshot {
    * whose throttled reply is `{ workflowId, status: 'processing' }`.
    */
   throttled?: true;
+  /**
+   * The retry metadata of the rate limit that refused this request: which limit,
+   * when to try again and, for a limit that publishes them, its counts. The same
+   * `rateLimit` the host attaches to every other bridge error reply.
+   *
+   * Set on a `failed` snapshot the host built from a rate-limited refusal (an
+   * estimate, submit or cancel the limit turned away), and on a
+   * {@link BlockWorkflowSnapshot.throttled} reply when a rate limit shed the poll
+   * or cancel. Absent on every other snapshot, and on a host that predates the
+   * field — so its absence never means "not rate-limited" on an older host.
+   *
+   * `@civitai/blocks-react` drops a malformed value and copies it onto the error
+   * the workflow hook rejects with (`err.rateLimit`).
+   */
+  rateLimit?: RateLimitMeta;
+}
+
+/**
+ * Retry metadata the host attaches to a rate-limit refusal (Civitai's standard
+ * `rateLimit`), so an app renders the wait instead of parsing it out of a
+ * message. The same shape as `BridgeError.rateLimit` in `@civitai/sdk`.
+ */
+export interface RateLimitMeta {
+  /** Whole seconds until the call may be tried again; at least 1. */
+  retryAfterSeconds: number;
+  /** ISO-8601 instant at which the call may be tried again. */
+  retryAt: string;
+  /** Stable id of the refusing limit, e.g. `apps.submit`. */
+  id?: string;
+  /**
+   * `product`: an allowance the viewer may see and buy more of. `abuse`: an
+   * anti-flood or money/safety bound. Informational: an abuse limit can carry
+   * counts too.
+   */
+  kind?: 'product' | 'abuse';
+  /** The counts below are sent only for a limit that publishes them. */
+  limit?: number;
+  /** Attempts in the window; can exceed `limit`. */
+  used?: number;
+  remaining?: number;
+  windowSeconds?: number;
+  /** ISO-8601 instant at which the whole window is clear. */
+  resetAt?: string;
 }
 
 /** One entry of {@link BlockWorkflowSnapshot.steps}. */

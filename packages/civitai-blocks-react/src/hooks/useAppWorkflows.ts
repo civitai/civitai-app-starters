@@ -6,6 +6,7 @@ import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
 import { useRequestSequencer } from './useRequestSequencer.js';
 import { useTransportConnection } from './useTransportConnection.js';
+import { withRateLimit } from '../internal/rateLimit.js';
 
 export type { AppWorkflow, AppWorkflowsParams };
 
@@ -107,7 +108,9 @@ export function useAppWorkflows(params?: AppWorkflowsParams): UseAppWorkflows {
           // `||`, not `??`: the reply validator gates `error` on SHAPE only, so a
           // host `error: ''` is a VALID reply that reaches here. `??` replaces only
           // null/undefined, so it would surface an Error with an EMPTY message.
-          setError(new Error(result.error || 'failed to fetch app workflows'));
+          setError(
+            withRateLimit(new Error(result.error || 'failed to fetch app workflows'), result),
+          );
           setLoading(false);
           return;
         }
@@ -136,7 +139,7 @@ export function useAppWorkflows(params?: AppWorkflowsParams): UseAppWorkflows {
       // `||`, not `??`: the reply validator gates `error` on SHAPE only, so a host
       // `error: ''` is a VALID reply that reaches here. `??` replaces only
       // null/undefined, so it would throw an Error with an EMPTY message.
-      throw new Error(reply.error || 'failed to cancel workflow');
+      throw withRateLimit(new Error(reply.error || 'failed to cancel workflow'), reply);
     }
     const canceled = reply.result.workflow;
     // Optimistically splice the terminal (canceled) projection into the current
