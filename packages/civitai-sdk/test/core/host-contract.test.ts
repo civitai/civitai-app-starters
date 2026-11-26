@@ -138,6 +138,13 @@ describe('a request the host never answers', () => {
     );
   });
 
+  // 0.33 removed `app.sharedStorage` and the legacy key/value methods: the pointer names the
+  // document store instead of a client that no longer exists.
+  it('points the legacy storage messages at the document store', () => {
+    expect(unanswerable('SHARED_LIST').message).toContain('Use a shared collection: app.storage.collection(name) instead.');
+    expect(unanswerable('APP_STORAGE_GET').message).toContain('Use a private collection: app.storage.collection(name) instead.');
+  });
+
   // The ledger is frozen at publish time. A type the host added afterwards is
   // refused too, and the message must not tell that caller it was retired.
   it('tells a caller of an unknown type to upgrade, naming the version and snapshot', async () => {

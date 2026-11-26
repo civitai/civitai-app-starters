@@ -23,9 +23,7 @@ export declare function initialize(options: TokenInitializeOptions): Promise<App
  *   and is gone on reload. Show the viewer a "preview data is local to this tab"
  *   badge.
  *
- * Latched when `initialize()` resolves. Only the document store switches: the
- * deprecated key/value methods on `app.storage`, `app.sharedStorage` and the
- * `@civitai/blocks-react` storage hooks keep calling the real routes.
+ * Latched when `initialize()` resolves.
  */
 export type StorageMode = 'remote' | 'local-preview';
 
@@ -42,42 +40,24 @@ export interface AppClient {
      */
     readonly site: SiteClient;
     /**
-     * App storage. Two stores share this property while apps migrate:
+     * App storage: the document store — `collection(name)` and `info()`, the
+     * collections the app declares under `storage.collections` in its manifest,
+     * private or shared, with declared indexes, conditional writes and viewer-keyed
+     * documents (`keyedBy`: one per viewer, or per viewer per parent — a vote, a like,
+     * a per-viewer entry; count them by listing with `keyPrefix`).
      *
-     * - **The document store** — `collection(name)` and `info()`: the collections
-     *   the app declares under `storage.collections` in its manifest, private or
-     *   shared, with counters, marks, declared indexes and conditional writes.
-     *   Use this for anything new.
-     * - **The legacy per-viewer key/value store** — `get`, `set`, `delete`, `list`,
-     *   `getQuota`, each `@deprecated`. civitai.com removed it on 2026-11-10: its
-     *   routes answer `410` `legacy_store_removed`, so these reject. Nothing is
-     *   copied between the two. See
-     *   https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
+     * 🔴 Requires the block token the host mints: an app that authenticated with an
+     * OAuth access token is refused. An anonymous viewer may read SHARED collections
+     * only.
      *
-     * 🔴 Both require the block token the host mints: an app that authenticated
-     * with an OAuth access token is refused. The legacy store refuses an anonymous
-     * viewer outright; the document store lets one read SHARED collections only.
+     * The legacy key/value methods (`get`, `set`, `delete`, `list`, `getQuota`) and
+     * `app.sharedStorage` were removed in 0.33; civitai.com shut both stores down on
+     * 2026-11-10. See
+     * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
      */
-    readonly storage: StorageClient & DocumentStorage & {
+    readonly storage: DocumentStorage & {
         readonly mode: StorageMode;
     };
-    /**
-     * @deprecated Declare a `shared` collection under `storage.collections` and use
-     * `app.storage.collection(name)`. civitai.com removed this store on 2026-11-10:
-     * its routes answer `410` `legacy_store_removed`, so every method rejects. See
-     * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
-     *
-     * This app's CROSS-USER store — one namespace every viewer of this app reads
-     * and writes, which is what makes a shared feed or a "popular" rail possible.
-     *
-     * 🔴 Requires the block token, like {@link AppClient.storage}, but the audience
-     * is NOT the same: an ANONYMOUS viewer MAY read here and may never write. So
-     * `viewer === null` gates the write affordances, not the read — and an anon
-     * write surfaces as 403, refused by the scope binding before the handler runs.
-     * A signed-in viewer is not automatically a permitted writer either: writes
-     * clear a server-side minimum-trust gate.
-     */
-    readonly sharedStorage: SharedStorageClient;
     /**
      * Moderation of this app's SHARED storage: `report({ collection, key, from? })` reports one
      * document to civitai.com's moderators (`POST /api/v1/blocks/moderation/reports`). Needs the
@@ -229,305 +209,6 @@ export type TokenSource = string | ((opts: {
     signal?: AbortSignal;
 }) => string | Promise<string>);
 
-export interface SharedStorageCallOptions {
-    signal?: AbortSignal;
-}
-
-/**
- * The moderated, user-visible text plus the opaque app-owned blob.
- *
- * 🔴 `title` and `body` run the server's BLOCKING content-safety belt on every
- * write. `data` does NOT — it is unmoderated app structure. Put every string
- * another viewer will read in `title`/`body`; a text surface smuggled into
- * `data` reaches other users unmoderated, which is the one thing this split
- * exists to prevent.
- */
-export interface SharedValue {
-    title: string;
-    body?: string;
-    data?: unknown;
-}
-
-/**
- * One row of the shared store, as `list` and `get` both project it.
- *
- * 🔴 `value` is `unknown`, NOT {@link SharedValue}, and that is deliberate: the
- * row was written by some OTHER viewer's copy of this app — possibly an older
- * version, possibly a newer one — so its shape is a fact about the data, not a
- * promise this client can make. Narrow it at the call site. Declaring it
- * `SharedValue` would assert a shape nothing checked about data we did not write.
- */
-export interface SharedItem {
-    key: string;
-    /** The row's author. A caller renders "yours" by comparing it to the viewer's id. */
-    authorUserId: number;
-    value: unknown;
-    /**
-     * The row's aggregate up-vote tally, as the server projects it.
-     *
-     * ⚠ Reported, not writable from here: the vote OPERATIONS are deliberately not
-     * part of this client (see the module note). Reading the tally is what lets an
-     * app build voting at its own layer, which is why the field stays.
-     */
-    count: number;
-    /**
-     * The wire carries ISO strings; both stamps are revived here, once, so a
-     * caller can sort and diff without knowing the transport.
-     */
-    createdAt: Date;
-    updatedAt: Date;
-    /**
-     * Whether THIS viewer has voted. 🔴 Always `false` for an anonymous viewer —
-     * who may read this store — so it is not evidence that nobody voted.
-     */
-    viewerVoted: boolean;
-}
-
-export interface SharedListQuery {
-    /**
-     * Narrows to keys starting with this. Escaped server-side against LIKE wildcards.
-     * `append` mints every key as a ULID, so a prefix of your own choosing matches
-     * none of the rows it creates.
-     */
-    prefix?: string;
-    /** The server bounds this and applies its own default; this client sends none. */
-    limit?: number;
-    /** An opaque `nextCursor` from a previous page. */
-    cursor?: string;
-}
-
-export interface SharedListResult {
-    /** Newest-first on the server-generated ULID key. Hidden rows are excluded. */
-    items: SharedItem[];
-    /**
-     * 🔴 PRESENT EXACTLY WHEN THERE MAY BE MORE ROWS, and passed through
-     * untouched. The server sets it iff the page it returned was full, and it
-     * arrives nested under the reply's `metadata` — lifted here, never defaulted,
-     * never normalised, never re-derived from `items.length`. A caller uses its
-     * ABSENCE as proof a scan completed.
-     */
-    nextCursor?: string;
-}
-
-/**
- * This app's CROSS-USER key/value store — every viewer of this app reads and
- * writes one namespace, unlike {@link StorageClient}, which is private per viewer.
- *
- * 🔴 DELIBERATELY GENERIC KEY/VALUE, AND DELIBERATELY SMALLER THAN THE ROUTE
- * TABLE. The platform serves eleven shared-storage routes; this client wraps the
- * five that are key/value operations. The higher-level ops — `vote`, `unvote`,
- * `counts`, `top`, `increment`, `report` — are intentionally absent: an app that
- * needs voting, counters or reporting builds them at its own layer on top of
- * these five, and the platform surface expands only if demand shows up. **The
- * routes existing is not a reason to add a method here.** Do not "fix" this
- * omission.
- *
- * 🔴 Requires the block token the host mints, plus the scopes: every read takes
- * `apps:storage:shared:read` and every write takes `apps:storage:shared:write`.
- * An app that authenticated with an OAuth access token has no shared storage.
- *
- * 🔴 READS AND WRITES HAVE DIFFERENT AUDIENCES, and a caller must not assume one
- * implies the other:
- *
- * - An ANONYMOUS viewer MAY read (`list`, `get`) and may NEVER write. An anon
- *   write is refused by the scope binding before the handler runs, so it arrives
- *   as **403**, not the 401 a missing token gives.
- * - A signed-in viewer is not automatically a permitted writer: writes clear a
- *   minimum-trust gate (account age, completed onboarding, verified email or a
- *   linked OAuth account, not banned or muted). Treat a write refusal as a
- *   normal outcome and say so in the UI.
- *
- * 🔴 EVERY FAILURE REJECTS. No path here resolves to mean "not written" or
- * "could not read". A caller that must not act on a partial view branches on the
- * rejection, never on an empty result.
- *
- * @deprecated The legacy cross-user store. Declare a `shared` collection under
- * `storage.collections` and use `app.storage.collection(name)`, which has counters,
- * marks and authorship built in. civitai.com removed this store on 2026-11-10: its
- * routes answer `410` `legacy_store_removed`, so every method rejects. See
- * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
- */
-export interface SharedStorageClient {
-    /**
-     * One page of rows, newest-first. `GET blocks/shared-storage/list`.
-     *
-     * Values ARE returned, unlike the per-viewer client's `list` — so one request
-     * renders a page rather than needing a `get` per key.
-     */
-    list(query?: SharedListQuery, opts?: SharedStorageCallOptions): Promise<SharedListResult>;
-    /**
-     * One row by key, or `null`. `GET blocks/shared-storage/item`.
-     *
-     * 🔴 `null` covers MISSING **and** HIDDEN, deliberately and identically — a
-     * withdrawn or moderator-hidden row is indistinguishable from one that never
-     * existed, so this is not an oracle for either. It is a 200, not a 404.
-     */
-    get(key: string, opts?: SharedStorageCallOptions): Promise<SharedItem | null>;
-    /**
-     * Files a new row and resolves its key. `POST blocks/shared-storage/append`.
-     *
-     * 🔴 THE KEY IS THE SERVER'S — a ULID it generates, returned here. This method
-     * takes no key and there is no create-at-key call, because a client-chosen key
-     * would let one viewer overwrite another's row.
-     */
-    append(value: SharedValue, opts?: SharedStorageCallOptions): Promise<{
-        key: string;
-    }>;
-    /**
-     * Edits a row the VIEWER AUTHORED, in place. `POST blocks/shared-storage/update`.
-     *
-     * Another author's key is a 403 and a missing or hidden one a 404 — neither is
-     * a silent no-op. Preserved: the key, the author, `createdAt`, and the row's
-     * votes, counters and reports. Replaced: the value.
-     */
-    update(key: string, value: SharedValue, opts?: SharedStorageCallOptions): Promise<{
-        ok: true;
-    }>;
-    /**
-     * Deletes a row the VIEWER AUTHORED. `POST blocks/shared-storage/withdraw`.
-     *
-     * 🔴 `deleted: false` is a SUCCESS, and it is deliberately ambiguous: another
-     * author's key, an already-withdrawn row and a key that never existed all
-     * answer the same way, so this cannot probe for other viewers' rows. Do not
-     * report it to the viewer as "someone else owns this".
-     */
-    withdraw(key: string, opts?: SharedStorageCallOptions): Promise<{
-        ok: true;
-        deleted: boolean;
-    }>;
-}
-
-export interface StorageCallOptions {
-    signal?: AbortSignal;
-}
-
-/** One row of a key listing. Values are not returned — `get(key)` fetches them. */
-export interface StorageKeyEntry {
-    key: string;
-    /**
-     * When this key was last written. The wire carries an ISO string; it is
-     * revived here, once, so a caller can do date arithmetic without knowing the
-     * transport.
-     */
-    updatedAt: Date;
-}
-
-export interface StorageListResult {
-    keys: StorageKeyEntry[];
-    /**
-     * 🔴 PRESENT EXACTLY WHEN THERE MAY BE MORE ROWS, and passed through
-     * untouched. The server sets it iff the page it returned was full. A caller
-     * uses its ABSENCE as proof a scan completed, and for one caller that is a
-     * money decision. Never default it, never normalise it, never re-derive it
-     * from `keys.length`.
-     */
-    nextCursor?: string;
-}
-
-export interface StorageListQuery {
-    /** Narrows to keys starting with this. Escaped server-side against LIKE wildcards. */
-    prefix?: string;
-    /** The server bounds this and applies its own default; this client sends none. */
-    limit?: number;
-    /** An opaque `nextCursor` from a previous page. */
-    cursor?: string;
-}
-
-export interface StorageQuota {
-    /**
-     * 🔴 THE STORED UNIT — Postgres `octet_length(value::text)` over JSONB, the
-     * unit both ceilings are enforced in, and the authority for "how close am I
-     * to my cap". It is NOT {@link StorageClient.set}'s `sizeBytes`: measured, a
-     * numeric-heavy payload stores up to 44.4x its wire size.
-     */
-    usedBytes: number;
-    rowCount: number;
-    /** Render this, never a compiled-in figure — the ceiling can move. */
-    limitBytes: number;
-    /** Usually the BINDING one: many small rows exhaust this long before bytes. */
-    limitRows: number;
-}
-
-/**
- * The viewer's own per-(app, block instance) key/value store.
- *
- * 🔴 Requires the block token the host mints. An app that authenticated with an
- * OAuth access token instead has no per-viewer app storage — every call is
- * refused.
- *
- * 🔴 EVERY FAILURE REJECTS. There is no path here that resolves to mean "not
- * written", and none that resolves to mean "could not read". A caller that must
- * not act on a partial view branches on the rejection, never on an empty result.
- */
-export interface StorageClient {
-    /**
-     * The value, or `null` when the key is unset. Rejects on any refusal.
-     *
-     * @deprecated The legacy per-viewer key/value store. Declare a `private`
-     * collection under `storage.collections` and use `app.storage.collection(name)`.
-     * civitai.com removed this store on 2026-11-10: the route answers `410`
-     * `legacy_store_removed`, so this rejects. See
-     * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
-     */
-    get<T = unknown>(key: string, opts?: StorageCallOptions): Promise<T | null>;
-    /**
-     * Upsert one key. Resolves only when the write landed.
-     *
-     * `sizeBytes` is the WIRE unit — the byte length of the serialised value — so
-     * it predicts the per-value cap and nothing else. 🔴 Do not sum it to track
-     * quota; call {@link StorageClient.getQuota}. See {@link StorageQuota.usedBytes}.
-     *
-     * A value of `undefined` is stored as `null`: it does not survive JSON, and
-     * the server writes `null` for an absent value rather than refusing.
-     *
-     * @deprecated The legacy per-viewer key/value store. Declare a `private`
-     * collection under `storage.collections` and use `app.storage.collection(name)`.
-     * civitai.com removed this store on 2026-11-10: the route answers `410`
-     * `legacy_store_removed`, so this rejects. See
-     * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
-     */
-    set<T = unknown>(key: string, value: T, opts?: StorageCallOptions): Promise<{
-        ok: true;
-        sizeBytes: number;
-    }>;
-    /**
-     * Idempotent. `deleted: false` means the key was already absent — a success.
-     *
-     * @deprecated The legacy per-viewer key/value store. Declare a `private`
-     * collection under `storage.collections` and use `app.storage.collection(name)`.
-     * civitai.com removed this store on 2026-11-10: the route answers `410`
-     * `legacy_store_removed`, so this rejects. See
-     * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
-     */
-    delete(key: string, opts?: StorageCallOptions): Promise<{
-        ok: true;
-        deleted: boolean;
-    }>;
-    /**
-     * One page of keys, ordered by key ascending. Values are not returned.
-     *
-     * @deprecated The legacy per-viewer key/value store. Declare a `private`
-     * collection under `storage.collections` and use `app.storage.collection(name)`.
-     * civitai.com removed this store on 2026-11-10: the route answers `410`
-     * `legacy_store_removed`, so this rejects. See
-     * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
-     */
-    list(query?: StorageListQuery, opts?: StorageCallOptions): Promise<StorageListResult>;
-    /**
-     * This viewer's usage against this viewer's caps, in the stored unit.
-     *
-     * It reports neither the key-length cap nor the per-value cap, so a write
-     * that fits the numbers here can still be refused.
-     *
-     * @deprecated The legacy per-viewer key/value store. Declare a `private`
-     * collection under `storage.collections` and use `app.storage.collection(name)`.
-     * civitai.com removed this store on 2026-11-10: the route answers `410`
-     * `legacy_store_removed`, so this rejects. See
-     * https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores
-     */
-    getQuota(opts?: StorageCallOptions): Promise<StorageQuota>;
-}
-
 /**
  * A refusal from a sub-listing route, whose body is `{ error, code }`. Branch on
  * `code`: `error` (this error's `message`) is a server sentence, not UI copy.
@@ -567,7 +248,7 @@ export interface SubListingUpsertInput {
      * key up in every such collection the approved manifest declares, production
      * namespace only, so it must be unique across them: a key two of them hold
      * reads as `item_not_found`. An app that declares no such collection is still
-     * on legacy shared storage (`app.sharedStorage`) and resolves its old rows,
+     * on the removed legacy shared storage and resolves its old rows,
      * which can no longer be created. One sub-listing per key: publishing
      * the same key again edits it, and every call REPLACES the whole item — an
      * optional you leave out is cleared, so re-send the ones you want to keep.
@@ -731,35 +412,12 @@ export type DocumentAuthor =
 export interface StorageDocument<T extends object = Record<string, unknown>> {
     key: string;
     data: T;
-    /** +1 on every `data` write. Counter and mark changes do not move it. */
+    /** +1 on every `data` write. */
     version: number;
     /** Revived from the wire's ISO string, once, here. */
     createdAt: Date;
     updatedAt: Date;
     author: DocumentAuthor;
-    /**
-     * Declared counters of a shared collection; `{}` on a private one.
-     *
-     * @deprecated Counters are being removed: there is no server-side count. Keep what each
-     * viewer did in a viewer-keyed collection (`keyedBy`) and count by listing it.
-     */
-    counters: Record<string, number>;
-    /**
-     * Declared mark counts of a shared collection (never `report`'s); `{}` on a private one.
-     *
-     * @deprecated Marks are being removed. Count a viewer-keyed collection's documents for this
-     * key by listing it with `keyPrefix` set to `<key>:`.
-     */
-    marks: Record<string, number>;
-    /**
-     * The viewer's own marks on this document; `null` for an anonymous viewer.
-     *
-     * @deprecated Marks are being removed. Read the viewer's own vote or like with
-     * {@link StorageCollection.getMine}.
-     */
-    viewer: {
-        marks: string[];
-    } | null;
 }
 
 /** A `time` index filters by an ISO-8601 string or epoch milliseconds; a `Date` is sent as ISO. */
@@ -773,27 +431,12 @@ export interface DocumentListQuery {
     where?: Record<string, DocumentWhereValue>;
     /**
      * `[-]key | createdAt | updatedAt | <index>`; a leading `-` is descending. The server's
-     * default is `key`. `counter:<name>` and `mark:<name>` still sort, but are DEPRECATED with
-     * counters and marks: there is no sort by count. Count a viewer-keyed collection by listing
+     * default is `key`. There is no sort by count: count a viewer-keyed collection by listing
      * it with `keyPrefix` set to `<parent>:`, and sort in the app.
      */
     sort?: string;
     /** Only documents the viewer authored. */
     author?: 'me';
-    /**
-     * With {@link DocumentListQuery.mark}: only documents the viewer marked with it.
-     *
-     * @deprecated Marks are being removed. Keep each viewer's vote or like in
-     * a viewer-keyed collection (`keyedBy`) and list it with `author: 'me'`.
-     */
-    markedBy?: 'me';
-    /**
-     * The mark {@link DocumentListQuery.markedBy} filters by.
-     *
-     * @deprecated Marks are being removed. Keep each viewer's vote or like in
-     * a viewer-keyed collection (`keyedBy`) and list it with `author: 'me'`.
-     */
-    mark?: string;
     keyPrefix?: string;
     /** The server bounds it and applies its own default; this client sends none. */
     limit?: number;
@@ -814,120 +457,6 @@ export interface WriteOptions extends DocumentCallOptions {
      * `details.currentVersion`.
      */
     ifVersion?: number;
-}
-
-/**
- * Add `by` to ONE declared counter: `{ $inc: { plays: 1 } }`. `by` is required (the
- * wire has no default), so `{ $inc: { plays: undefined } }` does not type-check; the
- * server takes an integer from 1 to 100. The type cannot say "exactly one counter":
- * naming two is refused `invalid_request` (`malformed_operator`).
- *
- * @deprecated Counters and {@link StorageCollection.update} are being removed: there is no
- * server-side counter. Keep what each viewer did in a viewer-keyed collection (`keyedBy`) and
- * count by listing it.
- */
-export interface StorageIncrementOp {
-    $inc: Record<string, number>;
-    $mark?: never;
-    $unmark?: never;
-}
-
-/**
- * Set the viewer's mark: `{ $mark: 'vote' }` — a declared mark, or the built-in `report`.
- *
- * @deprecated Marks and {@link StorageCollection.update} are being removed. A vote or like is
- * the viewer's own document in a viewer-keyed collection: {@link StorageCollection.putMine}.
- * A report is `app.moderation.report`.
- */
-export interface StorageMarkOp {
-    $mark: string;
-    $inc?: never;
-    $unmark?: never;
-}
-
-/**
- * Remove the viewer's mark: `{ $unmark: 'vote' }`. A `report` cannot be withdrawn.
- *
- * @deprecated Marks and {@link StorageCollection.update} are being removed. Withdraw a vote or
- * like in a viewer-keyed collection with {@link StorageCollection.deleteMine}.
- */
-export interface StorageUnmarkOp {
-    $unmark: string;
-    $inc?: never;
-    $mark?: never;
-}
-
-/**
- * ONE update operator for {@link StorageCollection.update}. Each member forbids the
- * other two, so a second operator is a type error, and an unknown one is an excess
- * property.
- *
- * @deprecated {@link StorageCollection.update} is being removed with counters and marks. Use
- * a viewer-keyed collection: {@link StorageCollection.getMine}, {@link StorageCollection.putMine},
- * {@link StorageCollection.deleteMine}.
- */
-export type StorageUpdateOp = StorageIncrementOp | StorageMarkOp | StorageUnmarkOp;
-
-/**
- * What {@link StorageCollection.publish} copies, and from where.
- *
- * @deprecated Server-side publish is being removed. Read the private documents and write the
- * shared copies one by one with {@link StorageCollection.put} / {@link StorageCollection.delete}.
- */
-export interface StoragePublishRequest {
-    /**
-     * One of THIS app's PRIVATE collections: the viewer's own documents are read from it by the
-     * server. (Not an import's source app: a publish runs in this app only.)
-     */
-    from: string;
-    /** 1 to 500 keys, none twice. */
-    keys: readonly string[];
-    /**
-     * Also delete the viewer's own copies in this collection whose key no longer has a document
-     * in `from` (at most 500 per call; see {@link StoragePublishResult.pruneIncomplete}). Copies
-     * whose private documents still exist in `from` (another character's, say) are never pruned.
-     * Prune is scoped by `from`, not by where a copy came from: if several private collections
-     * feed this one, a prune from one of them deletes the copies published from the others.
-     */
-    prune?: boolean;
-}
-
-/**
- * Why a key was not copied. `missing`: the viewer has no document at that key in `from`.
- * `not_author`: another user's copy holds the key; it is never touched. `hidden`: the viewer's
- * own copy was hidden by a moderator; it is never rewritten. Open-ended for a later server.
- *
- * @deprecated Server-side publish is being removed; see {@link StorageCollection.publish}.
- */
-export type StoragePublishSkipReason = 'missing' | 'not_author' | 'hidden' | (string & {});
-
-/**
- * Every list is in key order.
- *
- * @deprecated Server-side publish is being removed; see {@link StorageCollection.publish}.
- */
-export interface StoragePublishResult {
-    created: string[];
-    updated: string[];
-    /** Same content as the private document: not written, and it cost nothing. */
-    unchanged: string[];
-    pruned: string[];
-    skipped: {
-        key: string;
-        reason: StoragePublishSkipReason;
-    }[];
-    /** More copies were prunable than one call prunes: call `publish` again. */
-    pruneIncomplete: boolean;
-}
-
-/** @deprecated Server-side unpublish is being removed; see {@link StorageCollection.unpublish}. */
-export interface StorageUnpublishResult {
-    deleted: string[];
-    /** `missing`: nothing visible at that key. `not_author`: another user's copy, never touched. */
-    skipped: {
-        key: string;
-        reason: 'missing' | 'not_author' | (string & {});
-    }[];
 }
 
 /**
@@ -968,148 +497,6 @@ export interface StorageCollection<T extends object = Record<string, unknown>> {
     }>;
     /** One page. Follow `nextCursor` with the same query for the next one. */
     list(query?: DocumentListQuery, opts?: DocumentCallOptions): Promise<DocumentPage<T>>;
-    /**
-     * Apply ONE update operator to a shared document — `PATCH …/:collection/:key` with
-     * the operator as the body. A tally never changes `data` or `version`.
-     *
-     * - `{ $inc: { [counter]: by } }` adds `by` to a declared counter and resolves
-     *   `{ value }`, the new total. In a `write: "none"` collection the first increment
-     *   of an absent key creates the document.
-     * - `{ $mark: name }` sets the viewer's mark (a declared mark, or the built-in
-     *   `report`) and resolves `{ marked: true, count }`. Idempotent. `count` is absent
-     *   for `report`, whose count is never exposed.
-     * - `{ $unmark: name }` removes it and resolves `{ marked: false, count }`.
-     *   Idempotent. A `report` cannot be withdrawn: the server refuses it
-     *   `invalid_request` (400) for every caller.
-     *
-     * A body the server cannot read as one operator is refused `invalid_request`, with
-     * `details.reason` saying why (`empty_patch`, `unknown_operator`, `multiple_operators`,
-     * `merge_patch_unsupported` or `malformed_operator`).
-     *
-     * Needs a civitai.com that serves the PATCH route (civitai/civitai#8292); the
-     * deprecated methods below keep their own routes and do not.
-     *
-     * @deprecated Counters, marks and this PATCH route are being removed. A vote, like or
-     * per-viewer entry is the viewer's own document in a viewer-keyed collection (`keyedBy`): read it
-     * with {@link StorageCollection.getMine}, set it with {@link StorageCollection.putMine},
-     * clear it with {@link StorageCollection.deleteMine}, and count by listing with `keyPrefix`.
-     * There is no server-side counter. A report is `app.moderation.report`.
-     *
-     * @example
-     * ```ts
-     * await plays.update('model-123', { $inc: { plays: 1 } }); // { value }
-     * await requests.update('r1', { $mark: 'vote' }); // { marked: true, count }
-     * await requests.update('r1', { $unmark: 'vote' }); // { marked: false, count }
-     * ```
-     */
-    update(key: string, op: StorageIncrementOp, opts?: DocumentCallOptions): Promise<{
-        value: number;
-    }>;
-    /** @deprecated Counters, marks and `update` are being removed; see the first overload. */
-    update(key: string, op: StorageMarkOp, opts?: DocumentCallOptions): Promise<{
-        marked: true;
-        count?: number;
-    }>;
-    /** @deprecated Counters, marks and `update` are being removed; see the first overload. */
-    update(key: string, op: StorageUnmarkOp, opts?: DocumentCallOptions): Promise<{
-        marked: false;
-        count?: number;
-    }>;
-    /**
-     * An operator chosen at run time; the reply is the one its operator gives.
-     *
-     * @deprecated Counters, marks and `update` are being removed; see the first `update` overload.
-     */
-    update(key: string, op: StorageUpdateOp, opts?: DocumentCallOptions): Promise<{
-        value: number;
-    } | {
-        marked: boolean;
-        count?: number;
-    }>;
-    /**
-     * Add `by` (the server's default when omitted) to a declared counter of a shared document. In a
-     * `write: "none"` collection the first increment of an absent key creates the
-     * document. Sends `POST …/:key/counters/:counter`, the deprecated per-tally route.
-     *
-     * @deprecated Counters are being removed, and {@link StorageCollection.update} with them, so
-     * do not move to `update`. Keep what each viewer did in a viewer-keyed collection (`keyedBy`)
-     * ({@link StorageCollection.putMine}) and count by listing it; there is no server-side counter.
-     */
-    increment(key: string, counter: string, by?: number, opts?: DocumentCallOptions): Promise<{
-        value: number;
-    }>;
-    /**
-     * Set the viewer's mark on a shared document — a declared mark, or the
-     * built-in `report`. Idempotent. `count` is absent for `report`, whose count is
-     * never exposed. Sends `PUT …/:key/marks/:name`, the deprecated per-tally route.
-     *
-     * @deprecated Marks are being removed, and {@link StorageCollection.update} with them, so do
-     * not move to `update`. A vote or like is the viewer's own document in
-     * a viewer-keyed collection (`keyedBy`): set it with {@link StorageCollection.putMine}. A report
-     * is `app.moderation.report`.
-     */
-    mark(key: string, name: string, opts?: DocumentCallOptions): Promise<{
-        marked: true;
-        count?: number;
-    }>;
-    /**
-     * Remove the viewer's mark. Idempotent. A `report` cannot be withdrawn: the
-     * server refuses it `invalid_request` (400) for every caller. Sends
-     * `DELETE …/:key/marks/:name`, the deprecated per-tally route.
-     *
-     * @deprecated Marks are being removed, and {@link StorageCollection.update} with them, so do
-     * not move to `update`. Withdraw a vote or like in a viewer-keyed collection (`keyedBy`) with
-     * {@link StorageCollection.deleteMine}.
-     */
-    unmark(key: string, name: string, opts?: DocumentCallOptions): Promise<{
-        marked: false;
-        count?: number;
-    }>;
-    /**
-     * Server-side PUBLISH into this SHARED collection: the server copies the viewer's own
-     * documents at `keys` from this app's PRIVATE collection `from`, authored by the viewer, in
-     * ONE transaction — every copy lands or none does. The data never travels through the app.
-     * Sends `POST …/_publish/:collection`.
-     *
-     * - A re-publish writes only new or changed documents; `unchanged` ones cost nothing.
-     * - Each copy is checked as a `put` would be (publish consent, trust, schema,
-     *   `ownedModelVersions`, moderation, the viewer's and the app's ceilings). Any refusal
-     *   refuses the whole publish; `details.key` names the document where it applies.
-     * - A private document that changes while the publish runs: `version_conflict` with
-     *   `details.reason: 'source_changed'`; a shared copy that changes: `'target_changed'`.
-     *   Publish again.
-     * - Its own budget, never the shared write budget: about 10 publishes per viewer per day.
-     *   Refused: `rate_limited` (429) with `details.bucket: 'publish'` and
-     *   {@link StorageError.retryAfter}. Every call, one that changes nothing included, also
-     *   spends one token of the private-write window (`details.bucket: 'write'` when empty).
-     * - Refused before anything is spent: no keys (`reason: 'empty_keys'`), more than 500
-     *   (`too_many_keys`) or a key twice (`duplicate_key`).
-     *
-     * A civitai.com that does not serve publish — an older release, or the app's host flag off —
-     * answers as an unknown route; this method then rejects with the LOCAL code
-     * `publish_unavailable` (status 404). Fall back to writing the copies one by one, waiting
-     * out each `rate_limited` for its `retryAfter`.
-     *
-     * @example
-     * ```ts
-     * const r = await app.storage.collection('clips').publish({ from: 'my_clips', keys, prune: true });
-     * ```
-     *
-     * @deprecated Server-side publish is being removed. Read the private documents with
-     * {@link StorageCollection.get} / {@link StorageCollection.getMany} and write the shared
-     * copies one by one with {@link StorageCollection.put}, the fallback an app already uses
-     * when publish is unavailable.
-     */
-    publish(request: StoragePublishRequest, opts?: DocumentCallOptions): Promise<StoragePublishResult>;
-    /**
-     * Delete the viewer's own documents at `keys` (1 to 500) from this SHARED collection in ONE
-     * transaction. Another user's document at a key is skipped as `not_author`, never touched.
-     * Sends `POST …/_unpublish/:collection`. Same `publish_unavailable` as {@link publish}.
-     *
-     * @deprecated Server-side unpublish is being removed. Delete the shared copies one by one with
-     * {@link StorageCollection.delete}.
-     */
-    unpublish(keys: readonly string[], opts?: DocumentCallOptions): Promise<StorageUnpublishResult>;
     /**
      * VIEWER-KEYED collections (`keyedBy` in the manifest): the signed-in viewer's own document,
      * or `null` when they have none. `parent` names the parent key on a `parent+viewer`
@@ -1164,10 +551,6 @@ export interface StorageCollectionInfo {
     visibility: 'private' | 'shared';
     /** Shared collections only. */
     write?: string;
-    /** @deprecated Counters are being removed; a viewer-keyed collection reports `keyedBy`. */
-    counters: string[];
-    /** @deprecated Marks are being removed; a viewer-keyed collection reports `keyedBy`. */
-    marks: string[];
     indexes: Record<string, StorageIndexType>;
     showAuthor: boolean;
     /** Present on a viewer-keyed collection only: how its keys are derived. */
@@ -1198,7 +581,6 @@ export interface StorageLimits {
     rate: {
         readsPerMinute: number;
         privateWritesPerMinute: number;
-        marksAndCountersPerMinute: number;
         reportsPerDay: number;
         sharedWritesBurst: number;
         sharedWritesPerDay: number;
@@ -1230,7 +612,7 @@ export interface CollectionOptions {
      * (refusals: {@link storageImportRefusal}). Only an ordinary block token imports: a
      * dev-tunnel preview, a dev token, a hub token and a review are refused.
      *
-     * A create, put, counter, mark or unmark in one of the source's SHARED collections also
+     * A create or put in one of the source's SHARED collections also
      * needs the viewer's `apps:storage:publish` grant IN THE SOURCE APP (civitai/civitai#7586).
      * On `app.storage` the client asks the host for it by itself when the source refuses
      * for want of it: one prompt, then the same call ONCE more on the next host-pushed token
@@ -1280,11 +662,6 @@ export type StorageErrorCode = 'invalid_request' | 'index_not_declared' | 'unaut
 /** LOCAL, never sent by the server: the local preview's in-memory store could not be loaded. */
  | 'local_preview_unavailable'
 /**
- * LOCAL, never sent by the server: `publish` / `unpublish` reached a civitai.com that does not
- * serve them (an older release, or the app's host flag off), which answered `404 not_found`.
- */
- | 'publish_unavailable'
-/**
  * LOCAL, never sent by the server: `app.moderation.report` reached a civitai.com that does not
  * serve the report API (an older release without the route, or the app's host flag off).
  */
@@ -1331,7 +708,7 @@ export type StorageImportNotEligibleReason = 'import_in_review' | 'import_dev_to
  *   (a token that already carries the scope is re-minted without it), then
  *   `await app.requestGrants(['apps:storage:import'])`. `false` means "not now": do not loop.
  * - `source_publish_consent` — 403 `consent_required` naming `apps:storage:publish` AND a
- *   `from`: a create, put, counter, mark or unmark in one of the SOURCE app's shared
+ *   `from`: a create or put in one of the SOURCE app's shared
  *   collections needs the viewer's publish consent IN THE SOURCE APP. An import grant is
  *   not that consent. `app.storage` has ALREADY asked the host for it (see
  *   {@link CollectionOptions.from}) by the time this reaches the app, so it means "not
@@ -1440,8 +817,7 @@ export interface ModerationClient {
      * A civitai.com that does not serve the report API — an older release, or the app's host flag
      * off — rejects with the LOCAL code `report_unavailable` (404): only the route's exact
      * `not_found` "no such route", or a 404 without the storage envelope. Any other 404 surfaces
-     * as it is. Hide the report action then;
-     * a `report` mark (`update(key, { $mark: 'report' })`) is the older route.
+     * as it is. Hide the report action then: this SDK has no other way to report.
      *
      * @example
      * ```ts
@@ -4585,7 +3961,7 @@ export interface FakeStorageSource {
     status?: string;
     /**
      * Scopes the viewer revoked IN THIS SOURCE. Revoking `apps:storage:publish` here is how a
-     * test reaches the publish-in-source refusal: a write, counter or mark through a
+     * test reaches the publish-in-source refusal: a write or report through a
      * `readwrite` import into one of this source's shared collections is refused
      * `consent_required` with `details: { scope: 'apps:storage:publish', from }`.
      */
@@ -4645,7 +4021,7 @@ export interface FakeStorageOptions {
     limits?: Partial<typeof DEFAULT_LIMITS>;
     /**
      * Apply the server's rate limits: the per-minute and per-day windows (reads, private
-     * writes and deletes, marks and counters, reports) and the shared write budget.
+     * writes and deletes, reports) and the shared write budget.
      * Default `false`, so an app's own tests are never throttled; turn it on to test how
      * the app handles `rate_limited`.
      */
@@ -4657,13 +4033,6 @@ export interface FakeStorageOptions {
      * Default: {@link FAKE_STORAGE_MODERATION}'s words.
      */
     moderate?: (text: string) => FakeModerationVerdict;
-    /**
-     * Serve server-side publish and unpublish (`POST …/_publish/:to`, `…/_unpublish/:to`). Default
-     * `false`, as on civitai.com, where they sit behind a per-app flag that is off: both answer as
-     * an unknown route (404 `not_found`), which the client reports as `publish_unavailable`, so an
-     * app's default tests exercise its fallback. `true` serves them, to test the publish path.
-     */
-    publish?: boolean;
     /**
      * Serve the report API (`POST blocks/moderation/reports`). Default `false`, as on civitai.com,
      * where it sits behind a per-app flag that is off: it answers as an unknown route (404

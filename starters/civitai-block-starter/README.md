@@ -53,8 +53,8 @@ app.host.autoResize(document.getElementById('root')!); // iframe follows content
 
 The whole demo is [`src/block.ts`](./src/block.ts). From the same `app` you also get
 `app.site` (the `/api/v1` REST API as the viewer), `app.workflows`
-(generation: `estimate`, `submit`, `wait`, `watch`, `cancel`, `list`), `app.storage` /
-`app.sharedStorage` (per-viewer and cross-viewer app storage),
+(generation: `estimate`, `submit`, `wait`, `watch`, `cancel`, `list`), `app.storage`
+(the document store: the collections your manifest declares), `app.moderation`,
 `app.requestGrants(scopes)`, and the host's own UI via `app.host` — `navigate`,
 `openResourcePicker`, `openBuzzPurchase`, `openImageUpload`,
 `publishGenerationOutputs`, `requestSignIn`, `download`, `reportError`. The

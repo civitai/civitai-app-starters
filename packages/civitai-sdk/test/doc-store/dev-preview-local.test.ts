@@ -149,15 +149,6 @@ describe('dev-tunnel preview: the document store is local', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('leaves the deprecated key/value store on its real route (out of scope)', async () => {
-    injectManifest(MANIFEST);
-    const { fetch, calls } = fakeFetch([() => json(200, { value: null })]);
-    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
-
-    await app.storage.get('legacy');
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toContain('/blocks/app-storage/');
-  });
 });
 
 describe('dev-tunnel preview: what the local store does NOT check', () => {
@@ -188,7 +179,8 @@ describe('dev-tunnel preview: what the local store does NOT check', () => {
   });
 });
 
-describe('dev-tunnel preview: tallies as update operators (PATCH)', () => {
+describe('dev-tunnel preview: the removed tallies, as civitai.com answers them', () => {
+  // A manifest may still declare marks, counters and write "none"; nothing serves them.
   const TALLY_MANIFEST = {
     scopes: ['apps:storage', 'apps:storage:publish', 'user:read:self'],
     storage: {
@@ -199,55 +191,17 @@ describe('dev-tunnel preview: tallies as update operators (PATCH)', () => {
     },
   };
 
-  it('serves update() with each operator, and the deprecated methods, locally', async () => {
+  it('a write: none collection is read-only locally; documents carry no tally fields', async () => {
     injectManifest(TALLY_MANIFEST);
     const { fetch, calls } = realRoutes();
     const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
     const posts = app.storage.collection('posts');
-    const plays = app.storage.collection('plays');
 
-    const out = [
-      await settle(plays.update('m', { $inc: { plays: 4 } })),
-      await settle(plays.increment('m', 'plays')),
-      await settle(posts.put('p', { title: 'local' })),
-      await settle(posts.update('p', { $mark: 'vote' })),
-      await settle(posts.update('p', { $unmark: 'vote' })),
-      await settle(posts.mark('p', 'report')),
-    ];
-
+    await posts.put('p', { title: 'local' });
+    await expect(app.storage.collection('plays').put('m', { n: 1 })).rejects.toMatchObject({ code: 'write_policy', status: 403 });
+    const doc = await posts.get('p');
+    expect(Object.keys(doc!).sort()).toEqual(['author', 'createdAt', 'data', 'key', 'updatedAt', 'version']);
     expect(calls).toEqual([]);
-    expect(out[0]).toEqual({ value: { value: 4 } });
-    expect(out[1]).toEqual({ value: { value: 5 } });
-    expect(out[3]).toEqual({ value: { marked: true, count: 1 } });
-    expect(out[4]).toEqual({ value: { marked: false, count: 0 } });
-    expect(out[5]).toEqual({ value: { marked: true } });
-  });
-
-  it.each([
-    ['empty_patch', {}],
-    ['unknown_operator', { $set: { title: 'x' } }],
-    ['multiple_operators', { $inc: { views: 1 }, $mark: 'vote' }],
-    ['merge_patch_unsupported', { title: 'x' }],
-    ['malformed_operator', { $mark: 1 }],
-  ])('refuses a body that is not one operator locally: %s', async (reason, op) => {
-    injectManifest(TALLY_MANIFEST);
-    const { fetch, calls } = realRoutes();
-    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
-    const error = await app.storage
-      .collection('posts')
-      .update('p', op as never)
-      .catch((e: unknown) => e);
-    expect(calls).toEqual([]);
-    expect(error).toBeInstanceOf(StorageError);
-    expect(error).toMatchObject({ status: 400, code: 'invalid_request', details: { reason } });
-  });
-
-  it('without a manifest, update() fails with the same local error as every other method', async () => {
-    const { fetch, calls } = fakeFetch([]);
-    const app = await initialize({ transport: block({ storageMode: 'local-preview' }), fetch });
-    const error = await app.storage.collection('posts').update('p', { $mark: 'vote' }).catch((e: unknown) => e);
-    expect(error).toMatchObject({ name: 'StorageError', code: 'local_preview_no_manifest', status: 404 });
-    expect(calls).toHaveLength(0);
   });
 });
 

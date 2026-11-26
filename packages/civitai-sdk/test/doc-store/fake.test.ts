@@ -15,14 +15,9 @@ import { createFakeStorage, type FakeStorageOptions } from '../../src/testing.js
  *     daily 300 refilling one every 4.8 min, the rejection bucket (10, one back every
  *     30 min), refunds on a refused write and none charged for an outage, per viewer;
  *   - fixed-window resets and `retryAfter` values; anonymous reads sharing one window;
- *   - a report withdrawal refused BEFORE sign-in and any budget (the contract pins
- *     only the signed-in refusal itself);
  *   - typed `where` filters (number, boolean, time) and the one-filter limit;
- *   - sorts by an index, a tally (absent = 0, key tiebreak in the sort direction),
- *     `createdAt`; `keyPrefix`; `markedBy` + `mark`;
- *   - authorship display (`username` only under `showAuthor`; `counter` authors);
- *   - deleting a shared document drops its counters and marks; tallies never bump
- *     `version`;
+ *   - sorts by an index (key tiebreak in the sort direction), `createdAt`; `keyPrefix`;
+ *   - authorship display (`username` only under `showAuthor`);
  *   - byte quotas in the stored unit and their `ceiling`; `info()` usage figures;
  *     `getMany`'s 100-key limit; an index value of the wrong type refusing a write.
  *
@@ -100,19 +95,19 @@ describe('the manifest', () => {
 
 describe('rate limits are opt-in', () => {
   it('off by default: no window and no shared write budget throttles an app\'s tests', async () => {
-    const { fake } = make({ enforceRateLimits: false });
+    const { fake } = make({ enforceRateLimits: false, reports: true });
     const posts = fake.storage.collection('posts');
     // 35 shared writes: past the burst of 30 that would refuse the 31st with limits on.
     for (let i = 0; i < 35; i++) await posts.put(`p${i}`, {});
-    for (let i = 0; i < 40; i++) await fake.storage.collection('plays').increment('m', 'plays');
-    for (let i = 0; i < 25; i++) await posts.mark('p0', 'report');
+    // 25 reports: past the 20 a day that would refuse the 21st with limits on.
+    for (let i = 0; i < 25; i++) await fake.moderation.report({ collection: 'posts', key: 'p0' });
     await expect(posts.list({ limit: 100 })).resolves.toMatchObject({ items: { length: 35 } });
   });
 
   it('the default is off', async () => {
     const fake = createFakeStorage({ manifest: { scopes: SCOPES, storage: { collections: COLLECTIONS } } });
-    for (let i = 0; i < 35; i++) await fake.storage.collection('plays').increment('m', 'plays');
-    expect((await fake.storage.collection('plays').get('m'))!.counters.plays).toBe(35);
+    for (let i = 0; i < 35; i++) await fake.storage.collection('posts').put(`p${i}`, {});
+    expect((await fake.storage.collection('posts').list({ limit: 100 })).items).toHaveLength(35);
   });
 });
 
@@ -188,33 +183,16 @@ describe('the shared write budget', () => {
 });
 
 describe('fixed windows', () => {
-  it('marks and counters: 30 a minute from the first, every request counted, then a fresh window', async () => {
-    const { fake, clock } = make();
+  it('reports: 20 a day from the first, then a fresh window', async () => {
+    const { fake, clock } = make({ reports: true });
+    const report = () => fake.moderation.report({ collection: 'posts', key: 'p' });
     await fake.storage.collection('posts').put('p', {});
-    for (let i = 0; i < 30; i++) await fake.storage.collection('plays').increment('m', 'plays');
-    clock.advance(20_000);
-    const e = await refusal(fake.storage.collection('posts').mark('p', 'vote'));
-    expect(e.details).toEqual({ bucket: 'tally', retryAfter: 40 });
-    clock.advance(40_000);
-    await expect(fake.storage.collection('posts').mark('p', 'vote')).resolves.toEqual({ marked: true, count: 1 });
-  });
-
-  it('withdrawing a report is refused before sign-in and before any budget, and the report stays', async () => {
-    const { fake } = make();
-    const posts = fake.storage.collection('posts');
-    await posts.put('p', {});
-    await posts.mark('p', 'report'); // 1 of 30 tally tokens
-    // Ordering: a 400 for everyone — an anonymous caller is NOT told sign_in_required.
-    const anon = await refusal(fake.as({ viewer: null }).storage.collection('posts').unmark('p', 'report'));
-    expect([anon.status, anon.code, anon.details]).toEqual([400, 'invalid_request', { mark: 'report' }]);
-    const refused = await refusal(posts.unmark('p', 'report'));
-    expect([refused.status, refused.code, refused.details]).toEqual([400, 'invalid_request', { mark: 'report' }]);
-    // The viewer's report is still there.
-    expect((await posts.get('p'))!.viewer).toEqual({ marks: ['report'] });
-    // Neither refusal spent a tally token: 29 more tallies fit the window of 30.
-    for (let i = 0; i < 28; i++) await fake.storage.collection('plays').increment('m', 'plays');
-    await expect(posts.mark('p', 'vote')).resolves.toEqual({ marked: true, count: 1 });
-    expect((await refusal(posts.unmark('p', 'vote'))).details).toMatchObject({ bucket: 'tally' });
+    for (let i = 0; i < 20; i++) await report();
+    clock.advance(60_000);
+    const e = await refusal(report());
+    expect(e.details).toEqual({ bucket: 'report', retryAfter: 24 * 60 * 60 - 60 });
+    clock.advance((24 * 60 * 60 - 60) * 1000);
+    await expect(report()).resolves.toEqual({ reported: true });
   });
 
   it('reads: 300 a minute; anonymous readers share one (client IP) window', async () => {
@@ -236,9 +214,6 @@ describe('lists', () => {
     await bob.put('a:2', { status: 'closed', rank: 10, open: false, due: 1_900_000_000_000 });
     clock.advance(10);
     await posts.put('b:1', { status: 'open', rank: -1 });
-    await bob.mark('a:1', 'vote');
-    await posts.mark('b:1', 'vote');
-    for (let i = 0; i < 3; i++) await posts.increment('a:2', 'views');
     return { fake, posts, bob };
   }
   const keys = async (p: Promise<{ items: { key: string }[] }>) => (await p).items.map((d) => d.key);
@@ -254,23 +229,22 @@ describe('lists', () => {
     expect((await refusal(posts.list({ where: { status: 'open', rank: 2 } }))).code).toBe('invalid_request');
   });
 
-  it('sorts by an index (documents without it are not listed), a tally (absent = 0) and createdAt', async () => {
+  it('sorts by an index (documents without it are not listed) and createdAt; no sort by a tally', async () => {
     const { posts } = await seeded();
     expect(await keys(posts.list({ sort: 'rank' }))).toEqual(['b:1', 'a:1', 'a:2']);
     expect(await keys(posts.list({ sort: '-due' }))).toEqual(['a:1', 'a:2']);
-    // Ties break on the key, in the same direction as the sort.
-    expect(await keys(posts.list({ sort: '-counter:views' }))).toEqual(['a:2', 'b:1', 'a:1']);
-    expect(await keys(posts.list({ sort: '-mark:vote' }))).toEqual(['b:1', 'a:1', 'a:2']);
     expect(await keys(posts.list({ sort: '-createdAt' }))).toEqual(['b:1', 'a:2', 'a:1']);
-    expect((await refusal(posts.list({ sort: 'mark:report' }))).code).toBe('index_not_declared');
+    // The removed tally sorts, on a collection that still declares the counter and the mark.
+    for (const sort of ['counter:views', '-mark:vote', 'mark:report']) {
+      expect((await refusal(posts.list({ sort }))).code, sort).toBe('index_not_declared');
+    }
   });
 
-  it('keyPrefix, author=me, markedBy=me', async () => {
+  it('keyPrefix, author=me', async () => {
     const { posts, bob } = await seeded();
     expect(await keys(posts.list({ keyPrefix: 'a:' }))).toEqual(['a:1', 'a:2']);
     expect(await keys(posts.list({ author: 'me' }))).toEqual(['a:1', 'b:1']);
-    expect(await keys(bob.list({ markedBy: 'me', mark: 'vote' }))).toEqual(['a:1']);
-    expect((await refusal(posts.list({ markedBy: 'me' }))).code).toBe('invalid_request');
+    expect(await keys(bob.list({ author: 'me' }))).toEqual(['a:2']);
   });
 
   it('a string index sorts by code point, as the server\'s COLLATE "C" does — not by UTF-16 unit', async () => {
@@ -313,33 +287,20 @@ describe('documents', () => {
   it('authors: isViewer per reader, username only under showAuthor, never an id', async () => {
     const { fake } = make();
     await fake.storage.collection('posts').put('p', {});
-    await fake.storage.collection('plays').increment('m', 'plays');
     const bob = fake.as({ viewer: { username: 'bob', id: 910_002 } }).storage;
     expect((await bob.collection('posts').get('p'))!.author).toEqual({ kind: 'user', isViewer: false, username: 'alice' });
-    expect((await bob.collection('plays').get('m'))!.author).toEqual({ kind: 'counter' });
     expect((await fake.storage.collection('prefs').put('k', {})).author).toEqual({ kind: 'user', isViewer: true });
     expect(JSON.stringify(fake.calls.map((c) => c.response))).not.toMatch(/91000[12]/);
   });
 
-  it('deleting a shared document drops its counters and marks', async () => {
+  it('a write: "none" collection is read-only: every create, put and delete is write_policy', async () => {
     const { fake } = make();
-    const posts = fake.storage.collection('posts');
-    await posts.put('p', {});
-    await posts.increment('p', 'views', 5);
-    await posts.mark('p', 'vote');
-    await posts.delete('p');
-    const again = await posts.put('p', {});
-    expect(again).toMatchObject({ version: 1, counters: { views: 0 }, marks: { vote: 0 }, viewer: { marks: [] } });
-  });
-
-  it('a counter and a version are separate: increments never bump the version', async () => {
-    const { fake } = make();
-    const posts = fake.storage.collection('posts');
-    await posts.put('p', {});
-    await posts.increment('p', 'views');
-    await posts.mark('p', 'vote');
-    expect((await posts.get('p'))!.version).toBe(1);
-    expect((await posts.put('p', { x: 1 }, { ifVersion: 1 })).version).toBe(2);
+    const plays = fake.storage.collection('plays');
+    for (const run of [() => plays.put('m', {}), () => plays.create({}), () => plays.delete('m')]) {
+      const e = await refusal(run());
+      expect([e.status, e.code]).toEqual([403, 'write_policy']);
+    }
+    await expect(plays.list()).resolves.toEqual({ items: [], nextCursor: null });
   });
 
   it('byte quotas, in the stored unit: the viewer ceiling for private, the author ceiling for shared', async () => {

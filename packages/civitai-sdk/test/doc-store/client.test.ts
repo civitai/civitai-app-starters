@@ -22,7 +22,11 @@ function recorder(answer: (method: string, path: string, opts: RequestOptions) =
   return { http, sent, storage: createDocumentStorage(http) };
 }
 
-/** A wire document with every field pairwise distinct. */
+/**
+ * A wire document with every field pairwise distinct. It still carries the removed tally fields,
+ * non-empty, as an older civitai.com sent them: this SDK ignores them (civitai.com today sends
+ * them empty, for SDKs before 0.33).
+ */
 const WIRE_DOC = {
   key: 'p1',
   data: { title: 'hello' },
@@ -46,12 +50,9 @@ const envelope = (status: number, code: string, details?: Record<string, unknown
 /**
  * Request shapes ONLY where the contract's client pass (`contract.test.ts`) cannot see
  * them: that pass already sends get, getMany, put/delete with a non-zero `ifVersion`,
- * create, list with `where`/`sort`/`author`/`limit`/`cursor`, update with each operator
- * (malformed bodies included), increment with and without `by`, mark, unmark and info
- * through this client and checks the fake's answer, so a wrong path, verb or body there
- * fails it. What it does not reach:
- * `ifVersion: 0`, a `Date` filter, `markedBy`/`mark`/`keyPrefix`, encoding, and the
- * segments a URL would rewrite (the fake sits below URL resolution).
+ * create, list with `where`/`sort`/`author`/`limit`/`cursor` and info through this client
+ * and checks the fake's answer, so a wrong path, verb or body there fails it. What it does
+ * not reach: `ifVersion: 0`, a `Date` filter, `keyPrefix`, encoding, and the segments a URL would rewrite (the fake sits below URL resolution).
  */
 describe('request shapes the contract run does not cover', () => {
   it('`ifVersion: 0` (only if absent) is sent, not dropped as falsy', async () => {
@@ -62,18 +63,14 @@ describe('request shapes the contract run does not cover', () => {
     expect(r.sent[1]!.opts.query).toEqual({ ifVersion: 0 });
   });
 
-  it('list: a Date filter as ISO; markedBy, mark and keyPrefix as their own parameters', async () => {
+  it('list: a Date filter as ISO; keyPrefix as its own parameter', async () => {
     const r = recorder(() => ({ items: [], nextCursor: null }));
     await r.storage.collection('posts').list({
       where: { at: new Date('2026-01-02T03:04:05.006Z') },
-      markedBy: 'me',
-      mark: 'vote',
       keyPrefix: 'k:',
     });
     expect(Object.fromEntries(Object.entries(r.sent[0]!.opts.query!).filter(([, v]) => v !== undefined))).toEqual({
       'where[at]': '2026-01-02T03:04:05.006Z',
-      markedBy: 'me',
-      mark: 'vote',
       keyPrefix: 'k:',
     });
   });
@@ -101,27 +98,16 @@ describe('request shapes the contract run does not cover', () => {
   });
 
   it('encodes every caller-supplied segment', async () => {
-    const r = recorder(() => ({ value: 1 }));
-    await r.storage.collection('c').increment('a:b/c d?e', 'n#1');
-    expect(r.sent[0]!.path).toBe('blocks/storage/c/a%3Ab%2Fc%20d%3Fe/counters/n%231');
-  });
-
-  it('update: the key is a path segment, the counter name travels in the body', async () => {
-    const r = recorder(() => ({ value: 1 }));
-    await r.storage.collection('c').update('a:b/c d?e', { $inc: { 'n#1': 2 } });
-    expect(r.sent.map((x) => [x.method, x.path, JSON.stringify(x.opts.body)])).toEqual([
-      ['PATCH', 'blocks/storage/c/a%3Ab%2Fc%20d%3Fe', '{"$inc":{"n#1":2}}'],
-    ]);
+    const r = recorder(() => WIRE_DOC);
+    await r.storage.collection('c').get('a:b/c d?e');
+    await r.storage.collection('c').put('a#b?c', {});
+    expect(r.sent.map((x) => x.path)).toEqual(['blocks/storage/c/a%3Ab%2Fc%20d%3Fe', 'blocks/storage/c/a%23b%3Fc']);
   });
 
   it.each([
     ['key', '', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').get('')],
     ['key', '.', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').put('.', {})],
     ['key', '..', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').delete('..')],
-    ['key', '.', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').update('.', { $mark: 'vote' })],
-    ['counter', '.', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').increment('k', '.')],
-    ['mark', '', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').mark('k', '')],
-    ['mark', '..', (s: ReturnType<typeof createDocumentStorage>) => s.collection('c').unmark('k', '..')],
   ])('refuses a %s of %j before sending — a URL would rewrite it into another route', async (_what, _value, run) => {
     const r = recorder();
     const error = await run(r.storage).catch((e: unknown) => e);
@@ -129,16 +115,6 @@ describe('request shapes the contract run does not cover', () => {
     expect((error as StorageError).code).toBe('invalid_request');
     expect((error as StorageError).status).toBe(400);
     expect(r.sent).toEqual([]);
-  });
-
-  it.each([
-    ['counter', '.', { $inc: { '.': 1 } }],
-    ['mark', '', { $mark: '' }],
-    ['mark', '..', { $unmark: '..' }],
-  ] as const)('update sends a %s of %j in the PATCH body (no URL rewrites it) and lets the server refuse it', async (_what, _value, op) => {
-    const r = recorder(() => envelope(400, 'invalid_request'));
-    await expect(r.storage.collection('c').update('k', op)).rejects.toMatchObject({ code: 'invalid_request' });
-    expect(r.sent.map((x) => [x.method, x.path, x.opts.body])).toEqual([['PATCH', 'blocks/storage/c/k', op]]);
   });
 
   it('sends a dot-only key that is NOT a path step (`...`) and lets the server refuse it', async () => {
@@ -157,7 +133,9 @@ describe('reading replies', () => {
     expect(doc!.createdAt.getTime()).toBe(Date.parse(WIRE_DOC.createdAt));
     expect(doc!.updatedAt.getTime()).toBe(Date.parse(WIRE_DOC.updatedAt));
     expect(doc!.author).toEqual({ kind: 'user', isViewer: false, username: 'someone' });
-    expect(doc).toMatchObject({ key: 'p1', version: 3, counters: { views: 4 }, marks: { vote: 2 }, viewer: { marks: ['vote'] } });
+    // Every field named, and nothing else: the removed tally fields the wire still carries are dropped.
+    expect(Object.keys(doc!).sort()).toEqual(['author', 'createdAt', 'data', 'key', 'updatedAt', 'version']);
+    expect(doc).toMatchObject({ key: 'p1', version: 3, data: { title: 'hello' } });
   });
 
   it.each([
@@ -165,8 +143,6 @@ describe('reading replies', () => {
     ['an unparseable timestamp', { ...WIRE_DOC, updatedAt: 'yesterday' }],
     ['an unknown author kind', { ...WIRE_DOC, author: { kind: 'robot' } }],
     ['a non-object data', { ...WIRE_DOC, data: 'x' }],
-    ['a non-numeric counter', { ...WIRE_DOC, counters: { views: '4' } }],
-    ['a missing viewer', { ...WIRE_DOC, viewer: undefined }],
   ])('a malformed document (%s) throws rather than reading as data', async (_why, reply) => {
     const r = recorder(() => reply);
     await expect(r.storage.collection('posts').get('p1')).rejects.toBeInstanceOf(CivitaiError);
@@ -196,29 +172,19 @@ describe('reading replies', () => {
     items = [WIRE_DOC];
     await expect(r.storage.collection('posts').getMany(['missing', 'p1'])).rejects.toThrow(/items/);
   });
-
-  it('mark results: `count` absent for report, present otherwise; a wrong `marked` throws', async () => {
-    let reply: unknown = { marked: true };
-    const r = recorder(() => reply);
-    expect(await r.storage.collection('posts').mark('p1', 'report')).toEqual({ marked: true });
-    reply = { marked: true, count: 4 };
-    expect(await r.storage.collection('posts').mark('p1', 'vote')).toEqual({ marked: true, count: 4 });
-    reply = { marked: true, count: 4 };
-    await expect(r.storage.collection('posts').unmark('p1', 'vote')).rejects.toThrow(/malformed/);
-  });
 });
 
 describe('errors', () => {
   it('an envelope becomes a StorageError with code, status, details and retryAfter', async () => {
-    const original = envelope(429, 'rate_limited', { bucket: 'tally', retryAfter: 17 });
+    const original = envelope(429, 'rate_limited', { bucket: 'write', retryAfter: 17 });
     const r = recorder(() => original);
-    const error = (await r.storage.collection('posts').increment('p1', 'views').catch((e: unknown) => e)) as StorageError;
+    const error = (await r.storage.collection('posts').put('p1', {}).catch((e: unknown) => e)) as StorageError;
     expect(error).toBeInstanceOf(StorageError);
     expect(error).toBeInstanceOf(ApiError);
     expect(error.name).toBe('StorageError');
     expect(error.code).toBe('rate_limited');
     expect(error.status).toBe(429);
-    expect(error.details).toEqual({ bucket: 'tally', retryAfter: 17 });
+    expect(error.details).toEqual({ bucket: 'write', retryAfter: 17 });
     expect(error.retryAfter).toBe(17);
     expect(error.body).toBe(original.body);
     expect(error.message).toBe('rate_limited said the server');
@@ -255,7 +221,7 @@ describe('errors', () => {
 });
 
 describe('paging against the fake', () => {
-  it.each(['key', '-key', 'createdAt', '-updatedAt', 'rank', '-rank', 'counter:views'])(
+  it.each(['key', '-key', 'createdAt', '-updatedAt', 'rank', '-rank'])(
     'follows nextCursor to the end, sort %s: every document once, in order',
     async (sort) => {
       let t = 1_700_000_000_000;
@@ -264,19 +230,16 @@ describe('paging against the fake', () => {
           scopes: ['apps:storage', 'apps:storage:publish'],
           storage: {
             collections: {
-              posts: { visibility: 'shared', write: 'own', counters: ['views'], indexes: { rank: 'number' } },
+              posts: { visibility: 'shared', write: 'own', indexes: { rank: 'number' } },
             },
           },
         },
         now: () => (t += 1000),
       });
       const posts = fake.storage.collection<{ rank: number }>('posts');
-      // Ranks and view counts repeat, so the key tiebreak inside the cursor is exercised.
+      // Ranks repeat, so the key tiebreak inside the cursor is exercised.
       const ranks = [3, 1, 2, 3, 1, 2, 3];
-      for (const [i, rank] of ranks.entries()) {
-        await posts.put(`k${i}`, { rank });
-        for (let v = 0; v < rank; v++) await posts.increment(`k${i}`, 'views');
-      }
+      for (const [i, rank] of ranks.entries()) await posts.put(`k${i}`, { rank });
       const seen: string[] = [];
       let cursor: string | undefined;
       let pages = 0;
@@ -295,15 +258,18 @@ describe('paging against the fake', () => {
 });
 
 describe('wiring', () => {
-  it('app.storage carries the document store beside the legacy methods, at /api/v1/blocks/storage', async () => {
+  it('app.storage is the document store, at /api/v1/blocks/storage; the legacy key/value methods are gone', async () => {
     const seen: { url: string; method?: string; auth?: string }[] = [];
     const fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
       seen.push({ url: String(input), method: init.method, auth: (init.headers as Record<string, string>).Authorization });
       return jsonResponse(200, WIRE_DOC);
     }) as typeof globalThis.fetch;
     const app = await initialize({ token: 'tok', fetch });
-    for (const name of ['collection', 'info', 'get', 'set', 'delete', 'list', 'getQuota'] as const) {
+    for (const name of ['collection', 'info'] as const) {
       expect(typeof app.storage[name], name).toBe('function');
+    }
+    for (const name of ['get', 'set', 'delete', 'list', 'getQuota']) {
+      expect(name in app.storage, name).toBe(false);
     }
     const doc = await app.storage.collection('posts').get('p1');
     expect(doc?.key).toBe('p1');

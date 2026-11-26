@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { StorageError, type DocumentStorage, type StorageUpdateOp } from '../../src/doc-store/index.js';
+import { StorageError, type DocumentStorage } from '../../src/doc-store/index.js';
 import { ApiError } from '../../src/http/index.js';
 import {
   createFakeStorage,
@@ -85,17 +85,14 @@ const STEP_KEYS = ['as', 'token', 'scopes', 'method', 'path', 'query', 'body', '
 /** The contract's own `stepFields` (case- and step-level modifiers) this runner applies. */
 const HANDLED_STEP_FIELDS = ['as', 'token', 'scopes', 'consentMarker', 'appStatus', 'storage', 'repeat'];
 const MATCHERS = ['$string', '$number', '$iso', '$present', '$absent', '$null'];
-const CONVENTION_KEYS = ['blockedText', 'blockedLink', 'scannerDown', 'note', 'rateLimits', 'keys', 'publish'];
+const CONVENTION_KEYS = ['blockedText', 'blockedLink', 'scannerDown', 'note', 'rateLimits', 'keys', 'publish', 'tallies'];
 
 /**
  * Steps the CLIENT has no way to send — a method, query parameter or body field
- * outside its API, or a collection name it refuses before sending (most of them refused on purpose: TTL is a later phase, a mark
- * carries no payload). They run in the client pass through the same fake's raw
+ * outside its API, or a collection name it refuses before sending (most of them refused on purpose: TTL is a later phase). They run in the client pass through the same fake's raw
  * `Http`, and this ledger fails if the set grows or shrinks.
  */
 const RAW_ONLY_STEPS = [
-  'marks and the report mark #8 PUT /posts/p1/marks/vote: body field note',
-  'marks and the report mark #9 PUT /posts/p1/marks/report: body field reason',
   'request errors #2 PUT /prefs/k: body field expiresAt',
   'request errors #4 GET /prefs: query colour',
   'request errors #5 GET /prefs/k: query colour',
@@ -103,7 +100,6 @@ const RAW_ONLY_STEPS = [
   'request errors #9 GET /_get: client refuses collection name _get',
   'create with a server key, then batch get with a miss #3 GET /_get/prefs: client refuses collection name _get',
   'request errors #11 POST /prefs/k: no client method for 2 segments',
-  'update operators: refused PATCH bodies #28 PATCH /posts/r1: query ifVersion',
 ];
 
 /** Cases the fake cannot model: none. A case added here must say why. */
@@ -252,7 +248,7 @@ function callerFor(step: Step): { app: string; caller: FakeStorageCaller } {
   };
 }
 
-const LIST_PARAMS = ['sort', 'author', 'markedBy', 'mark', 'keyPrefix', 'limit', 'cursor'];
+const LIST_PARAMS = ['sort', 'author', 'keyPrefix', 'limit', 'cursor'];
 const onlyKeys = (v: unknown, allowed: string[]) =>
   v === undefined || (!!v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).every((k) => allowed.includes(k)));
 
@@ -270,7 +266,7 @@ function clientOp(method: string, path: string, query: Record<string, string>, b
     return bad.length ? `query ${bad.join(',')}` : null;
   };
   const why = (reason: string | null, run: ClientOp): ClientOp => (reason ? { raw: reason } : run);
-  if (!['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) return { raw: `no client method for ${method}` };
+  if (!['GET', 'POST', 'PUT', 'DELETE'].includes(method)) return { raw: `no client method for ${method}` };
   // A collection position the client refuses to send (`_get` used as a collection):
   // the client answers it locally, so the server's answer to it is a raw-only step.
   if (seg[0] !== undefined && !(seg[0] === '_get' && method === 'POST') && !/^[a-z][a-z0-9_]{0,31}$/.test(seg[0])) {
@@ -292,8 +288,6 @@ function clientOp(method: string, path: string, query: Record<string, string>, b
             ...(Object.keys(where).length ? { where } : {}),
             ...(query.sort !== undefined ? { sort: query.sort } : {}),
             ...(query.author !== undefined ? { author: query.author as 'me' } : {}),
-            ...(query.markedBy !== undefined ? { markedBy: query.markedBy as 'me' } : {}),
-            ...(query.mark !== undefined ? { mark: query.mark } : {}),
             ...(query.keyPrefix !== undefined ? { keyPrefix: query.keyPrefix } : {}),
             ...(query.limit !== undefined ? { limit: Number(query.limit) } : {}),
             ...(query.cursor !== undefined ? { cursor: query.cursor } : {}),
@@ -324,23 +318,6 @@ function clientOp(method: string, path: string, query: Record<string, string>, b
         run: (s) => s.collection(c).delete(k, query.ifVersion === undefined ? {} : { ifVersion: Number(query.ifVersion) }),
       });
     }
-    // Every body, malformed ones included: `update` sends the operator as written and
-    // the server (here the fake) refuses what is not one operator.
-    if (method === 'PATCH') {
-      return why(strayQuery(() => false), { run: (s) => s.collection(c).update(k, body as StorageUpdateOp) });
-    }
-  }
-  if (seg.length === 4 && seg[2] === 'counters' && method === 'POST') {
-    const [c, k, , n] = seg as [string, string, string, string];
-    return why(strayQuery(() => false) ?? strayBody(['by']), {
-      run: (s) => s.collection(c).increment(k, n, b?.by as number | undefined),
-    });
-  }
-  if (seg.length === 4 && seg[2] === 'marks' && (method === 'PUT' || method === 'DELETE')) {
-    const [c, k, , n] = seg as [string, string, string, string];
-    return why(strayQuery(() => false) ?? (body === undefined ? null : strayBody([])), {
-      run: (s) => (method === 'PUT' ? s.collection(c).mark(k, n) : s.collection(c).unmark(k, n)),
-    });
   }
   return { raw: `no client method for ${seg.length} segments` };
 }
@@ -394,6 +371,24 @@ async function sendViaClient(fake: FakeStorage, caller: FakeStorageCaller, op: E
   }
 }
 
+/**
+ * The removed tally fields a document still carries on the wire (sent empty for SDKs before 0.33):
+ * `counters: {}`, `marks: {}` and `viewer` (`{ marks: [] }` or `null`). The raw pass pins them as
+ * the contract states them (`viewer` may be the `$null` matcher); the client drops them, so in the client pass they are expected ABSENT
+ * (`$absent`, which the matcher checks). Recognised by their document shape, so `info`'s
+ * declarations (`counters: []`, `marks: []`) and `usage.viewer` (`{ bytes, docs }`) are untouched.
+ */
+const isRemovedDocField = (k: string, v: unknown) =>
+  ((k === 'counters' || k === 'marks') && !!v && typeof v === 'object' && !Array.isArray(v)) ||
+  (k === 'viewer' && (v === null || v === '$null' || (!!v && typeof v === 'object' && 'marks' in v)));
+function asClientReads(expected: unknown): unknown {
+  if (Array.isArray(expected)) return expected.map(asClientReads);
+  if (!expected || typeof expected !== 'object') return expected;
+  return Object.fromEntries(
+    Object.entries(expected).map(([k, v]) => [k, isRemovedDocField(k, v) ? '$absent' : asClientReads(v)]),
+  );
+}
+
 async function runCase(c: Case, mode: Mode) {
   const fakes = fakesFor(c);
   const vars: Vars = {};
@@ -422,7 +417,9 @@ async function runCase(c: Case, mode: Mode) {
       if (step.expect.code !== undefined) {
         matches((observed.body as { code?: unknown })?.code, step.expect.code, '$.code', vars, errors);
       }
-      if (step.expect.body !== undefined) matches(observed.body, step.expect.body, '$', vars, errors);
+      if (step.expect.body !== undefined) {
+        matches(observed.body, mode === 'client' && 'run' in op ? asClientReads(step.expect.body) : step.expect.body, '$', vars, errors);
+      }
       expect(errors, where).toEqual([]);
       assertNoUserId(observed.body, where);
       if (observed.status >= 400) {

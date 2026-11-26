@@ -38,9 +38,7 @@ export const LOCAL_PREVIEW_MANIFEST_GLOBAL = '__CIVITAI_LOCAL_PREVIEW_MANIFEST__
  * The scopes the local document store serves: the two the server's document
  * store checks (`fake.ts` enforces the same pair). A preview token never
  * carries them and no grant can add them, so `requestGrants` treats them as
- * held in a local preview instead of asking the host. Shared storage
- * (`apps:storage:shared:*`) and the deprecated key/value scopes are NOT here:
- * they keep the real routes in a preview.
+ * held in a local preview instead of asking the host.
  */
 export const LOCAL_PREVIEW_STORAGE_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   'apps:storage',
@@ -198,12 +196,6 @@ function refusingStorage(code: string, message: string): LocalPreviewStorage {
     create: refuse,
     delete: refuse,
     list: refuse,
-    update: refuse,
-    increment: refuse,
-    mark: refuse,
-    unmark: refuse,
-    publish: refuse,
-    unpublish: refuse,
     getMine: refuse,
     putMine: refuse,
     deleteMine: refuse,

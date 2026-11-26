@@ -202,14 +202,11 @@ describe('collection schema: a write', () => {
     }
   });
 
-  it('does not check counters or marks', async () => {
-    const fake = make({
-      board: { visibility: 'shared', write: 'own', counters: ['views'], marks: ['vote'], schema: { required: ['body'] } },
-    });
+  it('does not check a report: it is not a document body', async () => {
+    const fake = make({ board: { visibility: 'shared', write: 'own', schema: { required: ['body'] } } }, { reports: true });
     const board = fake.storage.collection('board');
     await board.put('b1', { body: 'hi' });
-    await expect(board.increment('b1', 'views', 3)).resolves.toEqual({ value: 3 });
-    await expect(board.mark('b1', 'vote')).resolves.toEqual({ marked: true, count: 1 });
+    await expect(fake.moderation.report({ collection: 'board', key: 'b1' })).resolves.toEqual({ reported: true });
     // Control: a document write to the same collection is checked.
     expect((await refusal(board.put('b1', {}))).code).toBe('schema_violation');
   });

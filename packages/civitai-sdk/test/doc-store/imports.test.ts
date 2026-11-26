@@ -91,13 +91,7 @@ const WIRE_DOC = {
 };
 
 describe('the client: `from` on every collection call', () => {
-  const answer = (method: string, path: string, opts: RequestOptions) => {
-    if (path.includes('/counters/')) return { value: 3 };
-    if (path.includes('/marks/')) return { marked: method === 'PUT', count: 1 };
-    if (method === 'PATCH') {
-      const op = opts.body as Record<string, unknown>;
-      return '$inc' in op ? { value: 3 } : { marked: '$mark' in op, count: 1 };
-    }
+  const answer = (method: string, path: string) => {
     if (path.startsWith('blocks/storage/_get/')) return { items: [WIRE_DOC] };
     if (method === 'DELETE') return { deleted: true };
     if (method === 'GET' && path === 'blocks/storage/notes') return { items: [], nextCursor: null };
@@ -106,7 +100,7 @@ describe('the client: `from` on every collection call', () => {
   const queryOf = (opts: RequestOptions) =>
     Object.fromEntries(Object.entries(opts.query ?? {}).filter(([, v]) => v !== undefined));
 
-  it('sends ?from=<blockId> on get, getMany, put, create, delete, list, update, increment, mark and unmark — path, verb and body unchanged', async () => {
+  it('sends ?from=<blockId> on get, getMany, put, create, delete and list — path, verb and body unchanged', async () => {
     const r = recorder(answer);
     const notes = r.storage.collection('notes', { from: PARENT });
     await notes.get('n1');
@@ -115,10 +109,6 @@ describe('the client: `from` on every collection call', () => {
     await notes.create({ text: 'c' });
     await notes.delete('n1', { ifVersion: 3 });
     await notes.list({ sort: '-updatedAt', limit: 5 });
-    await notes.update('n1', { $inc: { views: 4 } });
-    await notes.increment('n1', 'views', 2);
-    await notes.mark('n1', 'vote');
-    await notes.unmark('n1', 'vote');
 
     expect(r.sent.map((s) => [s.method, s.path, queryOf(s.opts), s.opts.body])).toEqual([
       ['GET', 'blocks/storage/notes/n1', { from: PARENT }, undefined],
@@ -127,10 +117,6 @@ describe('the client: `from` on every collection call', () => {
       ['POST', 'blocks/storage/notes', { from: PARENT }, { data: { text: 'c' } }],
       ['DELETE', 'blocks/storage/notes/n1', { ifVersion: 3, from: PARENT }, undefined],
       ['GET', 'blocks/storage/notes', { sort: '-updatedAt', limit: 5, from: PARENT }, undefined],
-      ['PATCH', 'blocks/storage/notes/n1', { from: PARENT }, { $inc: { views: 4 } }],
-      ['POST', 'blocks/storage/notes/n1/counters/views', { from: PARENT }, { by: 2 }],
-      ['PUT', 'blocks/storage/notes/n1/marks/vote', { from: PARENT }, undefined],
-      ['DELETE', 'blocks/storage/notes/n1/marks/vote', { from: PARENT }, undefined],
     ]);
   });
 
@@ -274,15 +260,17 @@ describe('the fake: a fork reads and writes its parent\'s data', () => {
     expect(await fake.storage.collection('notes').get('n2')).toBeNull();
   });
 
-  it('a shared source collection reads as the parent shows it; marks and counters land there with publish consent in the parent', async () => {
+  it('a shared source collection reads as the parent shows it; a write lands there with publish consent in the parent', async () => {
     const fake = forkAndParent();
     await fake.as({ app: PARENT, viewer: { username: 'carol' } }).storage.collection('board').put('b1', { title: 'hi' });
     const board = fake.storage.collection('board', { from: PARENT });
-    expect(await board.mark('b1', 'vote')).toEqual({ marked: true, count: 1 });
-    expect(await board.increment('b1', 'views')).toEqual({ value: 1 });
-    const seen = await fake.as({ app: PARENT, viewer: { username: 'carol' } }).storage.collection('board').get('b1');
-    expect(seen).toMatchObject({ marks: { vote: 1 }, counters: { views: 1 } });
+    expect((await board.get('b1'))?.data).toEqual({ title: 'hi' });
     expect((await board.create({ title: 'by alice via the fork' })).author).toEqual({ kind: 'user', isViewer: true });
+    // The removed tallies and marks (`report` included) are no route through an import either.
+    const raw = await fake.http('POST', 'blocks/storage/board/b1/counters/views', { query: { from: PARENT } }).catch((e: unknown) => e);
+    expect(raw).toMatchObject({ status: 404, body: { code: 'not_found' } });
+    const mark = await fake.http('PUT', 'blocks/storage/board/b1/marks/report', { query: { from: PARENT } }).catch((e: unknown) => e);
+    expect(mark).toMatchObject({ status: 404, body: { code: 'not_found' } });
   });
 
   it('list pages through the source with a cursor the fork\'s own collection refuses', async () => {
@@ -301,7 +289,7 @@ describe('the fake: a fork reads and writes its parent\'s data', () => {
 });
 
 describe('the fake: import refusals, in the server\'s order', () => {
-  it('a read import refuses every write, counter and mark `write_policy` (`import_read_only`), and still reads', async () => {
+  it('a read import refuses every write and report `write_policy` (`import_read_only`), and still reads', async () => {
     const fake = forkAndParent({
       manifest: {
         ...FORK_MANIFEST,
@@ -309,8 +297,7 @@ describe('the fake: import refusals, in the server\'s order', () => {
       },
     });
     const notes = fake.storage.collection('notes', { from: PARENT });
-    const board = fake.storage.collection('board', { from: PARENT });
-    for (const p of [notes.put('k', {}), notes.create({}), notes.delete('k'), board.increment('k', 'views'), board.mark('k', 'vote'), board.unmark('k', 'vote')]) {
+    for (const p of [notes.put('k', {}), notes.create({}), notes.delete('k')]) {
       const error = await refusal(p);
       expect([error.status, error.code, error.details]).toEqual([403, 'write_policy', { from: PARENT, reason: 'import_read_only' }]);
     }
@@ -393,19 +380,6 @@ describe('the fake: import refusals, in the server\'s order', () => {
         expect([error.status, error.code, error.details]).toEqual([403, 'consent_required', PUBLISH_IN_PARENT]);
         expect(storageImportRefusal(error)).toEqual({ kind: 'source_publish_consent', ...PUBLISH_IN_PARENT });
       }
-    });
-
-    it('a counter in a `write: "none"` source collection, and a mark (report included), need it too', async () => {
-      // No document needs to exist: the refusal comes before the store is read.
-      const fake = withoutPublishInParent();
-      const tally = fake.storage.collection('tally', { from: PARENT });
-      const board = fake.storage.collection('board', { from: PARENT });
-      for (const p of [tally.increment('m1', 'plays'), board.mark('b1', 'vote'), board.unmark('b1', 'vote'), board.mark('b1', 'report')]) {
-        const error = await refusal(p);
-        expect([error.code, error.details]).toEqual(['consent_required', PUBLISH_IN_PARENT]);
-      }
-      // ...the parent's own app still counts with `apps:storage` alone, as before.
-      expect(await fake.as({ app: PARENT }).storage.collection('tally').increment('m1', 'plays')).toEqual({ value: 1 });
     });
 
     it('a private source collection needs only the import grant; a delete in a shared one never needs it', async () => {
@@ -526,10 +500,6 @@ describe('the client: publish consent in the source — ask the host, then retry
   const ops = [
     ['create', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).create({ t: 'c' }), 'POST', `${BASE_URL}/board?from=${PARENT}`, { data: { t: 'c' } }, WIRE_DOC],
     ['put', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).put('b1', { t: 'p' }), 'PUT', `${BASE_URL}/board/b1?from=${PARENT}`, { data: { t: 'p' } }, WIRE_DOC],
-    ['increment', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('tally', { from: PARENT }).increment('m1', 'plays', 4), 'POST', `${BASE_URL}/tally/m1/counters/plays?from=${PARENT}`, { by: 4 }, { value: 9 }],
-    ['update', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).update('b1', { $mark: 'vote' }), 'PATCH', `${BASE_URL}/board/b1?from=${PARENT}`, { $mark: 'vote' }, { marked: true, count: 6 }],
-    ['mark', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).mark('b1', 'vote'), 'PUT', `${BASE_URL}/board/b1/marks/vote?from=${PARENT}`, undefined, { marked: true, count: 5 }],
-    ['unmark', (s: Awaited<ReturnType<typeof setup>>) => s.app.storage.collection('board', { from: PARENT }).unmark('b1', 'vote'), 'DELETE', `${BASE_URL}/board/b1/marks/vote?from=${PARENT}`, undefined, { marked: false, count: 4 }],
   ] as const;
 
   it.each(ops)('%s: asks once with { scopes, from }, waits for the refresh, then sends the SAME request once more', async (_op, run, method, url, body, reply) => {
@@ -546,9 +516,7 @@ describe('the client: publish consent in the source — ask the host, then retry
       [method, url, body],
     ]);
     expect(s.asks()).toHaveLength(1);
-    if ('value' in reply) expect(result).toEqual({ value: 9 });
-    else if ('marked' in reply) expect(result).toMatchObject({ marked: reply.marked, count: reply.count });
-    else expect(result).toMatchObject({ key: WIRE_DOC.key, data: WIRE_DOC.data });
+    expect(result).toMatchObject({ key: WIRE_DOC.key, data: WIRE_DOC.data });
   });
 
   it('CONSENT_UNAVAILABLE ends it at once: the original refusal surfaces, nothing is retried', async () => {
@@ -674,12 +642,11 @@ describe('the fake: the publish prompt for the source, through `requestGrants`',
     });
     const board = fake.storage.collection('board', { from: PARENT });
     const first = await board.create({ t: 'allowed' });
-    await board.mark(first.key, 'vote');
+    await expect(board.put(first.key, { t: 'again' })).resolves.toMatchObject({ version: 2 });
 
     expect(asked).toEqual([[['apps:storage:publish'], PARENT]]);
     const inParent = await fake.as({ app: PARENT }).storage.collection('board').get(first.key);
-    expect(inParent?.data).toEqual({ t: 'allowed' });
-    expect(inParent?.marks).toEqual({ vote: 1 });
+    expect(inParent?.data).toEqual({ t: 'again' });
   });
 
   it('"Not now" surfaces the original refusal and writes nothing in the parent', async () => {

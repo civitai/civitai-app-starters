@@ -18,8 +18,8 @@ messages have no destination yet.
 | `GET_VIEWER` | `app.site.get('blocks/me')` | Route exists. 🔴 **Not `site.get('me')`** — that resolves to `/api/v1/me`, an `AuthedEndpoint` that does not accept a block token |
 | `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`, `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `QUERY_APP_WORKFLOWS`, `CANCEL_APP_WORKFLOW` | `app.workflows`, over `POST /api/v1/blocks/workflows/{submit,estimate,poll,cancel,query}` | **Routes exist**, and `app.workflows` wraps all five (`estimate`, `submit`, `get`/`watch`/`wait`, `cancel`, `list`). 🔴 Use it, **not** `app.orchestration` — see *What a direct orchestrator call loses* below |
 | `GET_IMAGES_BY_IDS` | `GET /api/v1/blocks/images?ids=1,2,3` | Batch, up to **100** ids per request. Misses are reported by OMISSION — see below. 🔴 **Not `/api/v1/images`** — that is a `PublicEndpoint`; it ignores your token and answers with anonymous public results rather than erroring |
-| `APP_STORAGE_*` | `POST /api/v1/blocks/app-storage/*` | 🔴 **Removed 2026-11-10: `410` `legacy_store_removed`.** Move to the document store. The routes exist — five of them (`get`, `set`, `delete`, `list`, `quota`), civitai#5085. This row said "No v1 route"; that is no longer true. See *App storage* below |
-| `SHARED_*` | `app.sharedStorage`, over `GET\|POST /api/v1/blocks/shared-storage/*` | 🔴 **Removed 2026-11-10: `410` `legacy_store_removed`.** Move to the document store. The routes exist — eleven of them. `app.sharedStorage` wraps the **five** key/value ones; the higher-level ops are deliberately app-layer. See *Shared storage* below |
+| `APP_STORAGE_*` | A `private` collection: `app.storage.collection(name)` | 🔴 **The legacy store was removed on 2026-11-10** (its routes answer `410` `legacy_store_removed`), and its client methods (`app.storage.get`/`set`/`delete`/`list`/`getQuota`) in 0.33. See *The legacy key/value stores* below |
+| `SHARED_*` | A `shared` collection: `app.storage.collection(name)` | 🔴 **The legacy shared store was removed on 2026-11-10** (`410` `legacy_store_removed`), and `app.sharedStorage` in 0.33. A vote or like is a viewer-keyed document; a report is `app.moderation.report`. See *The legacy key/value stores* below |
 | `GET_BUZZ_BALANCE` | `GET /api/v1/blocks/buzz` | **Route exists.** Returns `{ blue, green, yellow }` — a bare object, three numbers |
 | `GET_BUZZ_ACCOUNTS`, `GET_BUZZ_TRANSACTIONS` | — | No v1 route |
 | `CREATE_POST_FROM_APP` | — | No v1 route, **and deliberately staying on the bridge** — see below |
@@ -63,111 +63,28 @@ One thing remains token-wide, and it is deny-by-default: a token carrying a scop
 recognise is rejected outright. That is a registration-time mistake, which the manifest validator catches
 first.
 
-## Shared storage
+## The legacy key/value stores
 
-🔴 **Removed on 2026-11-10.** civitai.com shut off the legacy shared store on that date. A request to any of
-these eleven routes that passes the block-token and scope checks is answered **`410`** with
-`{ error: 'legacy_store_removed', message, docs }`, so every `app.sharedStorage` call rejects with an
-`ApiError` whose `status` is `410`. Move the app to the document store:
-https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores. The rest of this section
-describes the routes as they behaved before the removal.
+🔴 **Removed.** civitai.com shut off the per-viewer app storage (`app-storage/*`) and the shared storage
+(`shared-storage/*`) on 2026-11-10: every route answers **`410`** with
+`{ error: 'legacy_store_removed', message, docs }`. `@civitai/sdk` 0.33 removed their clients —
+`app.storage.get`/`set`/`delete`/`list`/`getQuota` and `app.sharedStorage` — and their types. Nothing is
+copied from them into collections. Move the app to the document store (`app.storage.collection(name)`):
+https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores.
 
-Eleven routes under `/api/v1/blocks/shared-storage/`. Reads take `apps:storage:shared:read`, writes take
-`apps:storage:shared:write` — both scopes already existed; neither is new.
+What replaces each part: a `private` collection for the per-viewer store; a `shared` collection for the
+cross-user one; a viewer-keyed collection (`keyedBy`, `getMine`/`putMine`/`deleteMine`, counted by listing
+with `keyPrefix`) for a vote, like or per-viewer entry; `app.moderation.report` for a report.
 
-### `app.sharedStorage` wraps FIVE of the eleven, on purpose
+## Document-store tallies and server-side publish
 
-`app.sharedStorage` is a **generic cross-user key/value store**: `list`, `get` (the `/item` route, matching its
-tRPC twin `apps.shared.get`), `append`, `update`, `withdraw`. An app no longer needs to hand-roll
-`app.site.get('blocks/shared-storage/…')`, and the shape traps below are handled for it.
-
-🔴 **`vote`, `unvote`, `counts`, `top`, `increment` and `report` are DELIBERATELY ABSENT from the client.**
-This was a surface decision, not a gap, and not an oversight to be "fixed". Shared storage is scoped to generic
-key/value operations; the higher-level ops belong at the app layer, where an app that wants voting, counters
-or reporting builds them on top of these five. Do not add one back: since 2026-11-10 none of the eleven routes
-serves data (see the removal note above).
-
-What survives the cut, and why: `SharedItem` still carries **`count` and `viewerVoted`** exactly as the two
-read routes project them. Reading a tally is what makes an app-layer vote feature possible; only the
-vote-casting operation is out of scope.
-
-🔴 **It is not the per-viewer client's shape, in four ways.** Each is a real difference in the route table,
-not a stylistic one, and assuming otherwise produces a bug that type-checks:
-
-1. **The two reads are `GET` with a query string**; the three writes are `POST`. A read sent as POST is a `405`.
-2. **`list` is enveloped** — `{ items, metadata: { nextCursor } }`. The cursor sits one level deeper than
-   `app-storage/list`'s top-level `nextCursor`; read the wrong level and pagination is silently dead while
-   every page still parses.
-3. **`append` accepts no key** — the server mints a ULID, so one viewer cannot overwrite another's row.
-4. **Anonymous viewers read but never write** — the inverse of per-viewer storage, where a missing subject
-   refuses everything. See *Who may read, and who may write* below.
-
-### The bridge hook is gone
-
-`@civitai/blocks-react` removed `useSharedStorage` and `useAppStorage`; use the document store, `app.storage.collection(name)`.
-
-### Who may read, and who may write
-
-These rules are enforced server-side and are **not** new policy — the REST routes call the same functions the
-bridge already called, so behaviour is identical on both transports.
-
-- **Anonymous viewers MAY read** — by design. `list`, `item`, `counts` and `top` skip the subject check
-  entirely. An anon read still requires: a valid block token, the `apps:storage:shared:read` scope, an
-  approved app, a non-revoked instance, and the feature flag enabled.
-
-  ⚠ **This was briefly broken and is fixed.** Until 2026-09-23 an app that *also* declared
-  `apps:storage:shared:write` got a **403 on an anonymous read**, because the binding check ran over every
-  scope on the token and reached the write scope's "requires authenticated subject" rule. civitai#5063, fixed
-  by #5067 — binding is now per-route, so the read scope's own (absent) binding is all that applies.
-  **Signed-out browsing works on REST; if you deferred a migration over this, it is unblocked.**
-- **Anonymous viewers may NEVER write or vote.** An anon write is rejected by the write scope's own binding in
-  `withBlockScope`, before the handler runs, so it surfaces as **`403`** rather than the handler's own `401`.
-- **Authenticated writers must clear a minimum-trust gate.** After the anon check, writes call
-  `assertSharedWriteTrust` — account age, completed onboarding, not banned or muted, and verified email *or* a
-  linked OAuth account. A signed-in viewer is not automatically a permitted writer.
-- **Tenancy is structural, not checked.** Every query interpolates a schema name derived from the **verified
-  token**, never from client input. An app cannot address another app's shared storage because it cannot name it.
-- **Rate limits are per-operation and per-namespace**, so one operation cannot starve another — browsing a feed
-  cannot exhaust a viewer's ability to delete their own rows.
-
-### Error body
-
-🔴 **Which key carries the reason depends on WHERE the request died, so read both.** There are three shapes:
-
-| Refused by | Body |
-|---|---|
-| `withBlockScope` — bad token, revoked instance, unapproved app, missing scope, failed binding | `{ error }` **only** |
-| a route's own prologue — wrong method, missing param | `{ error }` only |
-| the service layer, through the shared error chokepoint | `{ message }` |
-| `restErrorBody` | `{ error, message, code }` |
-
-An earlier version of this section said to write clients against `{ message }` and treat `{ error }` as legacy.
-**That is wrong**: every middleware rejection — including the anonymous-write 403 above — carries no `message`
-at all, so a client following it logs `undefined` for the refusals it most needs to see. Read
-`message ?? error`, and treat the HTTP status as the thing you branch on.
-
-The chokepoint does matter for one thing, and that part stands: the newer routes do not forward a raw database
-error string, which on this surface can name the app's schema and the offending row value.
-
-## App storage
-
-🔴 **Removed on 2026-11-10**, with the shared store. A request to any of these five routes that passes the
-block-token and scope checks is answered **`410`** with `{ error: 'legacy_store_removed', message, docs }`,
-Move the app to the document store: https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores.
-
-Five routes under `/api/v1/blocks/app-storage/` — `get`, `set`, `delete`, `list`, `quota` (civitai#5085).
-Reads take `apps:storage:read`, writes take `apps:storage:write`. The SDK wraps them as `AppClient.storage`.
-
-⚠ **The migration delta: anonymous viewers get 403, where the bridge resolved an anonymous read to `null`.**
-Gate on `viewer` rather than reading an empty result as "nothing stored". Whether 403 is the intended policy
-per operation is open as civitai#5089.
-
-`updatedAt` is still revived to a `Date` by the client, as the removed bridge hook did.
-
-The client's own contract — block-token-only, every-failure-rejects, `nextCursor`, and the wire-vs-stored
-distinction between `set`'s `sizeBytes` and `getQuota`'s `usedBytes` — is in **README.md § App storage** and
-in the TSDoc that generates `api/public-api.md`. That TSDoc is regenerated and diffed by `api:check` in CI, so
-it is the copy that cannot rot; this file deliberately does not restate it.
+🔴 **Removed in 0.33**, as civitai.com removed them (civitai#10391, 2026-11-25): `collection().update`
+(the tally `PATCH`, now `405`), `increment`, `mark`, `unmark`, `publish` and `unpublish`, the
+operator and publish types, the documents' `counters` / `marks` / `viewer`, `info()`'s `counters` / `marks`,
+the list options `markedBy` / `mark` and the `counter:` / `mark:` sorts. Keep each viewer's vote in a
+viewer-keyed collection and count by listing; write shared copies with `put`; report with
+`app.moderation.report`. (civitai.com still answers `PUT …/:key/marks/report` as a report, but only for apps
+already built on SDKs before 0.30; no SDK from 0.33 on sends it.)
 
 ## Batch image fetch
 
