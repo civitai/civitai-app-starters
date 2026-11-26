@@ -1810,7 +1810,7 @@ export type BlockToParentMessage =
   //
   // `from` (civitai/civitai#7586): the viewer's `apps:storage:publish` grant IN
   // ANOTHER APP, the source this app writes to through a `storage.imports` entry
-  // (a create, update, counter, mark or unmark in one of the source's shared
+  // (a create, update or report in one of the source's shared
   // collections refused `consent_required` with `details.from`). Send exactly
   // `{ scopes: ['apps:storage:publish'], from: <source blockId> }`; the host
   // refuses any other payload carrying `from` with `CONSENT_UNAVAILABLE`

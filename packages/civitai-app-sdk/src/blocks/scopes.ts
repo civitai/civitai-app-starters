@@ -30,8 +30,9 @@ export const BLOCK_SCOPES = {
   // apps:storage / apps:storage:publish — the DOCUMENT STORE, declared per
   // collection in the manifest's `storage` block, that succeeds the four
   // scopes above (which stay live until apps migrate). Same no-OAuth-bit
-  // posture. `apps:storage` covers reads, the viewer's private collections,
-  // marks and counters, and is CONSENT-EXEMPT; any manifest declaring a
+  // posture. `apps:storage` covers reads, the viewer's private collections and
+  // deleting the viewer's own shared documents (marks and counters, which it
+  // also covered, were removed from civitai.com), and is CONSENT-EXEMPT; any manifest declaring a
   // collection must request it. `apps:storage:publish` writes documents in a
   // SHARED collection under the viewer's identity — SENSITIVE (needs a
   // `scopeJustifications` entry) and CONSENT-GATED. `apps:storage` is the one
