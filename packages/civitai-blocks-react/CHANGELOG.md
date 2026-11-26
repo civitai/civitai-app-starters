@@ -1,5 +1,21 @@
 # @civitai/blocks-react
 
+## 0.88.0
+
+### Minor Changes
+
+- 7e4c2c8: **A hook that throws for a rate-limited call now carries the limit on the error: `rateLimitOf(err)`.** Additive: every error keeps its class, `name` and `message`.
+
+  The host's `rateLimit` retry metadata (which limit, when to retry and, for a limit that publishes them, its counts) used to be dropped when a hook turned a refused reply into an exception. It is now kept:
+
+  - **New `rateLimitOf(err)`** returns the `RateLimitMeta` on any error a hook threw or set as its `error`, or `undefined`. It reads `err.rateLimit`, so it also works on `@civitai/sdk`'s `BridgeError`.
+  - **The workflow errors declare it.** `WorkflowEstimateError`, `WorkflowSubmitError`, `WorkflowCancelNotIssuedError` and `BatchEstimateError` gain `rateLimit?: RateLimitMeta`. For the first three it is copied from the snapshot's `rateLimit`; for `BatchEstimateError` it comes from the whole-call error reply.
+  - **Every other hook keeps it too** (including `useOutputUnlock`). The plain `Error`s and per-hook error classes that the bridge hooks throw or set from an error reply now carry the reply's `rateLimit` as an own property. Read it with `rateLimitOf(err)`.
+  - **Workflow snapshots are validated.** A malformed `snapshot.rateLimit` is removed and the rest of the snapshot is delivered. A valid one keeps only its known fields.
+  - The `RateLimitMeta` type is re-exported from `@civitai/app-sdk/blocks` as a type only, so the `@civitai/app-sdk` peer floor is unchanged.
+
+  On a host that sends no `rateLimit`, the errors are exactly what they were before and have no `rateLimit` property at all.
+
 ## 0.87.0
 
 ### Minor Changes
@@ -1074,15 +1090,15 @@ href="/real/"></head>` the scan skipped past the empty tag to the second one, so
     **benign control stayed green**. That pair is what attributes a failure to the
     input's SHAPE rather than to a loaded machine.
 
-                                                                                                                                                            🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
-                                                                                                                                                            stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
-                                                                                                                                                            the test header built a `~5.4x margin` out of them. Re-measured twice since, the
-                                                                                                                                                            same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
-                                                                                                                                                            1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
-                                                                                                                                                            code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
-                                                                                                                                                            gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
-                                                                                                                                                            `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
-                                                                                                                                                            single measurements on one machine.
+                                                                                                                                                                🔴 **No millisecond figure is quoted, deliberately.** This bullet previously
+                                                                                                                                                                stated `expected 2722.071061 to be less than 500` and a `10-15 ms` control, and
+                                                                                                                                                                the test header built a `~5.4x margin` out of them. Re-measured twice since, the
+                                                                                                                                                                same quantities read 1,969 ms and then 1,790-2,886 ms, with the control at
+                                                                                                                                                                1.8-5.3 ms — so a margin MULTIPLIER is a property of the box's load, not of the
+                                                                                                                                                                code. The durable statement is the 500 ms bound and the three-orders-of-magnitude
+                                                                                                                                                                gap it sits in; the observed ranges live in the `LINEAR_BUDGET_MS` docblock in
+                                                                                                                                                                `packages/civitai-app-sdk/test/blocks/nestedDocument.test.ts`, labelled as
+                                                                                                                                                                single measurements on one machine.
 
   - **In the hook:** the deadline wired to the shared controller but not
     distinguished from an unmount (the swallowing described below) → 1 red,
@@ -2902,10 +2918,10 @@ URL('https://civitai.com/evil').origin` is `https://civitai.com`).
   actual packed tarballs — an app on `@civitai/components-react@0.4.0` that also pulls
   `@civitai/blocks-react@0.56.1`:
 
-                                                                                                                before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
-                                                                                                                         @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
-                                                                                                                after    @civitai/theme       0.3.1                   — 1 copy
-                                                                                                                         @civitai/components  0.4.2                   — 1 copy
+                                                                                                                  before   @civitai/theme       0.3.0 (nested) + 0.3.1  — 2 copies
+                                                                                                                           @civitai/components  0.4.0 (nested) + 0.4.2  — 2 copies
+                                                                                                                  after    @civitai/theme       0.3.1                   — 1 copy
+                                                                                                                           @civitai/components  0.4.2                   — 1 copy
 
   That is not only bloat. `injectTokens()` is DOM-marker idempotent and **first copy
   wins**, so the first token bump that changes a _value_ would have shipped stale tokens
