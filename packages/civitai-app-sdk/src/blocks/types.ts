@@ -3558,7 +3558,7 @@ export type BlockStorageSchemaType = 'object' | 'array' | 'string' | 'number' | 
  * checked. The server checks every create and put, and refuses a document that does not match
  * with 400 `schema_violation`. The refusal's message and `details.pointer` name the FIRST
  * failing JSON pointer into `data` (for example `/title`), and `details.keyword` names the
- * keyword it failed. Counters and marks are not checked. Changing a schema does not re-check
+ * keyword it failed. Changing a schema does not re-check
  * stored documents; each is checked the next time it is written.
  *
  * Only these keywords exist; any other is refused at submit by name. Semantics: a keyword for
@@ -3572,8 +3572,8 @@ export type BlockStorageSchemaType = 'object' | 'array' | 'string' | 'number' | 
  * bytes of JSON and 16 patterns per collection schema, and 32 patterns across all of the
  * manifest's collection schemas together; a `pattern` is at most 256 characters,
  * must compile, needs a `maxLength` of at most 1000 on the same schema, and must not backtrack
- * catastrophically; no `min*` above its `max*`. Not allowed on a `write: 'none'` collection,
- * which has no document bodies. Mirrors the canonical schema's
+ * catastrophically; no `min*` above its `max*`. Not allowed on a `write: 'none'` collection
+ * (REMOVED: read-only, no document bodies are written there). Mirrors the canonical schema's
  * `$defs.storageCollectionSchema`.
  */
 export interface BlockStorageCollectionSchema {
@@ -3694,7 +3694,7 @@ export interface BlockStorageCollectionHook {
 /**
  * A PRIVATE collection — a separate key space per viewer, read and written
  * only by that viewer. Carries none of the shared-only fields (`write`,
- * `counters`, `marks`, `showAuthor`, `dailyWritesPerAuthor`,
+ * the removed `counters` and `marks`, `showAuthor`, `dailyWritesPerAuthor`,
  * `ownedModelVersions`, `registry`, `keyedBy`); the canonical
  * forbids them here. See {@link BlockStorageSharedCollectionDeclaration} for
  * the fields both kinds share.
@@ -3738,30 +3738,44 @@ export interface BlockStorageSharedCollectionDeclaration {
    * Who may create, update and delete documents.
    *
    * - `'own'` — eligible signed-in viewers create documents; only a document's
-   *   author updates or deletes it.
-   * - `'none'` — nobody writes documents; viewers only increment the declared
-   *   `counters` and set the declared `marks`. Must declare at least one
-   *   counter or mark.
+   *   author updates or deletes it. A vote, like or per-viewer entry is a
+   *   viewer-keyed `'own'` collection (`keyedBy`).
+   * - `'none'` — REMOVED (it existed for counters, which were removed):
+   *   civitai.com refuses it on a collection that the app's previous approved
+   *   version did not already declare with `'none'`, and serves a collection
+   *   that keeps it READ-ONLY (nobody creates, updates or deletes its
+   *   documents). Use `'own'` with `keyedBy` (a viewer-keyed collection)
+   *   instead. Still typed so a manifest that already declares it compiles.
    * - `'anyone'` — RESERVED (refused at submit until enabled): eligible
    *   signed-in viewers update or delete any document.
    * - `'owner'` — RESERVED (refused at submit until enabled): only the app
-   *   owner writes documents; viewers can still mark and count.
+   *   owner writes documents.
    *
-   * `'own'` and `'anyone'` require the `apps:storage:publish` scope.
+   * `'own'` and `'anyone'` require the `apps:storage:publish` scope. Available
+   * today: `'own'` (and `'none'` only where already declared, as above).
    */
   write: 'own' | 'anyone' | 'owner' | 'none';
   /**
-   * Names of the atomic counters each document carries (for example `plays`).
-   * At most 8 distinct lowercase snake_case names (`^[a-z][a-z0-9_]{0,31}$`),
-   * never `report`, and never a name also used by a mark.
+   * Still typed so a manifest that already declares counters compiles; a declared one does
+   * nothing. At most 8 distinct lowercase snake_case names (`^[a-z][a-z0-9_]{0,31}$`), never
+   * `report`, and never a name also used by a mark.
+   *
+   * @deprecated REMOVED — use a viewer-keyed collection (`keyedBy`) instead. civitai.com serves
+   * no counters: a declared one does nothing, and documents carry no counts. civitai.com refuses
+   * a counter that the collection did not already declare in the app's previous approved
+   * version; a collection may keep the counters it already declares (inert) or drop them.
    */
   counters?: string[];
   /**
-   * Names of the per-viewer marks a viewer can set on a document (for example
-   * `vote`), at most one of each per viewer per document. A reader sees each
-   * mark's count and whether THEY set it, never who else did. At most 8
-   * distinct lowercase snake_case names. `report` is built in on every shared
-   * collection and must NOT be declared.
+   * Still typed so a manifest that already declares marks compiles; a declared one does
+   * nothing. At most 8 distinct lowercase snake_case names. `report` is reserved and must NOT
+   * be declared.
+   *
+   * @deprecated REMOVED — use a viewer-keyed collection (`keyedBy`) instead: each viewer's own
+   * document is their vote or entry. To report a document, use the moderation report API.
+   * civitai.com serves no marks: a declared one does nothing. civitai.com refuses a mark that
+   * the collection did not already declare in the app's previous approved version; a
+   * collection may keep the marks it already declares (inert) or drop them.
    */
   marks?: string[];
   /** See {@link BlockStorageIndexes}. */
@@ -3830,8 +3844,9 @@ export interface BlockStorageSharedCollectionDeclaration {
    */
   registry?: 'public';
   /**
-   * Viewer-keyed documents. `write` `'own'` collections only, never with
-   * `kind` `'log'`, and never beside `counters` or `marks` — the canonical
+   * Viewer-keyed documents — what replaces the removed `counters` and `marks`: each viewer's
+   * own document is their vote or entry, counted by listing. `write` `'own'` collections only,
+   * never with `kind` `'log'`, and never beside the removed `counters` or `marks` — the canonical
    * refuses it under `'anyone'`, `'owner'` and `'none'`, on log and private
    * collections, and with either of those fields.
    *
@@ -3852,13 +3867,13 @@ export interface BlockStorageSharedCollectionDeclaration {
   keyedBy?: 'viewer' | 'parent+viewer';
   /**
    * The schema every document's `data` must match — see {@link BlockStorageCollectionSchema}.
-   * Not allowed with `write` `'none'` (no document bodies are written there).
+   * Not allowed with the removed `write` `'none'` (no document bodies are written there).
    */
   schema?: BlockStorageCollectionSchema;
   /**
    * 1 to 32 ops applied to the documents ALREADY STORED when this version is approved, for a
    * `schema` change that would otherwise leave them unwritable — see
-   * {@link BlockStorageMigrationOp}. Not allowed with `write` `'none'`.
+   * {@link BlockStorageMigrationOp}. Not allowed with the removed `write` `'none'`.
    */
   migrations?: BlockStorageMigrationOp[];
   /**
@@ -3903,9 +3918,9 @@ export interface BlockStorageImport {
   /** 1 to 16 distinct names of collections the source declares. */
   collections: string[];
   /**
-   * `'read'`: reads only; every write, counter and mark is refused (`write_policy`).
-   * `'readwrite'`: also writes, under the source collection's own write policy. A write,
-   * counter or mark in one of the source's SHARED collections also needs the viewer's own
+   * `'read'`: reads only; every write and report is refused (`write_policy`).
+   * `'readwrite'`: also writes, under the source collection's own write policy. A write
+   * or report in one of the source's SHARED collections also needs the viewer's own
    * `apps:storage:publish` grant IN THE SOURCE APP; a private collection needs only the
    * import grant.
    */

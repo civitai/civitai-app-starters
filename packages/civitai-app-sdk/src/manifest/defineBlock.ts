@@ -169,7 +169,10 @@ export const KNOWN_GAPS = {
     '"own" or "anyone") also requires `apps:storage:publish`, declaring `imports` requires ' +
     '`apps:storage:import` (and `apps:storage`), requesting any of these scopes with nothing for ' +
     'it to reach is rejected, an import never names this app itself and names each source at ' +
-    'most once, a counter may not share a name with a mark, and the ' +
+    'most once, a counter may not share a name with a mark, `counters`, `marks` and `write` ' +
+    '"none" are REMOVED (civitai.com serves none of them and refuses one a collection did not ' +
+    'already declare in the app\'s previous approved version; use a viewer-keyed collection, ' +
+    '`keyedBy`, instead), and the ' +
     'RESERVED features (`kind` "log", `ttlSeconds`, `dailyWritesPerAuthor`, `registry`, ' +
     '`write` "anyone" / "owner") validate offline and are refused at submit. A new or changed ' +
     '`hook` is in a limited rollout: it validates offline and is refused at submit for an author ' +
@@ -199,7 +202,7 @@ export const KNOWN_GAPS = {
   'storage-keyedBy-immutable':
     'A collection\'s `keyedBy` (viewer-keyed documents): the canonical encodes its values ' +
     '("viewer" / "parent+viewer") and where it may appear — shared `write` "own" collections ' +
-    'only, never `kind` "log", never beside `counters` or `marks` — and Ajv enforces those ' +
+    'only, never `kind` "log", never beside the removed `counters` or `marks` — and Ajv enforces those ' +
     'exactly. That it cannot be added, removed or changed on a collection ANY previously ' +
     'approved version declared needs those approved manifests, so it is decided by the server at ' +
     'submit. A change to it validates here.',
