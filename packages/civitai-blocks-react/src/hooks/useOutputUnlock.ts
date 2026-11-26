@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import type { BlockOutputUnlockResult } from '@civitai/app-sdk/blocks';
 
+import { withRateLimit } from '../transport/rateLimit.js';
 import { HUMAN_INTERACTION_TIMEOUT_MS } from '../transport/requestTimeouts.js';
 import { getTransport } from '../transport/singleton.js';
 import { sendTypedRequest } from '../transport/transport.js';
@@ -52,7 +53,7 @@ export function useOutputUnlock(): UseOutputUnlock {
       { timeoutMs: HUMAN_INTERACTION_TIMEOUT_MS },
     );
     if (typeof payload.error === 'string' || !payload.result) {
-      throw new Error(payload.error ?? 'output unlock failed');
+      throw withRateLimit(new Error(payload.error ?? 'output unlock failed'), payload);
     }
     return payload.result;
   }, []);
