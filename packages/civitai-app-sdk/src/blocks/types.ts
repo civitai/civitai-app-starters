@@ -954,8 +954,8 @@ export interface ViewerInfo {
  * maturity ceiling — the one that restricts workflow outputs — and fails closed:
  *
  *  - `{ url, nsfwLevel }` — a ready-to-render CDN image url and the avatar's
- *    rating (the same `'pg'` … `'xxx'` vocabulary as a workflow output's
- *    `nsfwLevel`).
+ *    rating (the same vocabulary as a workflow output's `nsfwLevel`:
+ *    {@link KnownBlockWorkflowOutputRating}, open-ended).
  *  - `{ restricted: true }` — the viewer HAS an avatar this app may not show:
  *    rated above what this app may show this viewer (e.g. an X avatar in an SFW
  *    app), or not rated (still being scanned, or never). No url, and no reason —
@@ -967,7 +967,9 @@ export interface ViewerInfo {
  * (`src/server/services/blocks/block-viewer-image.ts`).
  */
 export type ViewerImage =
-  | { url: string; nsfwLevel: 'pg' | 'pg13' | 'r' | 'x' | 'xxx' }
+  // Open-ended like a workflow output's rating: a rating this SDK does not know
+  // still arrives (compare against the known ones, never assume the set is closed).
+  | { url: string; nsfwLevel: KnownBlockWorkflowOutputRating | (string & {}) }
   | { restricted: true }
   | null;
 

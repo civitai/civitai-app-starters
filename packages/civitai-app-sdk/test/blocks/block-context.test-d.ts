@@ -246,7 +246,9 @@ if (isPageSlotContext(ctx)) {
   void image.url;
   if (image && 'url' in image) {
     expectTypeOf(image.url).toEqualTypeOf<string>();
-    expectTypeOf(image.nsfwLevel).toEqualTypeOf<'pg' | 'pg13' | 'r' | 'x' | 'xxx'>();
+    // Open-ended, but the known ratings still autocomplete and compare.
+    expectTypeOf<'xxx'>().toMatchTypeOf<typeof image.nsfwLevel>();
+    expectTypeOf(image.nsfwLevel).toMatchTypeOf<string>();
   }
   // A withheld avatar carries no reason.
   // @ts-expect-error — no `reason` on the withheld shape.

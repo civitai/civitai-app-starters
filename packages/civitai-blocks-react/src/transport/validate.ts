@@ -907,13 +907,13 @@ export function isValidBuzzBalanceResult(
 
 const VIEWER_STATUSES = new Set<string>(['active', 'muted']);
 
-const VIEWER_IMAGE_RATINGS = new Set<string>(['pg', 'pg13', 'r', 'x', 'xxx']);
 
 /**
  * The viewer avatar (`ViewerImage`) the platform sends on `/blocks/me`,
  * `VIEWER_RESULT` and `BLOCK_INIT.viewer.image`, copied by field — or `undefined`
- * for anything that is not one of its three shapes. Mirrors civitai/civitai's
- * `projectBlockInitViewerImage`: a url must be absolute http(s).
+ * for anything that is not one of its three shapes. A url must be absolute
+ * http(s). The rating is any non-empty string — open-ended like a workflow
+ * output's, so a rating this SDK predates does not cost the viewer their avatar.
  */
 export function readViewerImage(v: unknown): ViewerImage | undefined {
   if (v === null) return null;
@@ -922,10 +922,9 @@ export function readViewerImage(v: unknown): ViewerImage | undefined {
   if (
     typeof v.url === 'string' &&
     /^https?:\/\//i.test(v.url) &&
-    typeof v.nsfwLevel === 'string' &&
-    VIEWER_IMAGE_RATINGS.has(v.nsfwLevel)
+    isNonEmptyString(v.nsfwLevel)
   ) {
-    return { url: v.url, nsfwLevel: v.nsfwLevel as 'pg' | 'pg13' | 'r' | 'x' | 'xxx' };
+    return { url: v.url, nsfwLevel: v.nsfwLevel };
   }
   return undefined;
 }

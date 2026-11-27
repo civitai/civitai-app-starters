@@ -30,7 +30,8 @@ export interface ViewerInfo {
  * which. `null`: no avatar. Same value on `GET /api/v1/blocks/me`.
  */
 export type ViewerImage =
-  | { url: string; nsfwLevel: 'pg' | 'pg13' | 'r' | 'x' | 'xxx' }
+  // Open-ended: a rating this SDK predates still arrives.
+  | { url: string; nsfwLevel: 'pg' | 'pg13' | 'r' | 'x' | 'xxx' | (string & {}) }
   | { restricted: true }
   | null;
 

@@ -1952,13 +1952,18 @@ describe('viewer.image (the avatar) at the trust boundary', () => {
       restricted: true,
     });
     expect(readViewerImage(null)).toBeNull();
+    // A rating this SDK predates is still delivered (open-ended, like an output's).
+    expect(readViewerImage({ url: URL_A, nsfwLevel: 'future' })).toEqual({
+      url: URL_A,
+      nsfwLevel: 'future',
+    });
   });
 
   it.each([
     ['undefined', undefined],
     ['a bare string', URL_A],
     ['no rating', { url: URL_A }],
-    ['an unknown rating', { url: URL_A, nsfwLevel: 'nc17' }],
+    ['an empty rating', { url: URL_A, nsfwLevel: '' }],
     ['a javascript: url', { url: 'javascript:alert(1)', nsfwLevel: 'pg' }],
     ['a relative url', { url: 'av-a.jpeg', nsfwLevel: 'pg' }],
     ['a non-literal restricted', { restricted: 'true' }],
