@@ -78,7 +78,6 @@ export {
 } from './mcp/clients.js';
 export { mcpResultToText } from './mcp/result.js';
 export { askChoiceTool, ASK_CHOICE, type AskChoiceInput } from './tools/build.js';
-export { normalizeChoice, CHOICE_MAX, CHOICE_MIN, type Choice } from './tools/choice.js';
 export {
   hostToolSet,
   HOST_TOOL_FAILED_NOTE,
