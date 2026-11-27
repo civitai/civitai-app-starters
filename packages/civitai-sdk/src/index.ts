@@ -181,5 +181,6 @@ export type {
   Theme,
   TokenKind,
   UnknownSlotContext,
+  ViewerImage,
   ViewerInfo,
 } from './core/handshake.js';

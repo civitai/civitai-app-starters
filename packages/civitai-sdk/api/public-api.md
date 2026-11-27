@@ -3694,7 +3694,28 @@ export interface ViewerInfo {
     id: number;
     username: string | null;
     status?: 'active' | 'banned' | 'muted';
+    /**
+     * The viewer's avatar. Sent only when the token carries `user:read:self`;
+     * absent otherwise, and from a host that predates it. Not re-sent after a later
+     * consent grant — read `app.site.get('blocks/me')`, which returns the same
+     * `image`, for a fresh value.
+     */
+    image?: ViewerImage;
 }
+
+/**
+ * The viewer's avatar as the host lets an app see it, judged against the token's
+ * maturity ceiling (the one that restricts workflow outputs). `{ url, nsfwLevel }`:
+ * a CDN url and its rating. `{ restricted: true }`: the viewer has an avatar this
+ * app may not show — rated above the ceiling or not rated, deliberately not said
+ * which. `null`: no avatar. Same value on `GET /api/v1/blocks/me`.
+ */
+export type ViewerImage = {
+    url: string;
+    nsfwLevel: 'pg' | 'pg13' | 'r' | 'x' | 'xxx' | (string & {});
+} | {
+    restricted: true;
+} | null;
 
 export type ModelSlotId = 'model.sidebar_top' | 'model.below_images' | 'model.actions_extra';
 

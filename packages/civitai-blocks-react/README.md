@@ -1446,6 +1446,31 @@ const { viewer, loading, error, refetch } = useViewer();
 if (!loading && viewer) console.log(`${viewer.username ?? 'anon'} · budget ${viewer.buzzBudget ?? 0}`);
 ```
 
+`viewer.image` is the viewer's avatar (`ViewerImage`, from `@civitai/app-sdk/blocks`),
+judged by the platform against this app's maturity ceiling — the same one that
+restricts workflow outputs:
+
+```tsx
+import { useViewer } from '@civitai/blocks-react';
+
+function ViewerAvatar() {
+  const { viewer } = useViewer();
+  const image = viewer?.image;
+  if (image && 'url' in image) {
+    // a ready-to-render CDN url, rated `image.nsfwLevel` ('pg' … 'xxx')
+    return <img src={image.url} alt="" width={40} height={40} />;
+  }
+  // `{ restricted: true }` — the viewer HAS an avatar this app may not show (rated
+  // above the ceiling, or not rated yet; deliberately not said which). `null` — no
+  // avatar. Absent — a host that predates the field. A placeholder for all three.
+  return <span aria-hidden="true">?</span>;
+}
+```
+
+The same value arrives on `useBlockContext().viewer.image` at load when the token
+carries `user:read:self` (it is not re-sent after a later consent grant — use
+`useViewer()` then).
+
 ### `useBuzzTransactions(params?)`
 
 The signed-in viewer's Buzz-transaction ledger (a paged, host-projected read of

@@ -741,7 +741,11 @@ export class IframeTransport implements BlockTransport {
         this.initResolved = true;
         clearTimeout(this.initTimeoutId);
         this.parentOrigin = event.origin;
-        this.snapshot = snapshotFromInit(data.payload);
+        // BLOCK_INIT returns before the reply path's `projectInboundPayload` call
+        // below, so it is projected here (`viewer.image`), for the snapshot AND for
+        // `waitForInit()` — both hand it to block code.
+        const initPayload = projectInboundPayload('BLOCK_INIT', data.payload) as typeof data.payload;
+        this.snapshot = snapshotFromInit(initPayload);
         this.emit();
         this.flushOutbound();
         // Auto-send BLOCK_READY so the platform's 10-second ready timeout
@@ -762,7 +766,7 @@ export class IframeTransport implements BlockTransport {
             secret: () => this.snapshot.token.raw,
           });
         }
-        this.resolveInit(data.payload);
+        this.resolveInit(initPayload);
       }
       return;
     }

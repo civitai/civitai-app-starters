@@ -714,6 +714,41 @@ describe('IframeTransport', () => {
     transport.dispose();
   });
 
+  it('projects BLOCK_INIT viewer.image into the snapshot AND waitForInit (a malformed one is dropped)', async () => {
+    // BLOCK_INIT returns before the reply path's projection, so the init branch
+    // projects it itself. Read through the TRANSPORT, not `projectInboundPayload`:
+    // a direct call cannot see an init branch that skips the projection.
+    const viewer = { id: 5, username: 'v', signedIn: true as const };
+    const bad = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    window.dispatchEvent(
+      mockParentMessage(
+        {
+          type: 'BLOCK_INIT',
+          payload: buildInitPayload({
+            viewer: { ...viewer, image: { url: 'javascript:alert(1)', nsfwLevel: 'pg' } },
+          } as unknown as Partial<BlockInitPayload>),
+        },
+        PARENT_ORIGIN,
+      ),
+    );
+    const resolved = await bad.waitForInit();
+    expect(bad.getSnapshot().viewer).toEqual(viewer);
+    expect(resolved.viewer).toEqual(viewer);
+    bad.dispose();
+
+    const good = new IframeTransport({ allowedParentOrigins: [PARENT_ORIGIN] });
+    const image = { url: 'https://image.example/av.jpeg', nsfwLevel: 'pg13' };
+    window.dispatchEvent(
+      mockParentMessage(
+        { type: 'BLOCK_INIT', payload: buildInitPayload({ viewer: { ...viewer, image } }) },
+        PARENT_ORIGIN,
+      ),
+    );
+    await good.waitForInit();
+    expect(good.getSnapshot().viewer).toEqual({ ...viewer, image });
+    good.dispose();
+  });
+
   describe('trust-boundary payload validation', () => {
     let warnSpy: ReturnType<typeof vi.spyOn>;
     beforeEach(() => {

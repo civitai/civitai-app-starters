@@ -899,7 +899,8 @@ export interface ViewerInfo {
    *    so there is no half-covered fleet.
    *  - That repo's own contract test (`__tests__/projectBlockInit.test.ts`) now
    *    pins the BLOCK_INIT viewer key set as exactly
-   *    `['id', 'signedIn', 'username']`, and asserts the value is literally
+   *    `['id', 'signedIn', 'username']` — plus {@link ViewerInfo.image} when the
+   *    token carries `user:read:self` — and asserts the value is literally
    *    `true` rather than a computed boolean.
    *  - It arrived with civitai/civitai#3707 (merged 2026-08-07). Earlier
    *    revisions of this doc first told authors to write `viewer !== null`
@@ -937,7 +938,40 @@ export interface ViewerInfo {
   username: string | null;
   /** @deprecated Not sent by the platform to third-party iframes (civitai #2521). */
   status?: 'active' | 'banned' | 'muted';
+  /**
+   * The viewer's avatar — see {@link ViewerImage}. Sent only when the block token
+   * carries `user:read:self`; ABSENT otherwise, and on a host that predates the
+   * field. Computed when the token is minted and not re-sent after a later consent
+   * grant: read `useViewer()` / `blocks/me` for a fresh value.
+   */
+  image?: ViewerImage;
 }
+
+/**
+ * The viewer's avatar as the platform lets an app see it — the same value on
+ * `BLOCK_INIT.viewer.image`, `useViewer()` (`GET_VIEWER`) and
+ * `GET /api/v1/blocks/me`. The platform judges it against the block token's
+ * maturity ceiling — the one that restricts workflow outputs — and fails closed:
+ *
+ *  - `{ url, nsfwLevel }` — a ready-to-render CDN image url and the avatar's
+ *    rating (the same vocabulary as a workflow output's `nsfwLevel`:
+ *    {@link KnownBlockWorkflowOutputRating}, open-ended).
+ *  - `{ restricted: true }` — the viewer HAS an avatar this app may not show:
+ *    rated above what this app may show this viewer (e.g. an X avatar in an SFW
+ *    app), or not rated (still being scanned, or never). No url, and no reason —
+ *    which of the two it is would disclose the avatar's rating.
+ *  - `null` — the viewer has no avatar to show.
+ *
+ * Mirrors civitai/civitai's `BlockInitViewerImage`
+ * (`src/components/AppBlocks/types.ts`) and `projectBlockViewerImage`
+ * (`src/server/services/blocks/block-viewer-image.ts`).
+ */
+export type ViewerImage =
+  // Open-ended like a workflow output's rating: a rating this SDK does not know
+  // still arrives (compare against the known ones, never assume the set is closed).
+  | { url: string; nsfwLevel: KnownBlockWorkflowOutputRating | (string & {}) }
+  | { restricted: true }
+  | null;
 
 /**
  * THE sign-in gate. Pass `useBlockContext().viewer` (or a `BlockInitPayload`'s
@@ -4365,6 +4399,8 @@ export interface BlockViewer {
   status: 'active' | 'muted';
   /** The viewer's current Buzz budget, or `null` when the token lacks the claim. */
   buzzBudget: number | null;
+  /** The viewer's avatar — see {@link ViewerImage}. Absent from a host that predates it. */
+  image?: ViewerImage;
 }
 
 /**

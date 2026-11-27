@@ -26,6 +26,7 @@ import {
   type BlockTransport,
   type OutboundRequest,
 } from './transport.js';
+import { projectInboundPayload } from './validate.js';
 
 declare global {
   interface Window {
@@ -40,7 +41,10 @@ export class InlineTransport implements BlockTransport {
   constructor() {
     const win = (globalThis as { window?: Window }).window;
     const bootstrap = win?.__CIVITAI_BLOCK_CONTEXT__;
-    this.snapshot = bootstrap ? snapshotFromInit(bootstrap) : EMPTY_SNAPSHOT;
+    // Projected like the iframe transport's BLOCK_INIT (`viewer.image`).
+    this.snapshot = bootstrap
+      ? snapshotFromInit(projectInboundPayload('BLOCK_INIT', bootstrap) as typeof bootstrap)
+      : EMPTY_SNAPSHOT;
     // SECURITY INVARIANT — mirrors IframeTransport.getHostOrigin(): the value
     // returned here is only ever a trusted host origin. In inline mode the
     // block executes INSIDE the host's own document (the host injected
