@@ -31,6 +31,7 @@ import {
   payloadValidatorFor,
   projectInboundPayload,
   projectWorkflowSnapshot,
+  readViewerImage,
 } from '../src/transport/validate.js';
 
 const validInit = {
@@ -1935,5 +1936,62 @@ describe('host-workflow-snapshot.eta.json contract fixture', () => {
     expect(fixture.processing!.steps).toEqual([
       { name: 'clip', $type: 'videoGen', status: 'processing', progress: 0.42, startedAt: '2026-11-14T12:00:21Z' },
     ]);
+  });
+});
+
+describe('viewer.image (the avatar) at the trust boundary', () => {
+  const URL_A = 'https://image.example/av-a.jpeg';
+
+  it('readViewerImage keeps the three platform shapes, copied by field', () => {
+    expect(readViewerImage({ url: URL_A, nsfwLevel: 'x', extra: 1 })).toEqual({
+      url: URL_A,
+      nsfwLevel: 'x',
+    });
+    // Withheld carries no url and no reason, whatever the value held.
+    expect(readViewerImage({ restricted: true, reason: 'unrated', url: URL_A })).toEqual({
+      restricted: true,
+    });
+    expect(readViewerImage(null)).toBeNull();
+  });
+
+  it.each([
+    ['undefined', undefined],
+    ['a bare string', URL_A],
+    ['no rating', { url: URL_A }],
+    ['an unknown rating', { url: URL_A, nsfwLevel: 'nc17' }],
+    ['a javascript: url', { url: 'javascript:alert(1)', nsfwLevel: 'pg' }],
+    ['a relative url', { url: 'av-a.jpeg', nsfwLevel: 'pg' }],
+    ['a non-literal restricted', { restricted: 'true' }],
+  ])('readViewerImage drops %s', (_label, value) => {
+    expect(readViewerImage(value)).toBeUndefined();
+  });
+
+  it('VIEWER_RESULT: a malformed image is DROPPED, the rest of the viewer still delivered', () => {
+    const viewer = { id: 7, username: 'v', status: 'active', buzzBudget: null };
+    expect(
+      projectInboundPayload('VIEWER_RESULT', {
+        requestId: 'r',
+        viewer: { ...viewer, image: { url: 'javascript:x', nsfwLevel: 'pg' } },
+      }),
+    ).toEqual({ requestId: 'r', viewer });
+    expect(
+      projectInboundPayload('VIEWER_RESULT', {
+        requestId: 'r',
+        viewer: { ...viewer, image: { url: URL_A, nsfwLevel: 'pg', smuggled: true } },
+      }),
+    ).toEqual({ requestId: 'r', viewer: { ...viewer, image: { url: URL_A, nsfwLevel: 'pg' } } });
+  });
+
+  it('BLOCK_INIT: viewer.image is projected the same way; a viewer without one is untouched', () => {
+    const init = { ...validInit, viewer: { id: 1, username: 'u', signedIn: true } };
+    expect(projectInboundPayload('BLOCK_INIT', init)).toBe(init);
+    const withImage = { ...init, viewer: { ...init.viewer, image: { restricted: true } } };
+    expect(projectInboundPayload('BLOCK_INIT', withImage)).toEqual(withImage);
+    expect(
+      projectInboundPayload('BLOCK_INIT', {
+        ...init,
+        viewer: { ...init.viewer, image: { restricted: 'yes' } },
+      }),
+    ).toEqual(init);
   });
 });
