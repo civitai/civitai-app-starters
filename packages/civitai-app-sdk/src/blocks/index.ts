@@ -221,6 +221,7 @@ export type {
   SettingWidget,
   Theme,
   ViewerInfo,
+  ViewerImage,
   BlockCheckpointInfo,
   BlockResourceInfo,
   BlockResourcePickerType,

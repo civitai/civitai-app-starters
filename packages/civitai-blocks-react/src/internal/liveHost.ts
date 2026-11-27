@@ -163,6 +163,7 @@ import {
 import { PAGE_CHECKPOINT_PERSIST_ERROR, PAGE_SLOT_ID, emulatesPageHost } from './hostSurface.js';
 import { hostContextWithTheme } from '../transport/transport.js';
 import { isRoutableRequestId } from '../transport/requestId.js';
+import { readViewerImage } from '../transport/validate.js';
 import {
   SHARE_LINK_INVALID_ERROR,
   SHARE_LINK_RATE_LIMITED_ERROR,
@@ -746,20 +747,26 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
           id?: number;
           username?: string | null;
           status?: 'active' | 'banned' | 'muted';
+          image?: unknown;
         };
         if (typeof me.id !== 'number') return anonFallbackViewer();
         // `/api/v1/blocks/me` is the AUTHORITATIVE self-read and does carry
         // `status` — but this builds `BLOCK_INIT.viewer`, which the real host
-        // projects down to exactly `{ id, username, signedIn }` (civitai/civitai
+        // projects down to exactly `{ id, username, signedIn }` plus `image` (civitai/civitai
         // `main`'s `withSignedInFlag`). Never moderation state (civitai #2521).
         // Forwarding `me.status` here would
         // make the live dev host more generous than production. A block that
         // wants `status` must ask for it via `GET_VIEWER` / `useViewer()`, which
         // is exactly the scope-gated path this release steers authors to.
+        // `image` (the avatar) IS forwarded: production sends it on BLOCK_INIT
+        // when the token carries `user:read:self` — the scope this very read
+        // requires — after the same shape check (`readViewerImage`).
+        const image = readViewerImage(me.image);
         return {
           id: me.id,
           username: me.username ?? null,
           signedIn: true,
+          ...(image !== undefined ? { image } : {}),
         };
       } catch (err) {
         // eslint-disable-next-line no-console

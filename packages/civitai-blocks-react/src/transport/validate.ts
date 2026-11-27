@@ -59,6 +59,7 @@ import type {
   BlockWorkflowSnapshot,
   ParentToBlockMessageType,
   Theme,
+  ViewerImage,
   WrappedToken,
 } from '@civitai/app-sdk/blocks';
 
@@ -905,6 +906,28 @@ export function isValidBuzzBalanceResult(
 }
 
 const VIEWER_STATUSES = new Set<string>(['active', 'muted']);
+
+
+/**
+ * The viewer avatar (`ViewerImage`) the platform sends on `/blocks/me`,
+ * `VIEWER_RESULT` and `BLOCK_INIT.viewer.image`, copied by field — or `undefined`
+ * for anything that is not one of its three shapes. A url must be absolute
+ * http(s). The rating is any non-empty string — open-ended like a workflow
+ * output's, so a rating this SDK predates does not cost the viewer their avatar.
+ */
+export function readViewerImage(v: unknown): ViewerImage | undefined {
+  if (v === null) return null;
+  if (!isObject(v)) return undefined;
+  if (v.restricted === true) return { restricted: true };
+  if (
+    typeof v.url === 'string' &&
+    /^https?:\/\//i.test(v.url) &&
+    isNonEmptyString(v.nsfwLevel)
+  ) {
+    return { url: v.url, nsfwLevel: v.nsfwLevel };
+  }
+  return undefined;
+}
 
 /**
  * Reply to a block-initiated `GET_VIEWER`. A well-formed reply carries EITHER a
@@ -2152,6 +2175,27 @@ export function isValidUserCheckpointSetResult(p: unknown): boolean {
 }
 
 /**
+ * `viewer` with its `image` replaced by {@link readViewerImage}'s reading — the key
+ * DROPPED when that reading is `undefined` — so a block reads only a well-formed
+ * avatar or none. Identity when the viewer carries no `image` key.
+ */
+function projectViewerImageField(viewer: unknown): unknown {
+  if (!isObject(viewer) || !('image' in viewer)) return viewer;
+  const image = readViewerImage(viewer.image);
+  if (image === viewer.image) return viewer;
+  const { image: _dropped, ...rest } = viewer;
+  void _dropped;
+  return image === undefined ? rest : { ...rest, image };
+}
+
+/** BLOCK_INIT / VIEWER_RESULT with `viewer.image` projected; see {@link projectViewerImageField}. */
+function projectViewerPayload(payload: unknown): unknown {
+  if (!isObject(payload) || !isObject(payload.viewer)) return payload;
+  const viewer = projectViewerImageField(payload.viewer);
+  return viewer === payload.viewer ? payload : { ...payload, viewer };
+}
+
+/**
  * Narrow an already-VALIDATED inbound payload to the fields a consumer is
  * allowed to see, immediately before `iframeTransport` hands it to a pending
  * request or a push listener.
@@ -2163,7 +2207,7 @@ export function isValidUserCheckpointSetResult(p: unknown): boolean {
  * batch. See {@link projectGatedImage} for the concrete case and the hang it
  * avoids.
  *
- * 🔴 SCOPE, STATED HONESTLY: five groups are projected today. `IMAGES_RESULT`
+ * 🔴 SCOPE, STATED HONESTLY: six groups are projected today. `IMAGES_RESULT`
  * (the hidden-entry allowlist), `MEDIA_UPLOAD_BATCH_RESULT` (a malformed
  * entry becomes that item's error, {@link projectMediaUploadBatchResults}),
  * `GENERATION_SOURCE_PERSISTED` and `SHARE_LINK_RESULT` (a malformed reply
@@ -2171,12 +2215,15 @@ export function isValidUserCheckpointSetResult(p: unknown): boolean {
  * {@link projectShareLinkResult}), and every reply carrying a
  * workflow snapshot — the six in {@link SNAPSHOT_REPLY_TYPES} plus each cell of
  * `ESTIMATE_BATCH_RESULT` — whose malformed queue/ETA fields are removed
- * ({@link projectWorkflowSnapshot}).
+ * ({@link projectWorkflowSnapshot}), and `viewer.image` on `VIEWER_RESULT` and
+ * `BLOCK_INIT` ({@link projectViewerPayload}); `BLOCK_INIT` never reaches the reply
+ * path, so the transports call this on it themselves before building the snapshot.
  * Every other type is returned by identity — this is not a general sanitizer and
  * must not be read as one. Add a case here (and say so in the type's validator
  * docblock) if another message ever needs one.
  */
 export function projectInboundPayload(type: string, payload: unknown): unknown {
+  if (type === 'BLOCK_INIT' || type === 'VIEWER_RESULT') return projectViewerPayload(payload);
   if (type === 'MEDIA_UPLOAD_BATCH_RESULT') return projectMediaUploadBatchResults(payload);
   if (type === 'GENERATION_SOURCE_PERSISTED') return projectGenerationSourcePersisted(payload);
   if (type === 'SHARE_LINK_RESULT') return projectShareLinkResult(payload);

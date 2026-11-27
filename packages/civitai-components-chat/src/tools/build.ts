@@ -40,6 +40,54 @@ const FAILED_NOTE = 'This service failed. Do not call it again this turn; tell t
 
 export const ASK_CHOICE = 'ask_choice';
 
+/** What the model sends `ask_choice`: a question and 2 to 4 options, each a short label with an optional description and attachment id. */
+export interface AskChoiceInput {
+  question: string;
+  options: { label: string; description?: string; image?: string }[];
+}
+
+/**
+ * The `ask_choice` tool exactly as `<civitai-chat>` offers it (name `ASK_CHOICE`): the page's card
+ * shows the options, a click sends the picked label as the next user message, and the text box stays
+ * usable for a freeform answer. Its result `{ shown: true, awaitsUser: true }` ends the reply (see
+ * `AgentCore`); an input the card could not show (`normalizeChoice` gives `null`) returns an error
+ * instead, so the model can call it again. A server runner offers it to run the same tool the page runs.
+ */
+export function askChoiceTool() {
+  return tool({
+    description:
+      'Show the user 2 to 4 clickable options when they need to pick a direction (a style, which picture to continue with, a mood). Stop after calling it; their pick comes back as their next message.',
+    inputSchema: jsonSchema<AskChoiceInput>({
+      type: 'object',
+      properties: {
+        question: { type: 'string' },
+        options: {
+          type: 'array',
+          minItems: 2,
+          maxItems: 4,
+          items: {
+            type: 'object',
+            properties: {
+              label: { type: 'string', description: 'Short, 1-5 words' },
+              description: { type: 'string' },
+              image: { type: 'string', description: 'Optional attachment id to show on the option' },
+            },
+            required: ['label'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['question', 'options'],
+      additionalProperties: false,
+    }),
+    // `awaitsUser` ends the reply; an input the card could not show does not, so the model can fix it.
+    execute: async (input) =>
+      normalizeChoice(input)
+        ? { shown: true, awaitsUser: true, note: 'The options are on screen. Stop and wait for the user to choose; do not list them again.' }
+        : { error: CHOICE_INVALID, note: CHOICE_RETRY_NOTE },
+  });
+}
+
 /**
  * The assistant's tools for one turn: every MCP tool as the server defines it,
  * plus `ask_choice`. Generation tools go through a job instead of blocking.
@@ -131,38 +179,7 @@ export function buildToolSet(catalog: ToolCatalog, ctx: TurnToolContext): ToolSe
         : { error: `instructions must be 1 to ${CUSTOM_INSTRUCTIONS_MAX} characters.`, note: 'Nothing was shown. Shorten or fill in the text and call again.' },
   });
 
-  tools[ASK_CHOICE] = tool({
-    description:
-      'Show the user 2 to 4 clickable options when they need to pick a direction (a style, which picture to continue with, a mood). Stop after calling it; their pick comes back as their next message.',
-    inputSchema: jsonSchema<{ question: string; options: { label: string; description?: string; image?: string }[] }>({
-      type: 'object',
-      properties: {
-        question: { type: 'string' },
-        options: {
-          type: 'array',
-          minItems: 2,
-          maxItems: 4,
-          items: {
-            type: 'object',
-            properties: {
-              label: { type: 'string', description: 'Short, 1-5 words' },
-              description: { type: 'string' },
-              image: { type: 'string', description: 'Optional attachment id to show on the option' },
-            },
-            required: ['label'],
-            additionalProperties: false,
-          },
-        },
-      },
-      required: ['question', 'options'],
-      additionalProperties: false,
-    }),
-    // `awaitsUser` ends the reply; an input the card could not show does not, so the model can fix it.
-    execute: async (input) =>
-      normalizeChoice(input)
-        ? { shown: true, awaitsUser: true, note: 'The options are on screen. Stop and wait for the user to choose; do not list them again.' }
-        : { error: CHOICE_INVALID, note: CHOICE_RETRY_NOTE },
-  });
+  tools[ASK_CHOICE] = askChoiceTool();
 
   return tools;
 }

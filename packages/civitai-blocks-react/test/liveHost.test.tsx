@@ -138,7 +138,7 @@ function trpcErr(message: string, status = 500) {
 }
 
 /** A /api/v1/blocks/me success response. */
-function meOk(me: { id: number; username: string | null; status?: string }) {
+function meOk(me: { id: number; username: string | null; status?: string; image?: unknown }) {
   return {
     ok: true,
     status: 200,
@@ -297,6 +297,40 @@ describe('createLiveHost — BLOCK_INIT', () => {
       for (const t of calledThis) expect(t).toBe(globalThis);
     } finally {
       globalThis.fetch = realFetch;
+    }
+  });
+
+  it('forwards the /blocks/me avatar onto BLOCK_INIT.viewer.image, shape-checked', async () => {
+    // Production stamps `viewer.image` when the token carries `user:read:self`
+    // (the scope /blocks/me itself requires), after a shape check. The dev host
+    // mirrors both halves: a valid avatar is forwarded field-by-field, a
+    // malformed one is dropped (key ABSENT), never forwarded raw.
+    const cases: Array<[unknown, Record<string, unknown>]> = [
+      [
+        { url: 'https://image.example/av-1.jpeg', nsfwLevel: 'pg13', extra: 1 },
+        { image: { url: 'https://image.example/av-1.jpeg', nsfwLevel: 'pg13' } },
+      ],
+      [{ restricted: true }, { image: { restricted: true } }],
+      [null, { image: null }],
+      [{ url: 'javascript:alert(1)', nsfwLevel: 'pg' }, {}],
+    ];
+    for (const [image, expected] of cases) {
+      const local = collectInbound();
+      const fetchImpl = vi.fn(async (url: string) => {
+        if (url.endsWith('/api/v1/blocks/me')) {
+          return meOk({ id: 43, username: 'dev-av', status: 'active', image });
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      }) as unknown as typeof fetch;
+      const host = createLiveHost({ blockToken: fakeJwt(DEFAULT_CLAIMS), fetchImpl });
+      const off = host.install();
+      try {
+        const payload = (await waitForMessage(local, 'BLOCK_INIT')) as unknown as BlockInitPayload;
+        expect(payload.viewer).toEqual({ id: 43, username: 'dev-av', signedIn: true, ...expected });
+      } finally {
+        off();
+        local.stop();
+      }
     }
   });
 

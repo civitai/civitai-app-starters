@@ -1439,6 +1439,16 @@ pool.sync([{ id: 'docs', url: 'https://example.com/mcp', fetch: signedFetch, lab
 const tools = extraToolSet(await pool.tools(), { taken: {} }); // { docs__search, … }
 ```
 
+To let the assistant ask with buttons as the page does, offer the page's own `ask_choice`. Its result
+ends the reply; a page showing the run draws the options as a card, and the viewer's pick (or anything
+they type instead) is the next user message:
+
+```js
+import { ASK_CHOICE, askChoiceTool } from '@civitai/components-chat/core';
+
+const tools = { ...myTools, [ASK_CHOICE]: askChoiceTool() };
+```
+
 The system prompt is `buildSystemPrompt`, as the page builds it. Its `timeZone` (an IANA name) is the
 page's `time-zone`: the date line then gives that zone's day, weekday and name instead of UTC's date
 (`dateLine(now, timeZone)` is that one line):

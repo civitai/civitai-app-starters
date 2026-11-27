@@ -35,7 +35,9 @@ import type {
   PageSlotContext,
   PageSlotId,
   UnknownSlotContext,
+  ViewerImage,
   ViewerInfo,
+  BlockViewer,
 } from '../../src/blocks/types.js';
 
 // ============================================================
@@ -231,4 +233,25 @@ if (isPageSlotContext(ctx)) {
 {
   const futureSlot: BlockContext = { slotId: 'article.footer' };
   expectTypeOf(futureSlot.slotId).toEqualTypeOf<string>();
+}
+
+// `viewer.image` (the avatar): OPTIONAL on both the BLOCK_INIT viewer and the
+// `useViewer()` reply (a host that predates it omits it), and a url is reachable
+// only after narrowing away `null` and the withheld shape.
+{
+  expectTypeOf<ViewerInfo['image']>().toEqualTypeOf<ViewerImage | undefined>();
+  expectTypeOf<BlockViewer['image']>().toEqualTypeOf<ViewerImage | undefined>();
+  const image = {} as ViewerImage;
+  // @ts-expect-error — `url` is not readable before narrowing.
+  void image.url;
+  if (image && 'url' in image) {
+    expectTypeOf(image.url).toEqualTypeOf<string>();
+    // Open-ended, but the known ratings still autocomplete and compare.
+    expectTypeOf<'xxx'>().toMatchTypeOf<typeof image.nsfwLevel>();
+    expectTypeOf(image.nsfwLevel).toMatchTypeOf<string>();
+  }
+  // A withheld avatar carries no reason.
+  // @ts-expect-error — no `reason` on the withheld shape.
+  const _withheld: ViewerImage = { restricted: true, reason: 'ceiling' };
+  void _withheld;
 }
