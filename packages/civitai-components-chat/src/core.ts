@@ -9,7 +9,7 @@
  * first `RESULT_HEAD_CHARS` and last `RESULT_TAIL_CHARS` characters unless the server's `resultLimit`
  * says otherwise), and the pieces behind those: `createMcpConnection`, `mcpResultToText`, `keepEnds`
  * and `limitResult`, plus `hostToolSet` and its notes for a
- * runner that offers a page's tools as the chat does. No module this imports, however
+ * runner that offers a page's tools as the chat does, and `askChoiceTool`, the chat's own `ask_choice`. No module this imports, however
  * indirectly, loads Lit or anything that needs a DOM (`core.test.ts` walks the import graph and fails
  * otherwise), so it loads in plain Node.
  *
@@ -77,6 +77,8 @@ export {
   type McpTool,
 } from './mcp/clients.js';
 export { mcpResultToText } from './mcp/result.js';
+export { askChoiceTool, ASK_CHOICE, type AskChoiceInput } from './tools/build.js';
+export { normalizeChoice, CHOICE_MAX, CHOICE_MIN, type Choice } from './tools/choice.js';
 export {
   hostToolSet,
   HOST_TOOL_FAILED_NOTE,
