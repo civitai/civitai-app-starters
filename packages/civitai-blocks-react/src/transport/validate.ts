@@ -2175,31 +2175,6 @@ export function isValidUserCheckpointSetResult(p: unknown): boolean {
 }
 
 /**
- * Narrow an already-VALIDATED inbound payload to the fields a consumer is
- * allowed to see, immediately before `iframeTransport` hands it to a pending
- * request or a push listener.
- *
- * Validation answers "may this message be delivered at all"; projection answers
- * "which of its fields may cross". They are deliberately separate steps: a
- * predicate can only ever say yes/no about the WHOLE reply, so expressing an
- * allowlist as a predicate makes one unexpected key fatal to every entry in the
- * batch. See {@link projectGatedImage} for the concrete case and the hang it
- * avoids.
- *
- * 🔴 SCOPE, STATED HONESTLY: five groups are projected today. `IMAGES_RESULT`
- * (the hidden-entry allowlist), `MEDIA_UPLOAD_BATCH_RESULT` (a malformed
- * entry becomes that item's error, {@link projectMediaUploadBatchResults}),
- * `GENERATION_SOURCE_PERSISTED` and `SHARE_LINK_RESULT` (a malformed reply
- * becomes an error, {@link projectGenerationSourcePersisted},
- * {@link projectShareLinkResult}), and every reply carrying a
- * workflow snapshot — the six in {@link SNAPSHOT_REPLY_TYPES} plus each cell of
- * `ESTIMATE_BATCH_RESULT` — whose malformed queue/ETA fields are removed
- * ({@link projectWorkflowSnapshot}).
- * Every other type is returned by identity — this is not a general sanitizer and
- * must not be read as one. Add a case here (and say so in the type's validator
- * docblock) if another message ever needs one.
- */
-/**
  * `viewer` with its `image` replaced by {@link readViewerImage}'s reading — the key
  * DROPPED when that reading is `undefined` — so a block reads only a well-formed
  * avatar or none. Identity when the viewer carries no `image` key.
@@ -2220,6 +2195,33 @@ function projectViewerPayload(payload: unknown): unknown {
   return viewer === payload.viewer ? payload : { ...payload, viewer };
 }
 
+/**
+ * Narrow an already-VALIDATED inbound payload to the fields a consumer is
+ * allowed to see, immediately before `iframeTransport` hands it to a pending
+ * request or a push listener.
+ *
+ * Validation answers "may this message be delivered at all"; projection answers
+ * "which of its fields may cross". They are deliberately separate steps: a
+ * predicate can only ever say yes/no about the WHOLE reply, so expressing an
+ * allowlist as a predicate makes one unexpected key fatal to every entry in the
+ * batch. See {@link projectGatedImage} for the concrete case and the hang it
+ * avoids.
+ *
+ * 🔴 SCOPE, STATED HONESTLY: six groups are projected today. `IMAGES_RESULT`
+ * (the hidden-entry allowlist), `MEDIA_UPLOAD_BATCH_RESULT` (a malformed
+ * entry becomes that item's error, {@link projectMediaUploadBatchResults}),
+ * `GENERATION_SOURCE_PERSISTED` and `SHARE_LINK_RESULT` (a malformed reply
+ * becomes an error, {@link projectGenerationSourcePersisted},
+ * {@link projectShareLinkResult}), and every reply carrying a
+ * workflow snapshot — the six in {@link SNAPSHOT_REPLY_TYPES} plus each cell of
+ * `ESTIMATE_BATCH_RESULT` — whose malformed queue/ETA fields are removed
+ * ({@link projectWorkflowSnapshot}), and `viewer.image` on `VIEWER_RESULT` and
+ * `BLOCK_INIT` ({@link projectViewerPayload}); `BLOCK_INIT` never reaches the reply
+ * path, so the transports call this on it themselves before building the snapshot.
+ * Every other type is returned by identity — this is not a general sanitizer and
+ * must not be read as one. Add a case here (and say so in the type's validator
+ * docblock) if another message ever needs one.
+ */
 export function projectInboundPayload(type: string, payload: unknown): unknown {
   if (type === 'BLOCK_INIT' || type === 'VIEWER_RESULT') return projectViewerPayload(payload);
   if (type === 'MEDIA_UPLOAD_BATCH_RESULT') return projectMediaUploadBatchResults(payload);

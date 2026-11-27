@@ -752,7 +752,7 @@ export function createLiveHost(options: LiveHostOptions): MockHost {
         if (typeof me.id !== 'number') return anonFallbackViewer();
         // `/api/v1/blocks/me` is the AUTHORITATIVE self-read and does carry
         // `status` — but this builds `BLOCK_INIT.viewer`, which the real host
-        // projects down to exactly `{ id, username, signedIn }` (civitai/civitai
+        // projects down to exactly `{ id, username, signedIn }` plus `image` (civitai/civitai
         // `main`'s `withSignedInFlag`). Never moderation state (civitai #2521).
         // Forwarding `me.status` here would
         // make the live dev host more generous than production. A block that
