@@ -1,5 +1,11 @@
 # @civitai/sdk
 
+## 0.35.1
+
+### Patch Changes
+
+- 9e3f89d: `createFakeStorage`: `info()` declarations no longer carry `counters: []` or `marks: []`, as civitai.com stopped sending them (civitai/civitai#10590). Documents keep their empty `counters`, `marks` and `viewer` for SDKs before 0.33.
+
 ## 0.35.0
 
 ### Minor Changes
