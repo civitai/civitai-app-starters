@@ -35,9 +35,31 @@ describe('askChoiceTool from @civitai/components-chat/core', () => {
     const page = pageAskChoice();
     expect(runner.description).toBe(page.description);
     expect(await runner.inputSchema.jsonSchema).toEqual(await page.inputSchema.jsonSchema);
-    expect(await runner.inputSchema.jsonSchema).toMatchObject({
+    expect(runner.description).toBe(
+      'Show the user 2 to 4 clickable options when they need to pick a direction (a style, which picture to continue with, a mood). Stop after calling it; their pick comes back as their next message.'
+    );
+    expect(await runner.inputSchema.jsonSchema).toEqual({
+      type: 'object',
+      properties: {
+        question: { type: 'string' },
+        options: {
+          type: 'array',
+          minItems: 2,
+          maxItems: 4,
+          items: {
+            type: 'object',
+            properties: {
+              label: { type: 'string', description: 'Short, 1-5 words' },
+              description: { type: 'string' },
+              image: { type: 'string', description: 'Optional attachment id to show on the option' },
+            },
+            required: ['label'],
+            additionalProperties: false,
+          },
+        },
+      },
       required: ['question', 'options'],
-      properties: { options: { minItems: 2, maxItems: 4, items: { required: ['label'] } } },
+      additionalProperties: false,
     });
   });
 
